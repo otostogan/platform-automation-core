@@ -137,12 +137,15 @@ converge from the tailnet.
 
 ## Reboot acceptance
 
-1. Confirm converge is idempotent and readiness is green.
+1. Confirm converge is idempotent and readiness is green in the `post`
+   phase. The role defaults to `pre`, which skips every check covering what
+   convergence built and still reports success.
 2. Reboot through the provider console or a verified operations session.
 3. Verify Tailscale operations access returns.
 4. Confirm Docker, Tailscale, firewall, proxy, reconciliation timer, and secrets
    recovery units are enabled and healthy.
-5. Run readiness and converge again; converge must report no unexpected change.
+5. Run readiness in the `post` phase and converge again; converge must report
+   no unexpected change.
 6. Run an application healthcheck and `platform status --json`.
 
 Reboot recovery refuses ambiguous ledgers, including unfinished deployments.

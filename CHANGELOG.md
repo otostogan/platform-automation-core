@@ -7,6 +7,14 @@ release.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-28
+
+- Document the readiness role: every variable, both phases, and the fact that
+  the default phase reports success having skipped every post-convergence
+  check. The parameter was previously undocumented.
+- Name the phase in the runbook's acceptance sequence.
+- Assert in tests that documented defaults match the role.
+
 ## [0.3.2] - 2026-08-28
 
 - Validate the reboot recovery entrypoint by its installed path rather than by
