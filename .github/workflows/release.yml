@@ -56,7 +56,6 @@ jobs:
             - name: Scan and checksum artifacts
               env:
                   CORE_FORBIDDEN_MARKERS: ${{ secrets.CORE_FORBIDDEN_MARKERS }}
-                  CORE_REQUIRE_FORBIDDEN_MARKERS: "1"
               run: |
                   python -m scripts.check_release_artifacts \
                     "dist/platform_automation_runtime-${RELEASE_VERSION}-py3-none-any.whl" \

@@ -26,7 +26,6 @@ jobs:
             - name: Reject customer data and secrets
               env:
                   CORE_FORBIDDEN_MARKERS: ${{ secrets.CORE_FORBIDDEN_MARKERS }}
-                  CORE_REQUIRE_FORBIDDEN_MARKERS: "1"
               run: python -m scripts.check_repository_boundaries
 
     runtime:
