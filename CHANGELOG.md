@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-28
+
+- Validate the reboot recovery entrypoint by its installed path rather than by
+  the module invocation systemd uses, which is not a path and made the role
+  fail on every convergence.
+
 ## [0.3.1] - 2026-08-28
 
 - Make the core release token optional now that the repository is public, so a

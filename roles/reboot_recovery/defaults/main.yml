@@ -1,7 +1,18 @@
 ---
 reboot_recovery_service_name: platform-secrets-recovery.service
+
+# Python module invocation for ExecStart. The entrypoint imports its siblings
+# relatively, so it has to run as a module; a bare file path would fail with
+# "attempted relative import with no known parent package".
 reboot_recovery_entrypoint: >-
     -m platform_automation.reboot_recovery_entrypoint
+
+# The installed file that invocation resolves to. Kept separate because the
+# line above is not a path and cannot be stat'ed.
+reboot_recovery_install_root: "{{ platform_cli_install_root | default('/opt/platform/runtime') }}"
+reboot_recovery_package: "{{ platform_cli_python_package | default('platform_automation') }}"
+reboot_recovery_entrypoint_file: "{{ reboot_recovery_install_root }}/{{ reboot_recovery_package }}/reboot_recovery_entrypoint.py"
+
 reboot_recovery_timeout: 5min
 reboot_recovery_minimum_age_recipients: >-
     {{ platform_cli_minimum_age_recipients | default(1) }}

@@ -12,7 +12,7 @@
 
 - name: Inspect installed reboot recovery entrypoint
   ansible.builtin.stat:
-      path: "{{ reboot_recovery_entrypoint }}"
+      path: "{{ reboot_recovery_entrypoint_file }}"
       follow: false
   register: reboot_recovery_entrypoint_stat
 

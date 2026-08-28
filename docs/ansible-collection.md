@@ -15,4 +15,4 @@ The reboot verification remains a controlled acceptance sequence: converge,
 confirm a clean idempotent converge, reboot through the provider-approved
 channel, reconnect through the private administration network, run readiness,
 and confirm a final clean converge. It is intentionally not an unattended
-collection playbook in `v0.3.1`.
+collection playbook in `v0.3.2`.

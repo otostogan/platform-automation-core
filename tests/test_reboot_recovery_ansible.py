@@ -80,6 +80,29 @@ class RebootRecoveryAnsibleTest(unittest.TestCase):
                 content = (ROLE_ROOT / "templates" / template_name).read_bytes()
                 self.assertTrue(content.endswith(b"\n"))
 
+    def test_stat_target_is_a_path_not_a_module_invocation(self) -> None:
+        """The unit runs the entrypoint as a module because it imports its
+        siblings relatively. That invocation is not a filesystem path, so the
+        installation check has to be given a separate variable."""
+        defaults = yaml.safe_load(
+            (ROLE_ROOT / "defaults/main.yml").read_text(encoding="utf-8")
+        )
+        tasks = (ROLE_ROOT / "tasks/main.yml").read_text(encoding="utf-8")
+        unit = (ROLE_ROOT / "templates/platform-secrets-recovery.service.j2").read_text(
+            encoding="utf-8"
+        )
+
+        invocation = defaults["reboot_recovery_entrypoint"].strip()
+        checked = defaults["reboot_recovery_entrypoint_file"]
+
+        self.assertTrue(invocation.startswith("-m "), invocation)
+        self.assertIn("{{ reboot_recovery_entrypoint }}", unit)
+
+        self.assertNotIn("{{ reboot_recovery_entrypoint }}", tasks)
+        self.assertIn('path: "{{ reboot_recovery_entrypoint_file }}"', tasks)
+        self.assertNotIn("-m ", checked)
+        self.assertIn("reboot_recovery_entrypoint.py", checked)
+
 
 if __name__ == "__main__":
     unittest.main()
