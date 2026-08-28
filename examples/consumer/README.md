@@ -1,6 +1,6 @@
 # External consumer fixture
 
-This directory models repositories that consume a private, immutable core
+This directory models repositories that consume an immutable core
 release without importing its source tree.
 
 - `company-infra` owns inventory and company-specific variables.
@@ -8,8 +8,8 @@ release without importing its source tree.
   and a thin trigger workflow.
 
 The sample values use documentation-only addresses and domains. The workflows
-pin `v0.3.0`; a real consumer supplies a token scoped to read the private core
-repository and its release assets.
+pin `v0.3.1`. The core repository is public, so reading its releases needs no
+credential.
 
 The fixture demonstrates the steady-state bus-factor policy: application
 bundles require two unique SOPS age recipients, the host independently enforces

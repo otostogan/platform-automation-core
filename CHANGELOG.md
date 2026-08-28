@@ -7,6 +7,15 @@ release.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-28
+
+- Make the core release token optional now that the repository is public, so a
+  consuming application needs no credential to fetch the runtime.
+- Stop failing repository and release boundary scans when no private marker
+  list is supplied; the generic patterns run regardless, and fork pull requests
+  are never given secrets.
+- Exclude build metadata from the collection artifact.
+
 ## [0.3.0] - 2026-08-28
 
 - Keep sanitized consumer workflow fixtures pinned to the current core release.

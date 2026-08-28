@@ -37,8 +37,10 @@ on:
 
         secrets:
             platform_core_token:
-                description: Token with read access to platform automation releases
-                required: true
+                description: >-
+                    Optional token for reading core releases. Only needed
+                    for a private fork of the core.
+                required: false
 
             tailscale_oauth_client_id:
                 description: Tailscale federated identity client ID
@@ -108,10 +110,10 @@ jobs:
 
             - name: Prepare deployment bundle
               id: bundle
-              uses: otostogan/platform-automation-core/.github/actions/build-bundle@v0.3.0
+              uses: otostogan/platform-automation-core/.github/actions/build-bundle@v0.3.1
               with:
                   manifest-path: ${{ inputs.manifest_path }}
-                  core-version: v0.3.0
+                  core-version: v0.3.1
                   github-token: ${{ secrets.platform_core_token }}
                   minimum-age-recipients: ${{ inputs.minimum_age_recipients }}
 

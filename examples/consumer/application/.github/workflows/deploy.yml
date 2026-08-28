@@ -19,7 +19,7 @@ jobs:
             contents: read
             id-token: write
             packages: read
-        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.3.0
+        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.3.1
         with:
             manifest_path: deploy/platform.yml
             image_reference: ${{ inputs.image_reference }}
@@ -28,6 +28,5 @@ jobs:
             tailscale_tag: tag:platform-ci
             minimum_age_recipients: 2
         secrets:
-            platform_core_token: ${{ secrets.PLATFORM_CORE_TOKEN }}
             tailscale_oauth_client_id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
             tailscale_audience: ${{ secrets.TS_AUDIENCE }}
