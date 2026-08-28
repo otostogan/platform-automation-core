@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-28
+
+- Stop reporting a change when a task only refreshes the APT package index.
+  Three roles did, so any convergence past the cache lifetime looked
+  non-idempotent — the one signal the acceptance sequence depends on.
+
 ## [0.3.3] - 2026-08-28
 
 - Document the readiness role: every variable, both phases, and the fact that

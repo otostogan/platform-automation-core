@@ -56,6 +56,9 @@
 - name: Refresh APT cache for Tailscale repository
   ansible.builtin.apt:
       update_cache: true
+  # Refreshing the package index is a precondition, not a change to the
+  # host. See roles/common/tasks/main.yml.
+  changed_when: false
   when:
       - tailscale_repository_key.changed
         or tailscale_repository.changed

@@ -3,6 +3,11 @@
   ansible.builtin.apt:
       update_cache: true
       cache_valid_time: "{{ common_apt_cache_valid_time }}"
+  # Refreshing the package index is a precondition, not a change to the host.
+  # Reporting it as changed makes every converge past the cache lifetime look
+  # non-idempotent, which is the one signal the acceptance sequence relies on.
+  # Package installs below still report their own changes.
+  changed_when: false
 
 - name: Install common system packages
   ansible.builtin.apt:

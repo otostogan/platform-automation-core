@@ -68,6 +68,9 @@
 - name: Update APT cache after adding Docker repository
   ansible.builtin.apt:
       update_cache: true
+  # Refreshing the package index is a precondition, not a change to the
+  # host. See roles/common/tasks/main.yml.
+  changed_when: false
   when:
       - >-
           docker_repository_key.changed
