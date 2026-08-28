@@ -1,0 +1,11 @@
+---
+all:
+    children:
+        platform_hosts:
+            hosts:
+                example-staging:
+                    ansible_host: 203.0.113.10
+                    ansible_user: ubuntu
+                    ansible_port: 22
+                    platform_environment: staging
+                    platform_public_interface: eth0

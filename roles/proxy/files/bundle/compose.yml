@@ -1,0 +1,277 @@
+name: platform-proxy
+
+x-images:
+    nginx: &nginx_image >-
+        nginx:1.28.3-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+    docker-gen: &docker_gen_image >-
+        nginxproxy/nginx-proxy:1.11-dockergen@sha256:5c0c4d6db7ebf5fc931a40eaca7e6955a7032ca310b69bcbe4d0d90a931308e8
+    acme-companion: &acme_image >-
+        nginxproxy/acme-companion:2.8.0@sha256:cea522f547f5357d040c78f0374706de0b77b1d534bb1069850741c6750a98ba
+    socket-proxy: &socket_proxy_image >-
+        ghcr.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+
+services:
+    nginx:
+        image: *nginx_image
+        container_name: platform-nginx
+        restart: unless-stopped
+        read_only: true
+
+        security_opt:
+            - no-new-privileges:true
+
+        ports:
+            - "80:80"
+            - "443:443"
+
+        networks:
+            - edge
+
+        volumes:
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/conf.d:/etc/nginx/conf.d:ro
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/vhost.d:/etc/nginx/vhost.d:ro
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/html:/usr/share/nginx/html:ro
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/certs:/etc/nginx/certs:ro
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/htpasswd:/etc/nginx/htpasswd:ro
+
+        tmpfs:
+            - /var/cache/nginx:uid=101,gid=101,mode=0750
+            - /var/run:uid=101,gid=101,mode=0750
+
+        labels:
+            com.github.nginx-proxy.nginx-proxy.nginx: "true"
+
+        healthcheck:
+            test: ["CMD", "nginx", "-t"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 10s
+
+        logging:
+            driver: json-file
+            options:
+                max-size: 10m
+                max-file: "5"
+    docker-socket-read:
+        image: *socket_proxy_image
+        container_name: platform-docker-socket-read
+        restart: unless-stopped
+        read_only: true
+
+        security_opt:
+            - no-new-privileges:true
+
+        environment:
+            LOG_LEVEL: warning
+            DISABLE_IPV6: "1"
+            SOCKET_PATH: /var/run/docker.sock
+
+        networks:
+            - control
+
+        expose:
+            - "2375"
+
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+            - ./socket-proxy/docker-gen.cfg:/usr/local/etc/haproxy/haproxy.cfg.template:ro
+
+        tmpfs:
+            - /run
+            - /tmp
+
+        healthcheck:
+            test:
+                - CMD
+                - wget
+                - -q
+                - -O
+                - "-"
+                - http://127.0.0.1:2375/_ping
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 5s
+    docker-socket-acme:
+        profiles:
+            - acme
+
+        image: *socket_proxy_image
+        container_name: platform-docker-socket-acme
+        restart: unless-stopped
+        read_only: true
+
+        security_opt:
+            - no-new-privileges:true
+
+        environment:
+            LOG_LEVEL: warning
+            DISABLE_IPV6: "1"
+            SOCKET_PATH: /var/run/docker.sock
+
+        networks:
+            - acme-control
+
+        expose:
+            - "2375"
+
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+            - ./socket-proxy/acme.cfg:/usr/local/etc/haproxy/haproxy.cfg.template:ro
+
+        tmpfs:
+            - /run
+            - /tmp
+
+        healthcheck:
+            test:
+                - CMD
+                - wget
+                - -q
+                - -O
+                - "-"
+                - http://127.0.0.1:2375/_ping
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 5s
+
+        logging:
+            driver: json-file
+            options:
+                max-size: 5m
+                max-file: "3"
+    docker-gen:
+        image: *docker_gen_image
+        container_name: platform-docker-gen
+        restart: unless-stopped
+        read_only: true
+
+        security_opt:
+            - no-new-privileges:true
+
+        depends_on:
+            nginx:
+                condition: service_started
+            docker-socket-read:
+                condition: service_healthy
+
+        command:
+            - docker-gen
+            - -endpoint
+            - tcp://docker-socket-read:2375
+            - -watch
+            - -wait
+            - 5s:30s
+            - /app/nginx.tmpl
+            - /tmp/docker-gen-preview.conf
+
+        environment:
+            DOCKER_CONTAINER_FILTERS: network=platform-edge
+            LOG_JSON: "true"
+            SSL_POLICY: Mozilla-Intermediate
+            HSTS: max-age=31536000; includeSubDomains
+            ENABLE_HTTP2: "true"
+            ENABLE_HTTP3: "false"
+            DEFAULT_ROOT: "404"
+            DHPARAM_SKIP: "true"
+
+        networks:
+            - control
+
+        volumes:
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/conf.d:/etc/nginx/conf.d:ro
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/vhost.d:/etc/nginx/vhost.d:ro
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/html:/usr/share/nginx/html:ro
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/certs:/etc/nginx/certs:ro
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/htpasswd:/etc/nginx/htpasswd:ro
+
+        tmpfs:
+            - /tmp
+
+        healthcheck:
+            test:
+                - CMD-SHELL
+                - test -s /tmp/docker-gen-preview.conf
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 10s
+
+        logging:
+            driver: json-file
+            options:
+                max-size: 5m
+                max-file: "3"
+    acme-companion:
+        profiles:
+            - acme
+
+        image: *acme_image
+        container_name: platform-acme-companion
+        restart: unless-stopped
+
+        security_opt:
+            - no-new-privileges:true
+
+        depends_on:
+            nginx:
+                condition: service_started
+            docker-gen:
+                condition: service_healthy
+            docker-socket-acme:
+                condition: service_healthy
+
+        environment:
+            DEFAULT_EMAIL: ${ACME_EMAIL}
+            ACME_CA_URI: ${ACME_CA_URI}
+            DOCKER_HOST: tcp://docker-socket-acme:2375
+            DOCKER_CONTAINER_FILTERS: network=platform-edge
+            NGINX_PROXY_CONTAINER: platform-nginx
+            NGINX_DOCKER_GEN_CONTAINER: platform-docker-gen
+            DHPARAM_SKIP: "true"
+            ENABLE_IPV6: "false"
+
+        networks:
+            - acme-control
+            - acme-egress
+
+        volumes:
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/certs:/etc/nginx/certs
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/html:/usr/share/nginx/html
+            - ${PLATFORM_PROXY_STATE_DIR:-/var/lib/platform/proxy}/acme:/etc/acme.sh
+
+        tmpfs:
+            - /tmp
+
+        healthcheck:
+            test:
+                - CMD-SHELL
+                - test -d /etc/acme.sh && kill -0 1
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 10s
+
+        logging:
+            driver: json-file
+            options:
+                max-size: 10m
+                max-file: "5"
+
+networks:
+    edge:
+        name: platform-edge
+        external: true
+
+    control:
+        name: platform-control
+        internal: true
+
+    acme-control:
+        name: platform-acme-control
+        internal: true
+
+    acme-egress:
+        name: platform-acme-egress

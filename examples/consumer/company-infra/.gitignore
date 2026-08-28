@@ -1,0 +1,8 @@
+.DS_Store
+.venv/
+.ansible/
+*.retry
+*.agekey
+keys.txt
+inventory/**/local-secrets.yml
+inventory/**/*.decrypted.yml

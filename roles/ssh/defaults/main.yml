@@ -1,0 +1,14 @@
+---
+ssh_allowed_users:
+    - ops
+    - deploy
+
+ssh_password_authentication: false
+ssh_kbd_interactive_authentication: false
+ssh_permit_root_login: "no"
+ssh_pubkey_authentication: true
+ssh_x11_forwarding: false
+ssh_max_auth_tries: 3
+ssh_login_grace_time: 30
+ssh_client_alive_interval: 300
+ssh_client_alive_count_max: 2

@@ -1,0 +1,347 @@
+---
+- name: Probe required systemd units
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/systemctl
+          - show
+          - --property=ActiveState
+          - --property=UnitFileState
+          - "{{ item }}"
+  loop: "{{ vps_readiness_required_services }}"
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_systemd_units
+
+- name: Probe Tailscale state
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/tailscale
+          - status
+          - --json
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_tailscale
+
+- name: Probe host Tailscale addresses
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/tailscale
+          - ip
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_tailscale_ip
+
+- name: Probe current SSH connection endpoints
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/printenv
+          - SSH_CONNECTION
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_ssh_connection
+
+- name: Parse Tailscale state
+  ansible.builtin.set_fact:
+      vps_readiness_tailscale_state: >-
+          {{
+            (
+              vps_readiness_tailscale.stdout | default("") | from_json
+            ).BackendState
+            if (
+              vps_readiness_tailscale.rc | default(1) == 0
+              and vps_readiness_tailscale.stdout | default("") | length > 0
+            )
+            else "Unavailable"
+          }}
+      vps_readiness_tailscale_addresses: >-
+          {{
+            vps_readiness_tailscale_ip.stdout_lines | default([])
+            if vps_readiness_tailscale_ip.rc | default(1) == 0
+            else []
+          }}
+      vps_readiness_ssh_destination: >-
+          {{
+            vps_readiness_ssh_connection.stdout.split()[2]
+            if (
+              vps_readiness_ssh_connection.rc | default(1) == 0
+              and vps_readiness_ssh_connection.stdout | default("")
+                | split
+                | length == 4
+            )
+            else ""
+          }}
+
+- name: Probe UFW policy
+  ansible.builtin.command:
+      argv:
+          - /usr/sbin/ufw
+          - status
+          - verbose
+  become: true
+  environment:
+      LANG: C
+      LC_ALL: C
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_ufw
+
+- name: Probe IPv4 Docker forwarding chain
+  ansible.builtin.command:
+      argv:
+          - /usr/sbin/iptables
+          - -w
+          - -C
+          - DOCKER-USER
+          - -j
+          - PLATFORM-DOCKER-INGRESS
+  become: true
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_iptables
+
+- name: Probe IPv6 Docker forwarding chain
+  ansible.builtin.command:
+      argv:
+          - /usr/sbin/ip6tables
+          - -w
+          - -C
+          - DOCKER-USER
+          - -j
+          - PLATFORM-DOCKER-INGRESS
+  become: true
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_ip6tables
+
+- name: Probe listening TCP sockets
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/ss
+          - -H
+          - -lnt
+  become: true
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_listeners
+
+- name: Probe Docker published ports
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/docker
+          - ps
+          - --format
+          - "{% raw %}{{.Names}}|{{.Ports}}{% endraw %}"
+  become: true
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_docker_ports
+
+- name: Probe platform proxy health
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/docker
+          - inspect
+          - --format
+          - "{% raw %}{{.State.Health.Status}}{% endraw %}"
+          - platform-nginx
+  become: true
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_proxy_health
+
+- name: Find unexpected Docker host ports
+  ansible.builtin.set_fact:
+      vps_readiness_published_host_ports: >-
+          {{
+            vps_readiness_docker_ports.stdout | default("")
+            | regex_findall("[0-9a-fA-F:.\\[\\]]+:([0-9]+)->")
+            | map("int")
+            | unique
+            | sort
+          }}
+      vps_readiness_unexpected_host_ports: >-
+          {{
+            vps_readiness_docker_ports.stdout | default("")
+            | regex_findall("[0-9a-fA-F:.\\[\\]]+:([0-9]+)->")
+            | map("int")
+            | difference(vps_readiness_allowed_public_tcp_ports)
+            | unique
+            | sort
+          }}
+
+- name: Record required systemd unit readiness
+  ansible.builtin.set_fact:
+      vps_readiness_results: >-
+          {{
+            vps_readiness_results
+            + [
+              {
+                "check": "systemd_" ~ item.item,
+                "status": (
+                  "pass"
+                  if (
+                    item.rc == 0
+                    and "ActiveState=active" in item.stdout_lines
+                    and "UnitFileState=enabled" in item.stdout_lines
+                  )
+                  else "fail"
+                ),
+                "message": (
+                  item.stdout_lines | join(", ")
+                  if item.rc == 0
+                  else item.stderr | default("systemctl probe failed", true)
+                )
+              }
+            ]
+          }}
+  loop: "{{ vps_readiness_systemd_units.results }}"
+  loop_control:
+      label: "{{ item.item }}"
+
+- name: Record post-convergence network and firewall readiness
+  ansible.builtin.set_fact:
+      vps_readiness_results: >-
+          {{
+            vps_readiness_results
+            + [
+              {
+                "check": "tailscale",
+                "status": (
+                  "pass"
+                  if (
+                    vps_readiness_tailscale_state == "Running"
+                    and vps_readiness_tailscale_interface
+                      in ansible_interfaces | default([])
+                  )
+                  else "fail"
+                ),
+                "message": "BackendState=" ~ vps_readiness_tailscale_state
+              },
+              {
+                "check": "tailnet_ssh_identity",
+                "status": (
+                  "pass"
+                  if (
+                    vps_readiness_connected_user
+                      == vps_readiness_expected_ssh_user
+                    and vps_readiness_ssh_destination
+                      in vps_readiness_tailscale_addresses
+                  )
+                  else "fail"
+                ),
+                "message": (
+                  "connected as " ~ vps_readiness_connected_user
+                  ~ " to " ~ vps_readiness_ssh_destination
+                )
+              },
+              {
+                "check": "ufw",
+                "status": (
+                  "pass"
+                  if (
+                    vps_readiness_ufw.rc | default(1) == 0
+                    and "Status: active"
+                      in vps_readiness_ufw.stdout | default("")
+                    and "deny (incoming)"
+                      in vps_readiness_ufw.stdout | default("")
+                    and "allow (outgoing)"
+                      in vps_readiness_ufw.stdout | default("")
+                    and "deny (routed)"
+                      in vps_readiness_ufw.stdout | default("")
+                  )
+                  else "fail"
+                ),
+                "message": (
+                  vps_readiness_ufw.stdout_lines | default([]) | first
+                  if vps_readiness_ufw.stdout_lines | default([]) | length > 0
+                  else "UFW status unavailable"
+                )
+              },
+              {
+                "check": "docker_forwarding_ipv4",
+                "status": (
+                  "pass"
+                  if vps_readiness_iptables.rc | default(1) == 0
+                  else "fail"
+                ),
+                "message": "DOCKER-USER must jump to PLATFORM-DOCKER-INGRESS"
+              },
+              {
+                "check": "docker_forwarding_ipv6",
+                "status": (
+                  "pass"
+                  if vps_readiness_ip6tables.rc | default(1) == 0
+                  else "fail"
+                ),
+                "message": "DOCKER-USER must jump to PLATFORM-DOCKER-INGRESS"
+              }
+            ]
+          }}
+
+- name: Record post-convergence port and proxy readiness
+  ansible.builtin.set_fact:
+      vps_readiness_results: >-
+          {{
+            vps_readiness_results
+            + [
+              {
+                "check": "docker_published_ports",
+                "status": (
+                  "pass"
+                  if (
+                    vps_readiness_docker_ports.rc | default(1) == 0
+                    and vps_readiness_unexpected_host_ports | length == 0
+                  )
+                  else "fail"
+                ),
+                "message": (
+                  "published host ports: "
+                  ~ (
+                    vps_readiness_published_host_ports
+                    | map("string")
+                    | join(", ")
+                    | default("none", true)
+                  )
+                )
+              },
+              {
+                "check": "listening_tcp_ports",
+                "status": (
+                  "info"
+                  if vps_readiness_listeners.rc | default(1) == 0
+                  else "fail"
+                ),
+                "message": (
+                  vps_readiness_listeners.stdout_lines | default([]) | join("; ")
+                  if vps_readiness_listeners.rc | default(1) == 0
+                  else "socket inventory unavailable"
+                )
+              },
+              {
+                "check": "proxy_health",
+                "status": (
+                  "pass"
+                  if (
+                    vps_readiness_proxy_health.rc | default(1) == 0
+                    and vps_readiness_proxy_health.stdout | default("")
+                      == "healthy"
+                  )
+                  else "fail"
+                ),
+                "message": (
+                  vps_readiness_proxy_health.stdout | default("")
+                  | default("unavailable", true)
+                )
+              }
+            ]
+          }}

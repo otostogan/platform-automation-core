@@ -1,0 +1,29 @@
+---
+- name: Validate platform host prerequisites
+  hosts: platform_hosts
+  gather_facts: true
+
+  tasks:
+      - name: Validate operating system and hardware
+        ansible.builtin.assert:
+            that:
+                - ansible_distribution == "Ubuntu"
+                - ansible_distribution_version is version("24.04", ">=")
+                - ansible_architecture in ["x86_64", "aarch64"]
+                - ansible_python.version.major >= 3
+                - ansible_memtotal_mb >= 2048
+                - platform_public_interface is defined
+                - platform_public_interface in ansible_interfaces
+                - >-
+                    (ansible_mounts
+                    | selectattr("mount", "equalto", "/")
+                    | map(attribute="size_total")
+                    | first
+                    | int) >= 20 * 1024 * 1024 * 1024
+            success_msg: Host satisfies platform prerequisites
+            fail_msg: Host does not satisfy platform prerequisites
+
+      - name: Verify sudo access
+        ansible.builtin.command: /usr/bin/true
+        become: true
+        changed_when: false

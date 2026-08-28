@@ -1,0 +1,31 @@
+---
+proxy_enabled: true
+
+proxy_bundle_source: "{{ role_path }}/files/bundle"
+proxy_install_directory: /opt/platform/proxy
+proxy_state_directory: /var/lib/platform/proxy
+proxy_environment_file: /etc/platform/proxy.env
+proxy_edge_network: platform-edge
+
+proxy_acme_email: ops@example.invalid
+
+proxy_acme_enabled: false
+proxy_acme_ca_uri: https://acme-v02.api.letsencrypt.org/directory
+
+proxy_bundle_directories:
+    - conf.d
+    - socket-proxy
+
+proxy_bundle_files:
+    - compose.yml
+    - conf.d/00-security.conf
+    - socket-proxy/docker-gen.cfg
+    - socket-proxy/acme.cfg
+
+proxy_state_directories:
+    - conf.d
+    - vhost.d
+    - html
+    - certs
+    - htpasswd
+    - acme

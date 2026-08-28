@@ -1,0 +1,39 @@
+---
+platform_cli_install_root: /opt/platform/runtime
+platform_cli_executable: /usr/local/bin/platform
+platform_cli_python_package: platform_automation
+platform_cli_nginx_raw_allowlist_file: /etc/platform/nginx-raw-projects.json
+platform_cli_nginx_raw_projects: []
+platform_cli_minimum_age_recipients: 1
+
+platform_cli_runtime_packages:
+    - python3
+    - python3-jsonschema
+    - python3-yaml
+
+platform_cli_tool_files:
+    - __init__.py
+    - bundle_action.py
+    - compose_runtime.py
+    - contract_resources.py
+    - deployment_request.py
+    - nginx_config.py
+    - nginx_reconcile.py
+    - nginx_transaction.py
+    - operation_lock.py
+    - platform_cli.py
+    - reboot_recovery.py
+    - reboot_recovery_entrypoint.py
+    - registry_pull.py
+    - release_ledger.py
+    - runtime_secrets.py
+    - sops_validation.py
+    - stage_bundle.py
+    - validate_manifest.py
+    - verify_bundle.py
+    - py.typed
+
+platform_cli_contract_files:
+    - bundle-v1.schema.json
+    - platform-v1.schema.json
+    - release-v1.schema.json

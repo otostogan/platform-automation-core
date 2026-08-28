@@ -1,0 +1,48 @@
+api_version: platform/v1
+project: example
+environment: lab
+compose_file: deploy/compose.yml
+
+image:
+    repository: ghcr.io/example/platform-example
+
+service:
+    web: app
+    internal_port: 3000
+    healthcheck:
+        path: /healthz
+        timeout_seconds: 90
+
+domains:
+    - host: app.example.invalid
+      tls: false
+      nginx:
+          client_max_body_size: 20m
+          proxy_connect_timeout: 10s
+          proxy_read_timeout: 60s
+          proxy_send_timeout: 60s
+          gzip:
+              enabled: true
+              types:
+                  - application/json
+                  - text/css
+          raw_vhost_snippet: null
+          raw_location_snippet: null
+
+deployment:
+    migration_service: app
+    migration_command:
+        - bin/app
+        - migrate
+
+database:
+    mode: external
+    postgres_major: 17
+    backup_enabled: false
+
+secrets:
+    source: deploy/secrets.lab.sops.yaml
+    delivery: env
+
+restore_validation:
+    query: SELECT 1

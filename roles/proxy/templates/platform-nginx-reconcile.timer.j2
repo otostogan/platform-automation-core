@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh nginx after container and certificate changes
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=10s
+AccuracySec=1s
+Unit=platform-nginx-reconcile.service
+
+[Install]
+WantedBy=timers.target

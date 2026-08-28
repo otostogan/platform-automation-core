@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly chain="{{ firewall_docker_chain }}"
+
+configure_family() {
+    local command_path="$1"
+
+    if ! "$command_path" -w -n -L DOCKER-USER >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if ! "$command_path" -w -n -L "$chain" >/dev/null 2>&1; then
+        "$command_path" -w -N "$chain"
+    fi
+
+    while "$command_path" -w -C DOCKER-USER -j "$chain" 2>/dev/null; do
+        "$command_path" -w -D DOCKER-USER -j "$chain"
+    done
+
+    "$command_path" -w -F "$chain"
+
+    "$command_path" -w -A "$chain" \
+        -m conntrack \
+        --ctstate ESTABLISHED,RELATED \
+        -j RETURN
+
+{% for port in firewall_public_tcp_ports %}
+    "$command_path" -w -A "$chain" \
+        -i "{{ firewall_public_interface }}" \
+        -p tcp \
+        -m conntrack \
+        --ctorigdstport "{{ port }}" \
+        -j RETURN
+
+{% endfor %}
+    "$command_path" -w -A "$chain" \
+        -i "{{ firewall_public_interface }}" \
+        -j DROP
+
+    "$command_path" -w -A "$chain" -j RETURN
+    "$command_path" -w -I DOCKER-USER 1 -j "$chain"
+}
+
+{% for command_path in firewall_iptables_commands %}
+configure_family "{{ command_path }}"
+{% endfor %}

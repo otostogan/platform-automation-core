@@ -1,0 +1,35 @@
+---
+docker_apt_architectures:
+    x86_64: amd64
+    aarch64: arm64
+
+docker_conflicting_packages:
+    - containerd
+    - docker-buildx
+    - docker-compose
+    - docker-compose-v2
+    - docker-doc
+    - docker.io
+    - podman-docker
+    - runc
+
+docker_packages:
+    - containerd.io
+    - docker-buildx-plugin
+    - docker-ce
+    - docker-ce-cli
+    - docker-compose-plugin
+
+docker_log_max_size: "10m"
+docker_log_max_file: "3"
+
+docker_install_lazydocker: true
+docker_lazydocker_version: "0.25.2"
+
+docker_lazydocker_architectures:
+    x86_64: x86_64
+    aarch64: arm64
+
+docker_lazydocker_checksums:
+    x86_64: "sha256:0d9dbfc26068b218e7ed84b104748cadc6e3cf733c0afd35465306fb39b9523c"
+    aarch64: "sha256:005c38b685aaa557e7d646d83a3dadb5024340eeed8c6a2e1949eee6f530de23"

@@ -1,0 +1,179 @@
+---
+- name: Validate Tailscale operating system
+  ansible.builtin.assert:
+      that:
+          - ansible_distribution == "Ubuntu"
+          - ansible_distribution_release == "noble"
+      fail_msg: >-
+          Tailscale role currently supports Ubuntu 24.04 Noble only
+
+- name: Validate Tailscale enrollment settings
+  ansible.builtin.assert:
+      that:
+          - tailscale_auth_key_source is string
+          - tailscale_advertise_tags is sequence
+          - tailscale_advertise_tags is not string
+          - >-
+              tailscale_advertise_tags
+              | difference(
+                  tailscale_advertise_tags
+                  | select('match', '^tag:[A-Za-z0-9][A-Za-z0-9_-]{0,62}$')
+                  | list
+                )
+              | length == 0
+      fail_msg: >-
+          tailscale_auth_key_source must be a controller-local path and every
+          tailscale_advertise_tags entry must be a valid tag:name value
+
+- name: Create APT keyring directory
+  ansible.builtin.file:
+      path: /usr/share/keyrings
+      state: directory
+      owner: root
+      group: root
+      mode: "0755"
+
+- name: Install Tailscale repository signing key
+  ansible.builtin.get_url:
+      url: >-
+          https://pkgs.tailscale.com/{{ tailscale_release_channel }}/ubuntu/noble.noarmor.gpg
+      dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+      owner: root
+      group: root
+      mode: "0644"
+  register: tailscale_repository_key
+
+- name: Configure Tailscale APT repository
+  ansible.builtin.get_url:
+      url: >-
+          https://pkgs.tailscale.com/{{ tailscale_release_channel }}/ubuntu/noble.tailscale-keyring.list
+      dest: /etc/apt/sources.list.d/tailscale.list
+      owner: root
+      group: root
+      mode: "0644"
+  register: tailscale_repository
+
+- name: Refresh APT cache for Tailscale repository
+  ansible.builtin.apt:
+      update_cache: true
+  when:
+      - tailscale_repository_key.changed
+        or tailscale_repository.changed
+
+- name: Install Tailscale package
+  ansible.builtin.apt:
+      name: tailscale
+      state: present
+
+- name: Enable Tailscale daemon
+  ansible.builtin.systemd_service:
+      name: tailscaled.service
+      enabled: true
+      state: started
+
+- name: Read Tailscale connection state
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/tailscale
+          - status
+          - --json
+  register: tailscale_status
+  changed_when: false
+  failed_when: false
+
+- name: Determine Tailscale backend state
+  ansible.builtin.set_fact:
+      tailscale_backend_state: >-
+          {{
+            (tailscale_status.stdout | from_json).BackendState
+            if tailscale_status.rc == 0
+            and tailscale_status.stdout | trim | length > 0
+            else 'Unknown'
+          }}
+
+- name: Inspect controller-local Tailscale auth key
+  ansible.builtin.stat:
+      path: "{{ tailscale_auth_key_source }}"
+  delegate_to: localhost
+  become: false
+  register: tailscale_auth_key_source_stat
+  when:
+      - tailscale_backend_state != "Running"
+      - tailscale_auth_key_source | length > 0
+
+- name: Validate controller-local Tailscale auth key
+  ansible.builtin.assert:
+      that:
+          - tailscale_auth_key_source_stat.stat.exists
+          - tailscale_auth_key_source_stat.stat.isreg
+          - not tailscale_auth_key_source_stat.stat.islnk
+      fail_msg: >-
+          tailscale_auth_key_source must point to a regular, non-symlink file
+          on the Ansible controller
+  when:
+      - tailscale_backend_state != "Running"
+      - tailscale_auth_key_source | length > 0
+
+- name: Enroll Tailscale non-interactively
+  when:
+      - tailscale_backend_state != "Running"
+      - tailscale_auth_key_source | length > 0
+  block:
+      - name: Install transient Tailscale auth key
+        ansible.builtin.copy:
+            src: "{{ tailscale_auth_key_source }}"
+            dest: "{{ tailscale_auth_key_temporary_path }}"
+            owner: root
+            group: root
+            mode: "0600"
+        no_log: true
+
+      - name: Join host to Tailscale
+        ansible.builtin.command:
+            argv: >-
+                {{
+                  [
+                    '/usr/bin/tailscale',
+                    'up',
+                    '--auth-key=file:' ~ tailscale_auth_key_temporary_path,
+                    '--hostname=' ~ tailscale_hostname,
+                    '--ssh=' ~ (tailscale_enable_ssh | ternary('true', 'false')),
+                    '--accept-dns=' ~ (tailscale_accept_dns | ternary('true', 'false'))
+                  ]
+                  + (
+                      ['--advertise-tags=' ~ (tailscale_advertise_tags | join(','))]
+                      if tailscale_advertise_tags | length > 0
+                      else []
+                    )
+                }}
+        changed_when: true
+        no_log: true
+  always:
+      - name: Remove transient Tailscale auth key
+        ansible.builtin.file:
+            path: "{{ tailscale_auth_key_temporary_path }}"
+            state: absent
+        no_log: true
+
+- name: Report required interactive authentication
+  ansible.builtin.debug:
+      msg: >-
+          Tailscale is installed but not connected. Run:
+          sudo tailscale up
+          --hostname={{ tailscale_hostname }}
+          --ssh
+          --accept-dns={{ tailscale_accept_dns | ternary('true', 'false') }}
+  when:
+      - tailscale_backend_state != "Running"
+      - tailscale_auth_key_source | length == 0
+
+- name: Converge connected Tailscale settings
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/tailscale
+          - set
+          - "--hostname={{ tailscale_hostname }}"
+          - "--ssh={{ tailscale_enable_ssh | ternary('true', 'false') }}"
+          - "--accept-dns={{ tailscale_accept_dns | ternary('true', 'false') }}"
+  when: tailscale_backend_state == "Running"
+  changed_when: false

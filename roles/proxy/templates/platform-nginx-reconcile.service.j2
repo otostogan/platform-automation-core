@@ -1,0 +1,18 @@
+[Unit]
+Description=Reconcile nginx backends and certificates under deployment lock
+Requires=platform-proxy.service
+After=platform-proxy.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+Environment=PYTHONPATH=/opt/platform/runtime
+ExecStart=/usr/bin/python3 -m platform_automation.nginx_reconcile
+TimeoutStartSec=120
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths={{ proxy_state_directory }}/conf.d {{ proxy_state_directory }}/managed-vhosts /run/platform/locks
+PrivateTmp=yes

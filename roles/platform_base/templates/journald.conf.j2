@@ -1,0 +1,8 @@
+# Managed by Ansible
+
+[Journal]
+Storage=persistent
+Compress=yes
+SystemMaxUse={{ platform_base_journal_system_max_use }}
+RuntimeMaxUse={{ platform_base_journal_runtime_max_use }}
+MaxRetentionSec={{ platform_base_journal_max_retention }}

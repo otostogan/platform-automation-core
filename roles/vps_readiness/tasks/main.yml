@@ -1,0 +1,82 @@
+---
+- name: Validate VPS readiness options
+  ansible.builtin.assert:
+      that:
+          - vps_readiness_phase in ["pre", "post"]
+          - vps_readiness_output in ["human", "json"]
+      fail_msg: >-
+          vps_readiness_phase must be pre or post and
+          vps_readiness_output must be human or json.
+
+- name: Initialize VPS readiness results
+  ansible.builtin.set_fact:
+      vps_readiness_results: []
+      vps_readiness_connected_user: >-
+          {{ ansible_user | default(ansible_user_id | default("unknown")) }}
+
+- name: Run pre-convergence readiness checks
+  ansible.builtin.include_tasks: pre.yml
+
+- name: Run post-convergence readiness checks
+  ansible.builtin.include_tasks: post.yml
+  when: vps_readiness_phase == "post"
+
+- name: Add provider firewall manual check
+  ansible.builtin.set_fact:
+      vps_readiness_results: >-
+          {{
+            vps_readiness_results
+            + [
+              {
+                "check": "provider_firewall",
+                "status": "manual",
+                "message": (
+                  "Confirm in the provider console that temporary TCP 22 is "
+                  "restricted to the administrator IP before convergence and "
+                  "removed after tailnet access is verified; only TCP 80/443 "
+                  "should remain public."
+                )
+              }
+            ]
+          }}
+
+- name: Select failed VPS readiness checks
+  ansible.builtin.set_fact:
+      vps_readiness_failures: >-
+          {{
+            vps_readiness_results
+            | selectattr("status", "equalto", "fail")
+            | list
+          }}
+
+- name: Print human-readable VPS readiness report
+  ansible.builtin.debug:
+      msg: "[{{ item.status | upper }}] {{ item.check }}: {{ item.message }}"
+  loop: "{{ vps_readiness_results }}"
+  loop_control:
+      label: "{{ item.check }}"
+  when: vps_readiness_output == "human"
+
+- name: Print JSON VPS readiness report
+  ansible.builtin.debug:
+      msg: >-
+          {{
+            {
+              "host": inventory_hostname,
+              "phase": vps_readiness_phase,
+              "ready": vps_readiness_failures | length == 0,
+              "checks": vps_readiness_results
+            }
+            | to_json
+          }}
+  when: vps_readiness_output == "json"
+
+- name: Fail after reporting unsuccessful VPS readiness checks
+  ansible.builtin.assert:
+      that:
+          - vps_readiness_failures | length == 0
+      fail_msg: >-
+          {{ vps_readiness_failures | length }} VPS readiness check(s) failed.
+          Review the complete report above.
+      success_msg: All automated VPS readiness checks passed
+  when: vps_readiness_fail_on_error | bool

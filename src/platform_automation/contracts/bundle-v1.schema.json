@@ -1,0 +1,71 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://platform.local/contracts/bundle-v1.schema.json",
+	"title": "Platform deployment bundle v1",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"api_version",
+		"project",
+		"environment",
+		"files"
+	],
+	"properties": {
+		"api_version": {
+			"const": "platform-bundle/v1"
+		},
+		"project": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]{1,62}$"
+		},
+		"environment": {
+			"enum": [
+				"lab",
+				"staging",
+				"production"
+			]
+		},
+		"files": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"manifest",
+				"compose",
+				"secrets"
+			],
+			"properties": {
+				"manifest": {
+					"$ref": "#/$defs/file"
+				},
+				"compose": {
+					"$ref": "#/$defs/file"
+				},
+				"secrets": {
+					"$ref": "#/$defs/file"
+				}
+			}
+		}
+	},
+	"$defs": {
+		"file": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"path",
+				"sha256"
+			],
+			"properties": {
+				"path": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 255,
+					"pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[a-zA-Z0-9._/-]+$"
+				},
+				"sha256": {
+					"type": "string",
+					"pattern": "^[0-9a-f]{64}$"
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,20 @@
+---
+- name: Bootstrap a new platform host without closing provider SSH access
+  hosts: platform_hosts
+  become: true
+  gather_facts: true
+
+  roles:
+      - role: otostogan.platform.common
+      - role: otostogan.platform.users
+      - role: otostogan.platform.platform_base
+      - role: otostogan.platform.tailscale
+
+  post_tasks:
+      - name: Explain the required handoff to the private administration network
+        ansible.builtin.debug:
+            msg: >-
+                Bootstrap is complete. Keep the current provider SSH session open.
+                If no tailscale_auth_key_source was configured, run the tailscale up
+                command reported by the role. Verify a new SSH session as the ops
+                user over the tailnet before running otostogan.platform.converge.

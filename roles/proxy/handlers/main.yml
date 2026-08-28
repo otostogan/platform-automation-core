@@ -1,0 +1,6 @@
+---
+- name: Restart platform proxy
+  ansible.builtin.systemd_service:
+      name: platform-proxy.service
+      state: restarted
+      daemon_reload: true

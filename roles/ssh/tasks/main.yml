@@ -1,0 +1,26 @@
+---
+- name: Ensure OpenSSH server is installed
+  ansible.builtin.apt:
+      name: openssh-server
+      state: present
+
+- name: Install platform SSH hardening configuration
+  ansible.builtin.copy:
+      content: |
+          # Managed by Ansible
+          PasswordAuthentication {{ ssh_password_authentication | ternary('yes', 'no') }}
+          KbdInteractiveAuthentication {{ ssh_kbd_interactive_authentication | ternary('yes', 'no') }}
+          PermitRootLogin {{ ssh_permit_root_login }}
+          PubkeyAuthentication {{ ssh_pubkey_authentication | ternary('yes', 'no') }}
+          X11Forwarding {{ ssh_x11_forwarding | ternary('yes', 'no') }}
+          MaxAuthTries {{ ssh_max_auth_tries }}
+          LoginGraceTime {{ ssh_login_grace_time }}
+          ClientAliveInterval {{ ssh_client_alive_interval }}
+          ClientAliveCountMax {{ ssh_client_alive_count_max }}
+          AllowUsers {{ ssh_allowed_users | join(' ') }}
+      dest: /etc/ssh/sshd_config.d/00-platform-hardening.conf
+      owner: root
+      group: root
+      mode: "0644"
+      validate: /usr/sbin/sshd -t -f %s
+  notify: Validate and reload SSH

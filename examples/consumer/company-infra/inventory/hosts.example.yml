@@ -1,0 +1,11 @@
+---
+all:
+    children:
+        platform_hosts:
+            hosts:
+                example-staging:
+                    ansible_host: platform-staging.example.invalid
+                    ansible_user: ops
+                    ansible_port: 22
+                    platform_environment: staging
+                    platform_public_interface: eth0

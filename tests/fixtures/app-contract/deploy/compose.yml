@@ -1,0 +1,67 @@
+name: ${PLATFORM_COMPOSE_PROJECT_NAME:-example-lab}
+
+services:
+    app:
+        image: ${PLATFORM_IMAGE:?PLATFORM_IMAGE must contain an immutable digest}
+        restart: unless-stopped
+        init: true
+        read_only: true
+
+        env_file:
+            - ${PLATFORM_RUNTIME_ENV_FILE:?PLATFORM_RUNTIME_ENV_FILE is required}
+
+        environment:
+            VIRTUAL_HOST: ${PLATFORM_VIRTUAL_HOSTS:?PLATFORM_VIRTUAL_HOSTS is required}
+            VIRTUAL_PORT: ${PLATFORM_INTERNAL_PORT:?PLATFORM_INTERNAL_PORT is required}
+            LETSENCRYPT_HOST: ${PLATFORM_TLS_HOSTS:-}
+
+        expose:
+            - "3000"
+
+        networks:
+            - edge
+            - private
+
+        tmpfs:
+            - /tmp
+
+        healthcheck:
+            test:
+                - CMD
+                - bin/app
+                - healthcheck
+            interval: 10s
+            timeout: 5s
+            retries: 3
+            start_period: 10s
+
+        security_opt:
+            - no-new-privileges:true
+
+    worker:
+        image: ${PLATFORM_IMAGE:?PLATFORM_IMAGE must contain an immutable digest}
+        command:
+            - worker
+        restart: unless-stopped
+        init: true
+        read_only: true
+
+        env_file:
+            - ${PLATFORM_RUNTIME_ENV_FILE:?PLATFORM_RUNTIME_ENV_FILE is required}
+
+        networks:
+            - private
+
+        tmpfs:
+            - /tmp
+
+        security_opt:
+            - no-new-privileges:true
+
+networks:
+    edge:
+        name: platform-edge
+        external: true
+
+    private:
+        internal: true

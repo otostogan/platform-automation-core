@@ -1,0 +1,53 @@
+---
+- name: Validate firewall interfaces
+  ansible.builtin.assert:
+      that:
+          - firewall_public_interface in ansible_interfaces
+          - firewall_tailscale_interface in ansible_interfaces
+      fail_msg: >-
+          Required firewall interfaces were not found.
+          Available interfaces: {{ ansible_interfaces | join(', ') }}
+
+- name: Install UFW
+  ansible.builtin.apt:
+      name: ufw
+      state: present
+
+- name: Deny incoming traffic by default
+  community.general.ufw:
+      direction: incoming
+      policy: deny
+
+- name: Allow outgoing traffic by default
+  community.general.ufw:
+      direction: outgoing
+      policy: allow
+
+- name: Allow traffic arriving through Tailscale
+  community.general.ufw:
+      rule: allow
+      direction: in
+      interface: "{{ firewall_tailscale_interface }}"
+      comment: Platform administration through Tailscale
+
+- name: Allow public platform ports
+  community.general.ufw:
+      rule: allow
+      direction: in
+      interface: "{{ firewall_public_interface }}"
+      protocol: tcp
+      port: "{{ item }}"
+      comment: "Platform public TCP port {{ item }}"
+  loop: "{{ firewall_public_tcp_ports }}"
+
+- name: Configure firewall logging
+  community.general.ufw:
+      logging: "{{ firewall_logging }}"
+
+- name: Enable UFW
+  community.general.ufw:
+      state: enabled
+
+- name: Configure Docker forwarding firewall
+  ansible.builtin.include_tasks: docker.yml
+  when: firewall_docker_enabled

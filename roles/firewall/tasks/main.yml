@@ -1,0 +1,4 @@
+---
+- name: Configure host firewall
+  ansible.builtin.include_tasks: configure.yml
+  when: firewall_enabled

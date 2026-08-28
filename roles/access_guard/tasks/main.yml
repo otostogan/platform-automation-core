@@ -1,0 +1,76 @@
+---
+- name: Read Tailscale connection state
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/tailscale
+          - status
+          - --json
+  become: false
+  register: access_guard_tailscale_status
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  when: access_guard_enabled
+
+- name: Read host Tailscale addresses
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/tailscale
+          - ip
+  become: false
+  register: access_guard_tailscale_addresses
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  when: access_guard_enabled
+
+- name: Read current SSH connection endpoints
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/printenv
+          - SSH_CONNECTION
+  become: false
+  register: access_guard_ssh_connection
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  when: access_guard_enabled
+
+- name: Resolve access safety facts
+  ansible.builtin.set_fact:
+      access_guard_backend_state: >-
+          {{
+            (access_guard_tailscale_status.stdout | from_json).BackendState
+            if access_guard_tailscale_status.rc == 0
+            and access_guard_tailscale_status.stdout | trim | length > 0
+            else 'Unavailable'
+          }}
+      access_guard_ssh_destination: >-
+          {{
+            access_guard_ssh_connection.stdout.split()[2]
+            if access_guard_ssh_connection.rc == 0
+            and access_guard_ssh_connection.stdout.split() | length == 4
+            else ''
+          }}
+  when: access_guard_enabled
+
+- name: Require a verified tailnet operations session
+  ansible.builtin.assert:
+      that:
+          - ansible_user == access_guard_expected_user
+          - access_guard_tailscale_interface in ansible_interfaces
+          - access_guard_backend_state == "Running"
+          - access_guard_tailscale_addresses.rc == 0
+          - >-
+              access_guard_ssh_destination
+              in access_guard_tailscale_addresses.stdout_lines
+      success_msg: >-
+          Full convergence is running as {{ access_guard_expected_user }}
+          through the host Tailscale address.
+      fail_msg: >-
+          Refusing full convergence because this is not a verified tailnet SSH
+          session as {{ access_guard_expected_user }}. Run playbooks/bootstrap.yml,
+          connect Tailscale, open a new tailnet SSH session as
+          {{ access_guard_expected_user }}, and retry. Keep provider console access
+          available until the full playbook succeeds.
+  when: access_guard_enabled

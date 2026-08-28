@@ -1,0 +1,13 @@
+[Unit]
+Description=Platform Docker ingress firewall
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/platform-docker-firewall
+RemainAfterExit=yes
+
+[Install]
+WantedBy=docker.service

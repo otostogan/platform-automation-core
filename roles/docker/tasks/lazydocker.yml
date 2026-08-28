@@ -1,0 +1,62 @@
+---
+- name: Validate lazydocker architecture
+  ansible.builtin.assert:
+      that:
+          - ansible_architecture in docker_lazydocker_architectures
+          - ansible_architecture in docker_lazydocker_checksums
+      fail_msg: "Unsupported lazydocker architecture: {{ ansible_architecture }}"
+
+- name: Create platform download cache
+  ansible.builtin.file:
+      path: /var/cache/platform/downloads
+      state: directory
+      owner: root
+      group: root
+      mode: "0755"
+
+- name: Create versioned lazydocker installation directory
+  ansible.builtin.file:
+      path: "/usr/local/lib/lazydocker/{{ docker_lazydocker_version }}"
+      state: directory
+      owner: root
+      group: root
+      mode: "0755"
+
+- name: Download lazydocker archive
+  ansible.builtin.get_url:
+      url: >-
+          {{
+            'https://github.com/jesseduffield/lazydocker/releases/download/v'
+            ~ docker_lazydocker_version
+            ~ '/lazydocker_'
+            ~ docker_lazydocker_version
+            ~ '_Linux_'
+            ~ docker_lazydocker_architectures[ansible_architecture]
+            ~ '.tar.gz'
+          }}
+      dest: >-
+          /var/cache/platform/downloads/lazydocker_{{ docker_lazydocker_version }}_{{ docker_lazydocker_architectures[ansible_architecture] }}.tar.gz
+      checksum: "{{ docker_lazydocker_checksums[ansible_architecture] }}"
+      owner: root
+      group: root
+      mode: "0644"
+
+- name: Extract lazydocker binary
+  ansible.builtin.unarchive:
+      src: >-
+          /var/cache/platform/downloads/lazydocker_{{ docker_lazydocker_version }}_{{ docker_lazydocker_architectures[ansible_architecture] }}.tar.gz
+      dest: "/usr/local/lib/lazydocker/{{ docker_lazydocker_version }}"
+      remote_src: true
+      include:
+          - lazydocker
+      owner: root
+      group: root
+      mode: "0755"
+      creates: "/usr/local/lib/lazydocker/{{ docker_lazydocker_version }}/lazydocker"
+
+- name: Activate selected lazydocker version
+  ansible.builtin.file:
+      src: "/usr/local/lib/lazydocker/{{ docker_lazydocker_version }}/lazydocker"
+      dest: /usr/local/bin/lazydocker
+      state: link
+      force: true

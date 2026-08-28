@@ -1,0 +1,65 @@
+---
+- name: Validate reboot recovery SOPS recipient policy
+  ansible.builtin.assert:
+      that:
+          - reboot_recovery_minimum_age_recipients | int >= 1
+          - >-
+              reboot_recovery_minimum_age_recipients
+              | string
+              | regex_search('^[1-9][0-9]*$')
+      fail_msg: >-
+          reboot_recovery_minimum_age_recipients must be a positive integer
+
+- name: Inspect installed reboot recovery entrypoint
+  ansible.builtin.stat:
+      path: "{{ reboot_recovery_entrypoint }}"
+      follow: false
+  register: reboot_recovery_entrypoint_stat
+
+- name: Validate installed reboot recovery entrypoint
+  ansible.builtin.assert:
+      that:
+          - reboot_recovery_entrypoint_stat.stat.exists
+          - reboot_recovery_entrypoint_stat.stat.isreg
+          - not reboot_recovery_entrypoint_stat.stat.islnk
+          - reboot_recovery_entrypoint_stat.stat.pw_name == "root"
+          - reboot_recovery_entrypoint_stat.stat.gr_name == "root"
+          - reboot_recovery_entrypoint_stat.stat.mode == "0644"
+      fail_msg: >-
+          Reboot recovery entrypoint must be installed as a
+          root-owned regular file with mode 0644.
+  when:
+      - >-
+          not ansible_check_mode
+          or reboot_recovery_entrypoint_stat.stat.exists
+
+- name: Create Docker systemd drop-in directory
+  ansible.builtin.file:
+      path: /etc/systemd/system/docker.service.d
+      state: directory
+      owner: root
+      group: root
+      mode: "0755"
+
+- name: Install platform secrets recovery service
+  ansible.builtin.template:
+      src: platform-secrets-recovery.service.j2
+      dest: >-
+          /etc/systemd/system/{{ reboot_recovery_service_name }}
+      owner: root
+      group: root
+      mode: "0644"
+
+- name: Install Docker recovery dependency
+  ansible.builtin.template:
+      src: docker-recovery.conf.j2
+      dest: >-
+          /etc/systemd/system/docker.service.d/platform-secrets-recovery.conf
+      owner: root
+      group: root
+      mode: "0644"
+
+- name: Reload systemd after installing recovery units
+  ansible.builtin.systemd_service:
+      daemon_reload: true
+  when: not ansible_check_mode

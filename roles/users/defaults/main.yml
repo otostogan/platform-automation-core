@@ -1,0 +1,8 @@
+---
+users_ops_name: ops
+users_deploy_name: deploy
+
+users_ops_ssh_keys: []
+users_deploy_ssh_keys: []
+
+users_platform_cli_path: /usr/local/bin/platform

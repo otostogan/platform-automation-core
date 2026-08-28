@@ -1,0 +1,4 @@
+---
+access_guard_enabled: true
+access_guard_expected_user: "{{ users_ops_name | default('ops') }}"
+access_guard_tailscale_interface: tailscale0

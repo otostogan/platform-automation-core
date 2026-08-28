@@ -1,0 +1,5 @@
+#!/bin/sh
+PYTHONPATH={{ platform_cli_install_root }} \
+exec /usr/bin/python3 -m platform_automation.platform_cli \
+  --minimum-age-recipients {{ platform_cli_minimum_age_recipients }} \
+  "$@"

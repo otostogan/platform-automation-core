@@ -1,0 +1,76 @@
+---
+- name: Validate required operations SSH public keys
+  ansible.builtin.assert:
+      that:
+          - users_ops_ssh_keys | length > 0
+      fail_msg: >-
+          At least one operations SSH public key must be configured
+          before creating platform users
+
+- name: Create operations user
+  ansible.builtin.user:
+      name: "{{ users_ops_name }}"
+      groups:
+          - sudo
+      append: true
+      create_home: true
+      shell: /bin/bash
+      password_lock: true
+      state: present
+
+- name: Create deployment user
+  ansible.builtin.user:
+      name: "{{ users_deploy_name }}"
+      create_home: true
+      shell: /bin/bash
+      password_lock: true
+      state: present
+
+- name: Create SSH directories
+  ansible.builtin.file:
+      path: "/home/{{ item }}/.ssh"
+      state: directory
+      owner: "{{ item }}"
+      group: "{{ item }}"
+      mode: "0700"
+  loop:
+      - "{{ users_ops_name }}"
+      - "{{ users_deploy_name }}"
+
+- name: Install operations authorized keys
+  ansible.builtin.copy:
+      content: "{{ users_ops_ssh_keys | join('\n') }}\n"
+      dest: "/home/{{ users_ops_name }}/.ssh/authorized_keys"
+      owner: "{{ users_ops_name }}"
+      group: "{{ users_ops_name }}"
+      mode: "0600"
+
+- name: Install deployment authorized keys
+  ansible.builtin.copy:
+      content: "{{ users_deploy_ssh_keys | join('\n') }}\n"
+      dest: "/home/{{ users_deploy_name }}/.ssh/authorized_keys"
+      owner: "{{ users_deploy_name }}"
+      group: "{{ users_deploy_name }}"
+      mode: "0600"
+
+- name: Configure passwordless sudo for operations
+  ansible.builtin.copy:
+      content: "{{ users_ops_name }} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+      dest: "/etc/sudoers.d/platform-ops"
+      owner: root
+      group: root
+      mode: "0440"
+      validate: /usr/sbin/visudo -cf %s
+
+- name: Configure restricted platform CLI sudo for deployment user
+  ansible.builtin.copy:
+      content: >
+          {{ users_deploy_name }} ALL=(root) NOPASSWD:
+          {{ users_platform_cli_path }} deploy *,
+          {{ users_platform_cli_path }} status *,
+          {{ users_platform_cli_path }} rollback *
+      dest: /etc/sudoers.d/platform-deploy
+      owner: root
+      group: root
+      mode: "0440"
+      validate: /usr/sbin/visudo -cf %s

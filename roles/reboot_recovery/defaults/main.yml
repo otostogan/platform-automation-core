@@ -1,0 +1,7 @@
+---
+reboot_recovery_service_name: platform-secrets-recovery.service
+reboot_recovery_entrypoint: >-
+    -m platform_automation.reboot_recovery_entrypoint
+reboot_recovery_timeout: 5min
+reboot_recovery_minimum_age_recipients: >-
+    {{ platform_cli_minimum_age_recipients | default(1) }}

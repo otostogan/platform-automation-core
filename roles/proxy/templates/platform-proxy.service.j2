@@ -1,0 +1,24 @@
+[Unit]
+Description=Platform reverse proxy
+Requires=docker.service
+After=docker.service network-online.target platform-docker-firewall.service
+Wants=network-online.target
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ proxy_install_directory }}
+EnvironmentFile={{ proxy_environment_file }}
+Environment=PYTHONPATH=/opt/platform/runtime
+ExecStartPre=/usr/bin/docker compose --env-file {{ proxy_environment_file }} --file {{ proxy_install_directory }}/compose.yml config --quiet
+ExecStart=/usr/bin/docker compose --env-file {{ proxy_environment_file }} --file {{ proxy_install_directory }}/compose.yml up --detach --remove-orphans --wait --wait-timeout 120
+ExecStartPost=/usr/bin/python3 -m platform_automation.nginx_reconcile
+ExecReload=/usr/bin/docker compose --env-file {{ proxy_environment_file }} --file {{ proxy_install_directory }}/compose.yml up --detach --remove-orphans --wait --wait-timeout 120
+ExecReload=/usr/bin/python3 -m platform_automation.nginx_reconcile
+ExecStop=/usr/bin/docker compose --env-file {{ proxy_environment_file }} --file {{ proxy_install_directory }}/compose.yml stop --timeout 30
+TimeoutStartSec=180
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

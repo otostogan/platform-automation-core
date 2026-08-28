@@ -1,0 +1,33 @@
+---
+name: Deploy immutable application image
+
+on:
+    workflow_dispatch:
+        inputs:
+            image_reference:
+                description: Immutable ghcr.io/example/platform-example reference
+                required: true
+                type: string
+            release_tag:
+                description: Human-readable release tag
+                required: true
+                type: string
+
+jobs:
+    deploy:
+        permissions:
+            contents: read
+            id-token: write
+            packages: read
+        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.3.0
+        with:
+            manifest_path: deploy/platform.yml
+            image_reference: ${{ inputs.image_reference }}
+            release_tag: ${{ inputs.release_tag }}
+            target_host: platform-staging.example.invalid
+            tailscale_tag: tag:platform-ci
+            minimum_age_recipients: 2
+        secrets:
+            platform_core_token: ${{ secrets.PLATFORM_CORE_TOKEN }}
+            tailscale_oauth_client_id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+            tailscale_audience: ${{ secrets.TS_AUDIENCE }}

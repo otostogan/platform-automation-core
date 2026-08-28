@@ -1,0 +1,227 @@
+---
+name: Reusable platform deployment
+
+on:
+    workflow_call:
+        inputs:
+            manifest_path:
+                description: Path to the platform/v1 application manifest
+                required: true
+                type: string
+
+            image_reference:
+                description: Immutable container image reference with sha256 digest
+                required: true
+                type: string
+
+            release_tag:
+                description: Human-readable release tag recorded by the platform
+                required: true
+                type: string
+
+            target_host:
+                description: Tailscale MagicDNS name of the target server
+                required: true
+                type: string
+
+            tailscale_tag:
+                description: Tag assigned to the ephemeral GitHub Actions node
+                required: true
+                type: string
+
+            minimum_age_recipients:
+                description: Minimum unique SOPS age recipients required in the bundle
+                required: false
+                default: 1
+                type: number
+
+        secrets:
+            platform_core_token:
+                description: Token with read access to platform automation releases
+                required: true
+
+            tailscale_oauth_client_id:
+                description: Tailscale federated identity client ID
+                required: true
+
+            tailscale_audience:
+                description: Tailscale federated identity audience
+                required: true
+
+jobs:
+    deploy:
+        name: Deploy immutable release
+        runs-on: ubuntu-24.04
+        timeout-minutes: 20
+
+        permissions:
+            contents: read
+            id-token: write
+            packages: read
+
+        steps:
+            - name: Validate reusable workflow inputs
+              env:
+                  IMAGE_REFERENCE: ${{ inputs.image_reference }}
+                  MANIFEST_PATH: ${{ inputs.manifest_path }}
+                  MINIMUM_AGE_RECIPIENTS: ${{ inputs.minimum_age_recipients }}
+                  RELEASE_TAG: ${{ inputs.release_tag }}
+                  TAILSCALE_TAG: ${{ inputs.tailscale_tag }}
+                  TARGET_HOST: ${{ inputs.target_host }}
+              run: |
+                  test -n "${MANIFEST_PATH}"
+                  test "${MINIMUM_AGE_RECIPIENTS}" -ge 1
+                  test -n "${IMAGE_REFERENCE}"
+                  test -n "${RELEASE_TAG}"
+                  test -n "${TARGET_HOST}"
+                  test -n "${TAILSCALE_TAG}"
+
+                  if [[ ! "${IMAGE_REFERENCE}" =~ @sha256:[a-f0-9]{64}$ ]]; then
+                      echo "image_reference must contain an immutable sha256 digest" >&2
+                      exit 1
+                  fi
+
+                  if [[ ! "${RELEASE_TAG}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; then
+                      echo "release_tag has an invalid format" >&2
+                      exit 1
+                  fi
+
+                  if [[ "${MANIFEST_PATH}" = /* || "${MANIFEST_PATH}" == *".."* ]]; then
+                      echo "manifest_path must remain inside the application repository" >&2
+                      exit 1
+                  fi
+
+                  if [[ ! "${TARGET_HOST}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]]; then
+                      echo "target_host has an invalid format" >&2
+                      exit 1
+                  fi
+
+                  if [[ ! "${TAILSCALE_TAG}" =~ ^tag:[A-Za-z0-9][A-Za-z0-9_-]{0,62}$ ]]; then
+                      echo "tailscale_tag has an invalid format" >&2
+                      exit 1
+                  fi
+
+            - name: Check out application repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Prepare deployment bundle
+              id: bundle
+              uses: otostogan/platform-automation-core/.github/actions/build-bundle@v0.3.0
+              with:
+                  manifest-path: ${{ inputs.manifest_path }}
+                  core-version: v0.3.0
+                  github-token: ${{ secrets.platform_core_token }}
+                  minimum-age-recipients: ${{ inputs.minimum_age_recipients }}
+
+            - name: Prepare deployment runtime paths
+              id: runtime
+              env:
+                  ENVIRONMENT: ${{ steps.bundle.outputs.environment }}
+                  PROJECT: ${{ steps.bundle.outputs.project }}
+              run: |
+                  remote_path="/tmp/${PROJECT}-${ENVIRONMENT}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.bundle.tar.gz"
+
+                  echo "remote_path=${remote_path}" >> "${GITHUB_OUTPUT}"
+
+            - name: Connect runner to Tailscale
+              id: tailscale
+              uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
+              with:
+                  oauth-client-id: ${{ secrets.tailscale_oauth_client_id }}
+                  audience: ${{ secrets.tailscale_audience }}
+                  tags: ${{ inputs.tailscale_tag }}
+
+            - name: Verify deployment access
+              env:
+                  TARGET_HOST: ${{ inputs.target_host }}
+              run: |
+                  tailscale status
+                  tailscale ssh "deploy@${TARGET_HOST}" \
+                      'id && hostname'
+
+            - name: Transfer verified deployment bundle
+              env:
+                  LOCAL_BUNDLE: ${{ steps.bundle.outputs.bundle_path }}
+                  REMOTE_BUNDLE: ${{ steps.runtime.outputs.remote_path }}
+                  TARGET_HOST: ${{ inputs.target_host }}
+              run: |
+                  local_digest="$(
+                      sha256sum "${LOCAL_BUNDLE}" |
+                          cut --delimiter=' ' --fields=1
+                  )"
+
+                  tailscale ssh "deploy@${TARGET_HOST}" \
+                      "umask 077 && cat > '${REMOTE_BUNDLE}'" \
+                      < "${LOCAL_BUNDLE}"
+
+                  remote_digest="$(
+                      tailscale ssh "deploy@${TARGET_HOST}" \
+                          "sha256sum '${REMOTE_BUNDLE}' | cut --delimiter=' ' --fields=1"
+                  )"
+
+                  if [[ "${remote_digest}" != "${local_digest}" ]]; then
+                      tailscale ssh "deploy@${TARGET_HOST}" \
+                          "rm -f '${REMOTE_BUNDLE}'"
+
+                      echo "Transferred bundle digest does not match" >&2
+                      exit 1
+                  fi
+
+            - name: Deploy immutable release
+              env:
+                  ENVIRONMENT: ${{ steps.bundle.outputs.environment }}
+                  IMAGE_REFERENCE: ${{ inputs.image_reference }}
+                  PROJECT: ${{ steps.bundle.outputs.project }}
+                  REGISTRY_TOKEN: ${{ github.token }}
+                  REGISTRY_USERNAME: ${{ github.actor }}
+                  RELEASE_TAG: ${{ inputs.release_tag }}
+                  REMOTE_BUNDLE: ${{ steps.runtime.outputs.remote_path }}
+                  TARGET_HOST: ${{ inputs.target_host }}
+              run: |
+                  test -n "${REGISTRY_TOKEN}"
+
+                  printf '%s\n' "${REGISTRY_TOKEN}" |
+                      tailscale ssh "deploy@${TARGET_HOST}" \
+                          "sudo -n platform deploy \
+                              --project '${PROJECT}' \
+                              --environment '${ENVIRONMENT}' \
+                              --bundle '${REMOTE_BUNDLE}' \
+                              --image '${IMAGE_REFERENCE}' \
+                              --release-tag '${RELEASE_TAG}' \
+                              --registry-username '${REGISTRY_USERNAME}' \
+                              --registry-token-stdin \
+                              --json"
+
+            - name: Verify deployed release
+              env:
+                  ENVIRONMENT: ${{ steps.bundle.outputs.environment }}
+                  HEALTHCHECK_HOST: ${{ steps.bundle.outputs.healthcheck_host }}
+                  HEALTHCHECK_PATH: ${{ steps.bundle.outputs.healthcheck_path }}
+                  PROJECT: ${{ steps.bundle.outputs.project }}
+                  TARGET_HOST: ${{ inputs.target_host }}
+              run: |
+                  tailscale ssh "deploy@${TARGET_HOST}" \
+                      "sudo -n platform status \
+                          --project '${PROJECT}' \
+                          --environment '${ENVIRONMENT}' \
+                          --json"
+
+                  tailscale ssh "deploy@${TARGET_HOST}" \
+                      "curl \
+                          --fail \
+                          --silent \
+                          --show-error \
+                          --max-time 10 \
+                          --header 'Host: ${HEALTHCHECK_HOST}' \
+                          'http://127.0.0.1${HEALTHCHECK_PATH}'"
+
+            - name: Remove transferred deployment bundle
+              if: ${{ always() && steps.tailscale.outcome == 'success' }}
+              env:
+                  REMOTE_BUNDLE: ${{ steps.runtime.outputs.remote_path }}
+                  TARGET_HOST: ${{ inputs.target_host }}
+              run: |
+                  tailscale ssh "deploy@${TARGET_HOST}" \
+                      "rm -f '${REMOTE_BUNDLE}'"

@@ -1,0 +1,7 @@
+---
+- name: Audit VPS readiness without changing the host
+  hosts: platform_hosts
+  gather_facts: true
+
+  roles:
+      - role: otostogan.platform.vps_readiness

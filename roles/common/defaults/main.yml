@@ -1,0 +1,18 @@
+---
+common_timezone: Etc/UTC
+common_apt_cache_valid_time: 3600
+
+common_packages:
+    - acl
+    - ca-certificates
+    - curl
+    - git
+    - jq
+    - logrotate
+    - rsync
+    - unattended-upgrades
+    - unzip
+
+common_unattended_upgrades_automatic_reboot: false
+common_unattended_upgrades_remove_unused_dependencies: true
+common_unattended_upgrades_remove_unused_kernel_packages: true

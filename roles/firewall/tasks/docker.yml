@@ -1,0 +1,25 @@
+---
+- name: Install platform Docker firewall script
+  ansible.builtin.template:
+      src: platform-docker-firewall.sh.j2
+      dest: /usr/local/sbin/platform-docker-firewall
+      owner: root
+      group: root
+      mode: "0755"
+  notify: Restart platform Docker firewall
+
+- name: Install platform Docker firewall service
+  ansible.builtin.template:
+      src: platform-docker-firewall.service.j2
+      dest: /etc/systemd/system/platform-docker-firewall.service
+      owner: root
+      group: root
+      mode: "0644"
+  notify: Restart platform Docker firewall
+
+- name: Enable platform Docker firewall service
+  ansible.builtin.systemd_service:
+      name: platform-docker-firewall.service
+      enabled: true
+      state: started
+      daemon_reload: true

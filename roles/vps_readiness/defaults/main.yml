@@ -1,0 +1,23 @@
+---
+vps_readiness_phase: pre
+vps_readiness_output: human
+vps_readiness_fail_on_error: true
+
+vps_readiness_minimum_memory_mb: 2048
+vps_readiness_minimum_root_disk_bytes: 21474836480
+vps_readiness_minimum_root_available_bytes: 5368709120
+vps_readiness_supported_architectures:
+    - x86_64
+    - aarch64
+vps_readiness_allowed_public_tcp_ports:
+    - 80
+    - 443
+vps_readiness_expected_ssh_user: ops
+vps_readiness_tailscale_interface: tailscale0
+vps_readiness_required_services:
+    - containerd.service
+    - docker.service
+    - tailscaled.service
+    - platform-docker-firewall.service
+    - platform-proxy.service
+    - platform-nginx-reconcile.timer

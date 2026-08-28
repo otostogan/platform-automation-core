@@ -1,0 +1,4 @@
+---
+- name: Configure platform proxy
+  ansible.builtin.include_tasks: configure.yml
+  when: proxy_enabled

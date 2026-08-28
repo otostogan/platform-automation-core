@@ -1,0 +1,179 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://platform.local/contracts/release-v1.schema.json",
+	"title": "Platform release record v1",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"api_version",
+		"release_id",
+		"project",
+		"environment",
+		"release_tag",
+		"image",
+		"bundle",
+		"status",
+		"created_at",
+		"updated_at",
+		"previous_release_id",
+		"rollback_of_release_id",
+		"migration",
+		"healthcheck"
+	],
+	"properties": {
+		"api_version": {
+			"const": "platform-release/v1"
+		},
+		"release_id": {
+			"$ref": "#/$defs/release_id"
+		},
+		"project": {
+			"$ref": "#/$defs/project"
+		},
+		"environment": {
+			"$ref": "#/$defs/environment"
+		},
+		"release_tag": {
+			"type": "string",
+			"minLength": 1,
+			"maxLength": 128,
+			"pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+		},
+		"image": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"reference",
+				"repository",
+				"digest"
+			],
+			"properties": {
+				"reference": {
+					"type": "string",
+					"maxLength": 400
+				},
+				"repository": {
+					"type": "string",
+					"maxLength": 255
+				},
+				"digest": {
+					"$ref": "#/$defs/image_digest"
+				}
+			}
+		},
+		"bundle": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"digest",
+				"relative_path"
+			],
+			"properties": {
+				"digest": {
+					"$ref": "#/$defs/hex_digest"
+				},
+				"relative_path": {
+					"type": "string",
+					"pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+				}
+			}
+		},
+		"status": {
+			"enum": [
+				"prepared",
+				"deploying",
+				"deployed",
+				"failed",
+				"rolled_back"
+			]
+		},
+		"created_at": {
+			"$ref": "#/$defs/timestamp"
+		},
+		"updated_at": {
+			"$ref": "#/$defs/timestamp"
+		},
+		"previous_release_id": {
+			"$ref": "#/$defs/optional_release_id"
+		},
+		"rollback_of_release_id": {
+			"$ref": "#/$defs/optional_release_id"
+		},
+		"migration": {
+			"$ref": "#/$defs/result"
+		},
+		"healthcheck": {
+			"$ref": "#/$defs/result"
+		}
+	},
+	"$defs": {
+		"project": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]{1,62}$"
+		},
+		"environment": {
+			"enum": [
+				"lab",
+				"staging",
+				"production"
+			]
+		},
+		"release_id": {
+			"type": "string",
+			"pattern": "^[0-9a-f]{32}$"
+		},
+		"optional_release_id": {
+			"type": [
+				"string",
+				"null"
+			],
+			"pattern": "^[0-9a-f]{32}$"
+		},
+		"hex_digest": {
+			"type": "string",
+			"pattern": "^[0-9a-f]{64}$"
+		},
+		"image_digest": {
+			"type": "string",
+			"pattern": "^sha256:[0-9a-f]{64}$"
+		},
+		"timestamp": {
+			"type": "string",
+			"pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+		},
+		"result": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"status",
+				"completed_at",
+				"error"
+			],
+			"properties": {
+				"status": {
+					"enum": [
+						"pending",
+						"not_required",
+						"running",
+						"succeeded",
+						"failed"
+					]
+				},
+				"completed_at": {
+					"type": [
+						"string",
+						"null"
+					],
+					"pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+				},
+				"error": {
+					"type": [
+						"string",
+						"null"
+					],
+					"maxLength": 2048
+				}
+			}
+		}
+	}
+}

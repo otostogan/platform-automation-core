@@ -1,0 +1,5 @@
+.env
+*.agekey
+keys.txt
+deploy/secrets.*.plaintext.yaml
+deploy/secrets.*.decrypted.yaml

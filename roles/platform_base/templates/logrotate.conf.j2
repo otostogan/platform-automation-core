@@ -1,0 +1,10 @@
+/var/log/platform/*.log {
+    daily
+    rotate {{ platform_base_logrotate_retention }}
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    create 0640 root root
+}

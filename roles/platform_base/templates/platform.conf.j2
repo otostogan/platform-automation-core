@@ -1,0 +1,5 @@
+# Managed by Ansible
+
+{% for directory in platform_base_runtime_directories %}
+d {{ directory.path }} {{ directory.mode }} root root -
+{% endfor %}

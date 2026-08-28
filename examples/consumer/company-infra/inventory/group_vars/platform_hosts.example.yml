@@ -1,0 +1,15 @@
+---
+access_guard_enabled: true
+users_ops_ssh_keys: []
+users_deploy_ssh_keys: []
+
+# Enable 2 only after every deployable SOPS file has both primary and recovery
+# recipients. The host then rejects new and rollback bundles with only one.
+platform_cli_minimum_age_recipients: 2
+
+tailscale_advertise_tags:
+    - tag:platform-server
+
+proxy_acme_enabled: true
+proxy_acme_email: ops@example.invalid
+proxy_acme_ca_uri: https://acme-staging-v02.api.letsencrypt.org/directory

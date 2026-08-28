@@ -1,0 +1,193 @@
+---
+- name: Find root filesystem facts
+  ansible.builtin.set_fact:
+      vps_readiness_root_mounts: >-
+          {{
+            ansible_mounts | default([])
+            | selectattr("mount", "equalto", "/")
+            | list
+          }}
+
+- name: Probe passwordless sudo access
+  ansible.builtin.command: /usr/bin/true
+  become: true
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_sudo
+
+- name: Probe default routes
+  ansible.builtin.command:
+      argv:
+          - /usr/sbin/ip
+          - -json
+          - route
+          - show
+          - default
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  register: vps_readiness_default_routes
+
+- name: Parse default routes
+  ansible.builtin.set_fact:
+      vps_readiness_default_route_devices: >-
+          {{
+            (
+              vps_readiness_default_routes.stdout
+              | from_json
+              | map(attribute="dev", default="")
+              | reject("equalto", "")
+              | list
+            )
+            if (
+              vps_readiness_default_routes.rc == 0
+              and vps_readiness_default_routes.stdout | length > 0
+            )
+            else []
+          }}
+
+- name: Record operating system readiness
+  ansible.builtin.set_fact:
+      vps_readiness_results: >-
+          {{
+            vps_readiness_results
+            + [
+              {
+                "check": "operating_system",
+                "status": (
+                  "pass"
+                  if (
+                    ansible_distribution == "Ubuntu"
+                    and ansible_distribution_version is version("24.04", ">=")
+                  )
+                  else "fail"
+                ),
+                "message": ansible_distribution
+                  ~ " " ~ ansible_distribution_version
+              },
+              {
+                "check": "architecture",
+                "status": (
+                  "pass"
+                  if ansible_architecture in vps_readiness_supported_architectures
+                  else "fail"
+                ),
+                "message": ansible_architecture
+              },
+              {
+                "check": "memory",
+                "status": (
+                  "pass"
+                  if ansible_memtotal_mb >= vps_readiness_minimum_memory_mb
+                  else "fail"
+                ),
+                "message": ansible_memtotal_mb | string ~ " MiB total"
+              },
+              {
+                "check": "root_disk",
+                "status": (
+                  "pass"
+                  if (
+                    vps_readiness_root_mounts | length == 1
+                    and (
+                      vps_readiness_root_mounts[0].size_total | int
+                      >= vps_readiness_minimum_root_disk_bytes
+                    )
+                  )
+                  else "fail"
+                ),
+                "message": (
+                  (
+                    vps_readiness_root_mounts[0].size_total
+                    | int
+                    | human_readable
+                  )
+                  ~ " total, "
+                  ~ (
+                    vps_readiness_root_mounts[0].size_available
+                    | int
+                    | human_readable
+                  )
+                  ~ " available"
+                  if vps_readiness_root_mounts | length == 1
+                  else "root filesystem facts unavailable"
+                )
+              },
+              {
+                "check": "root_disk_headroom",
+                "status": (
+                  "pass"
+                  if (
+                    vps_readiness_root_mounts | length == 1
+                    and (
+                      vps_readiness_root_mounts[0].size_available | int
+                      >= vps_readiness_minimum_root_available_bytes
+                    )
+                  )
+                  else "fail"
+                ),
+                "message": "at least 5 GiB must remain available"
+              }
+            ]
+          }}
+
+- name: Record network and access readiness
+  ansible.builtin.set_fact:
+      vps_readiness_results: >-
+          {{
+            vps_readiness_results
+            + [
+              {
+                "check": "public_interface",
+                "status": (
+                  "pass"
+                  if (
+                    platform_public_interface is defined
+                    and platform_public_interface
+                      in ansible_interfaces | default([])
+                  )
+                  else "fail"
+                ),
+                "message": (
+                  platform_public_interface
+                  if platform_public_interface is defined
+                  else "platform_public_interface is undefined"
+                )
+              },
+              {
+                "check": "default_route",
+                "status": (
+                  "pass"
+                  if (
+                    platform_public_interface is defined
+                    and platform_public_interface
+                      in vps_readiness_default_route_devices
+                  )
+                  else "fail"
+                ),
+                "message": (
+                  "default route devices: "
+                  ~ (
+                    vps_readiness_default_route_devices
+                    | join(", ")
+                    | default("none", true)
+                  )
+                )
+              },
+              {
+                "check": "sudo",
+                "status": "pass" if vps_readiness_sudo.rc == 0 else "fail",
+                "message": (
+                  "become succeeded"
+                  if vps_readiness_sudo.rc == 0
+                  else "become failed"
+                )
+              },
+              {
+                "check": "ssh_identity",
+                "status": "info",
+                "message": "connected as " ~ vps_readiness_connected_user
+              }
+            ]
+          }}

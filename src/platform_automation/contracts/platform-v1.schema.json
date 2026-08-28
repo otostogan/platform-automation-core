@@ -1,0 +1,344 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"title": "Reusable VPS DevOps Platform application manifest",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"api_version",
+		"project",
+		"environment",
+		"compose_file",
+		"image",
+		"service",
+		"domains",
+		"deployment",
+		"database",
+		"secrets",
+		"restore_validation"
+	],
+	"properties": {
+		"api_version": {
+			"const": "platform/v1"
+		},
+		"project": {
+			"$ref": "#/$defs/slug"
+		},
+		"environment": {
+			"enum": [
+				"lab",
+				"staging",
+				"production"
+			]
+		},
+		"compose_file": {
+			"type": "string",
+			"pattern": "^deploy/(?!.*\\.\\.)[A-Za-z0-9._/-]+\\.ya?ml$"
+		},
+		"image": {
+			"$ref": "#/$defs/image"
+		},
+		"service": {
+			"$ref": "#/$defs/service"
+		},
+		"domains": {
+			"type": "array",
+			"minItems": 1,
+			"maxItems": 20,
+			"items": {
+				"$ref": "#/$defs/domain"
+			}
+		},
+		"deployment": {
+			"$ref": "#/$defs/deployment"
+		},
+		"database": {
+			"$ref": "#/$defs/database"
+		},
+		"secrets": {
+			"$ref": "#/$defs/secrets"
+		},
+		"restore_validation": {
+			"$ref": "#/$defs/restore_validation"
+		}
+	},
+	"$defs": {
+		"slug": {
+			"type": "string",
+			"minLength": 1,
+			"maxLength": 63,
+			"pattern": "^[a-z][a-z0-9-]*$"
+		},
+		"service_name": {
+			"type": "string",
+			"minLength": 1,
+			"maxLength": 63,
+			"pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+		},
+		"image": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"repository"
+			],
+			"properties": {
+				"repository": {
+					"type": "string",
+					"maxLength": 255,
+					"pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[1-9][0-9]*)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*){2,}$"
+				}
+			}
+		},
+		"service": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"web",
+				"internal_port",
+				"healthcheck"
+			],
+			"properties": {
+				"web": {
+					"$ref": "#/$defs/service_name"
+				},
+				"internal_port": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 65535
+				},
+				"healthcheck": {
+					"$ref": "#/$defs/healthcheck"
+				}
+			}
+		},
+		"healthcheck": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"path",
+				"timeout_seconds"
+			],
+			"properties": {
+				"path": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 2048,
+					"pattern": "^/"
+				},
+				"timeout_seconds": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 600
+				}
+			}
+		},
+		"domain": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"host",
+				"tls",
+				"nginx"
+			],
+			"properties": {
+				"host": {
+					"type": "string",
+					"maxLength": 253,
+					"pattern": "^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+				},
+				"tls": {
+					"type": "boolean"
+				},
+				"nginx": {
+					"$ref": "#/$defs/nginx"
+				}
+			}
+		},
+		"nginx": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"client_max_body_size": {
+					"$ref": "#/$defs/size"
+				},
+				"proxy_connect_timeout": {
+					"$ref": "#/$defs/duration"
+				},
+				"proxy_read_timeout": {
+					"$ref": "#/$defs/duration"
+				},
+				"proxy_send_timeout": {
+					"$ref": "#/$defs/duration"
+				},
+				"gzip": {
+					"$ref": "#/$defs/gzip"
+				},
+				"raw_vhost_snippet": {
+					"$ref": "#/$defs/raw_snippet"
+				},
+				"raw_location_snippet": {
+					"$ref": "#/$defs/raw_snippet"
+				}
+			}
+		},
+		"size": {
+			"type": "string",
+			"pattern": "^[1-9][0-9]*[kKmMgG]$"
+		},
+		"duration": {
+			"type": "string",
+			"pattern": "^[1-9][0-9]*(ms|s|m|h)$"
+		},
+		"gzip": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"enabled",
+				"types"
+			],
+			"properties": {
+				"enabled": {
+					"type": "boolean"
+				},
+				"types": {
+					"type": "array",
+					"uniqueItems": true,
+					"maxItems": 50,
+					"items": {
+						"type": "string",
+						"pattern": "^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+*-]*$"
+					}
+				}
+			},
+			"allOf": [
+				{
+					"if": {
+						"properties": {
+							"enabled": {
+								"const": true
+							}
+						}
+					},
+					"then": {
+						"properties": {
+							"types": {
+								"minItems": 1
+							}
+						}
+					}
+				}
+			]
+		},
+		"raw_snippet": {
+			"type": [
+				"string",
+				"null"
+			],
+			"maxLength": 16384
+		},
+		"deployment": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"migration_service": {
+					"$ref": "#/$defs/service_name"
+				},
+				"migration_command": {
+					"type": "array",
+					"minItems": 1,
+					"maxItems": 100,
+					"items": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4096
+					}
+				}
+			},
+			"dependentRequired": {
+				"migration_service": [
+					"migration_command"
+				],
+				"migration_command": [
+					"migration_service"
+				]
+			}
+		},
+		"database": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"mode",
+				"postgres_major",
+				"backup_enabled"
+			],
+			"properties": {
+				"mode": {
+					"enum": [
+						"external",
+						"docker"
+					]
+				},
+				"postgres_major": {
+					"const": 17
+				},
+				"backup_enabled": {
+					"type": "boolean"
+				}
+			},
+			"allOf": [
+				{
+					"if": {
+						"properties": {
+							"mode": {
+								"const": "external"
+							}
+						},
+						"required": [
+							"mode"
+						]
+					},
+					"then": {
+						"properties": {
+							"backup_enabled": {
+								"const": false
+							}
+						}
+					}
+				}
+			]
+		},
+		"secrets": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"source",
+				"delivery"
+			],
+			"properties": {
+				"source": {
+					"type": "string",
+					"pattern": "^deploy/(?!.*\\.\\.)[A-Za-z0-9._-]+\\.sops\\.ya?ml$"
+				},
+				"delivery": {
+					"enum": [
+						"env",
+						"files"
+					]
+				}
+			}
+		},
+		"restore_validation": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"query"
+			],
+			"properties": {
+				"query": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 4096
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,30 @@
+---
+namespace: otostogan
+name: platform
+version: 0.3.0
+readme: README.md
+authors:
+    - Otostogan
+description: Proprietary host automation and deployment runtime for platform/v1.
+license:
+    - LicenseRef-Proprietary
+tags:
+    - infrastructure
+    - security
+    - deployment
+dependencies:
+    community.general: ">=8.6.0,<9.0.0"
+repository: https://github.com/otostogan/platform-automation-core
+build_ignore:
+    - .git
+    - .github
+    - .DS_Store
+    - "**/.DS_Store"
+    - .venv
+    - build
+    - dist
+    - docs
+    - examples
+    - tests
+    - pyproject.toml
+    - scripts

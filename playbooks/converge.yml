@@ -1,0 +1,21 @@
+---
+- name: Configure platform hosts
+  hosts: platform_hosts
+  become: true
+  gather_facts: true
+
+  roles:
+      - role: otostogan.platform.access_guard
+        tags:
+            - access_guard
+      - role: otostogan.platform.common
+      - role: otostogan.platform.users
+      - role: otostogan.platform.platform_base
+      - role: otostogan.platform.secrets
+      - role: otostogan.platform.ssh
+      - role: otostogan.platform.tailscale
+      - role: otostogan.platform.docker
+      - role: otostogan.platform.firewall
+      - role: otostogan.platform.platform_cli
+      - role: otostogan.platform.proxy
+      - role: otostogan.platform.reboot_recovery

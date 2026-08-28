@@ -1,0 +1,240 @@
+---
+name: CI
+
+on:
+    pull_request:
+    push:
+        branches:
+            - main
+
+permissions:
+    contents: read
+
+jobs:
+    repository-boundaries:
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+            - name: Reject generated local files
+              shell: bash
+              run: |
+                  test -z "$(find . -name .DS_Store -not -path './.git/*' -print -quit)"
+                  test -z "$(find . -name local-secrets.yml -print -quit)"
+
+            - name: Reject customer data and secrets
+              env:
+                  CORE_FORBIDDEN_MARKERS: ${{ secrets.CORE_FORBIDDEN_MARKERS }}
+                  CORE_REQUIRE_FORBIDDEN_MARKERS: "1"
+              run: python -m scripts.check_repository_boundaries
+
+    runtime:
+        runs-on: ubuntu-24.04
+        strategy:
+            fail-fast: false
+            matrix:
+                python-version:
+                    - "3.9"
+                    - "3.12"
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+            - name: Set up Python
+              uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+              with:
+                  python-version: ${{ matrix.python-version }}
+                  cache: pip
+
+            - name: Install runtime and development tools
+              run: python -m pip install --upgrade pip '.[dev]'
+
+            - name: Check formatting
+              run: python -m black --check src tests
+
+            - name: Run runtime tests
+              run: python -m unittest discover -s tests -p 'test_*.py'
+
+            - name: Build distributions
+              run: python -m build
+
+            - name: Verify wheel without checkout-relative imports
+              shell: bash
+              run: |
+                  temporary_directory="$(mktemp -d)"
+                  python -m venv "${temporary_directory}/venv"
+                  "${temporary_directory}/venv/bin/python" -m pip install dist/*.whl
+                  cd "${temporary_directory}"
+                  "${temporary_directory}/venv/bin/platform" --help
+                  "${temporary_directory}/venv/bin/python" -c \
+                    'from platform_automation.contract_resources import contract_path; assert contract_path("platform-v1.schema.json").is_file()'
+
+    ansible-collection:
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+            - name: Set up Python
+              uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+              with:
+                  python-version: "3.9"
+                  cache: pip
+
+            - name: Install pinned Ansible toolchain
+              run: >-
+                  python -m pip install
+                  ansible-core==2.15.13
+                  ansible-lint==6.22.2
+
+            - name: Install collection dependencies
+              run: ansible-galaxy collection install -r requirements.yml
+
+            - name: Lint Ansible content
+              run: ansible-lint playbooks roles
+
+            - name: Run structural Ansible tests
+              run: >-
+                  python -m unittest
+                  tests.test_nginx_transaction_ansible
+                  tests.test_reboot_recovery_ansible
+                  tests.test_vps_bootstrap_ansible
+                  tests.test_vps_readiness_ansible
+
+            - name: Build and install collection artifact
+              shell: bash
+              run: |
+                  ansible-galaxy collection build --output-path dist
+                  mapfile -t collection_artifacts < <(
+                    find dist \
+                      -maxdepth 1 \
+                      -type f \
+                      -name 'otostogan-platform-*.tar.gz'
+                  )
+                  test "${#collection_artifacts[@]}" -eq 1
+                  collection_root="$(mktemp -d)"
+                  ansible-galaxy collection install \
+                    "${collection_artifacts[0]}" \
+                    --collections-path "${collection_root}" \
+                    --force
+                  echo "ANSIBLE_COLLECTIONS_PATHS=${collection_root}" >> "${GITHUB_ENV}"
+
+            - name: Syntax-check installed collection playbooks
+              shell: bash
+              run: |
+                  for playbook in preflight bootstrap converge readiness; do
+                    ansible-playbook \
+                      "otostogan.platform.${playbook}" \
+                      --syntax-check \
+                      --inventory localhost,
+                  done
+
+    consumer-fixture:
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+            - name: Set up Python
+              uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+              with:
+                  python-version: "3.9"
+                  cache: pip
+
+            - name: Install runtime and pinned Ansible
+              run: >-
+                  python -m pip install
+                  .
+                  ansible-core==2.15.13
+
+            - name: Install SOPS and age
+              shell: bash
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install --yes age
+                  curl \
+                    --fail \
+                    --location \
+                    --silent \
+                    --show-error \
+                    --output "${RUNNER_TEMP}/sops" \
+                    https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+                  printf '%s  %s\n' \
+                    e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b \
+                    "${RUNNER_TEMP}/sops" |
+                      sha256sum --check
+                  chmod 0755 "${RUNNER_TEMP}/sops"
+
+            - name: Create temporary SOPS identity and encrypted fixture
+              id: fixture
+              shell: bash
+              run: |
+                  fixture_root="$(mktemp -d)"
+                  cp -R examples/consumer/application "${fixture_root}/application"
+                  umask 077
+                  age-keygen --output "${fixture_root}/primary.agekey"
+                  age-keygen --output "${fixture_root}/recovery.agekey"
+                  primary_recipient="$(age-keygen -y "${fixture_root}/primary.agekey")"
+                  recovery_recipient="$(age-keygen -y "${fixture_root}/recovery.agekey")"
+                  printf '%s\n' \
+                    'APP_SECRET: fixture-only' \
+                    'DATABASE_URL: postgres://fixture.invalid/example' \
+                    > "${fixture_root}/plaintext.yml"
+                  "${RUNNER_TEMP}/sops" \
+                    --encrypt \
+                    --age "${primary_recipient},${recovery_recipient}" \
+                    --output "${fixture_root}/application/deploy/secrets.staging.sops.yaml" \
+                    "${fixture_root}/plaintext.yml"
+                  shred --remove "${fixture_root}/plaintext.yml"
+                  echo "root=${fixture_root}" >> "${GITHUB_OUTPUT}"
+
+            - name: Validate external application contract
+              env:
+                  FIXTURE_ROOT: ${{ steps.fixture.outputs.root }}
+              shell: bash
+              run: |
+                  manifest="${FIXTURE_ROOT}/application/deploy/platform.yml"
+                  bundle="${RUNNER_TEMP}/consumer.bundle.tar.gz"
+                  platform-validate-manifest "${manifest}"
+                  platform-build-bundle "${manifest}" \
+                    --output "${bundle}" \
+                    --minimum-age-recipients 2
+                  BUNDLE="${bundle}" python -c \
+                    'import os; from pathlib import Path; from platform_automation.verify_bundle import verify_bundle; verify_bundle(Path(os.environ["BUNDLE"]), minimum_age_recipients=2)'
+                  platform --help
+
+            - name: Validate consumer Compose and inventories
+              env:
+                  FIXTURE_ROOT: ${{ steps.fixture.outputs.root }}
+              shell: bash
+              run: |
+                  docker compose \
+                    --env-file "${FIXTURE_ROOT}/application/deploy/.env.example" \
+                    --file "${FIXTURE_ROOT}/application/deploy/compose.yml" \
+                    config --quiet
+                  ansible-inventory \
+                    --inventory examples/consumer/company-infra/inventory/bootstrap.example.yml \
+                    --graph
+                  ansible-inventory \
+                    --inventory examples/consumer/company-infra/inventory/hosts.example.yml \
+                    --graph
+
+    docker-integration:
+        runs-on: ubuntu-24.04
+        timeout-minutes: 15
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+            - name: Set up Python
+              uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+              with:
+                  python-version: "3.12"
+                  cache: pip
+
+            - name: Install runtime
+              run: python -m pip install .
+
+            - name: Test nginx activation transaction with real Docker
+              run: python tests/integration/nginx_activation.py

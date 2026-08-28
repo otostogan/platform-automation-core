@@ -1,0 +1,18 @@
+---
+firewall_enabled: true
+
+firewall_public_interface: "{{ platform_public_interface }}"
+firewall_tailscale_interface: tailscale0
+
+firewall_public_tcp_ports:
+    - "80"
+    - "443"
+
+firewall_logging: low
+
+firewall_docker_enabled: true
+firewall_docker_chain: PLATFORM-DOCKER-INGRESS
+
+firewall_iptables_commands:
+    - /usr/sbin/iptables
+    - /usr/sbin/ip6tables

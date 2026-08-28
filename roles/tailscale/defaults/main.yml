@@ -1,0 +1,13 @@
+---
+tailscale_release_channel: stable
+tailscale_apt_cache_valid_time: 3600
+
+tailscale_hostname: "{{ inventory_hostname }}"
+tailscale_enable_ssh: true
+tailscale_accept_dns: false
+tailscale_advertise_tags: []
+
+# Controller-local file containing a short-lived, preferably one-off,
+# pre-authorized auth key. Leave empty to retain interactive enrollment.
+tailscale_auth_key_source: ""
+tailscale_auth_key_temporary_path: /run/platform/tailscale-auth.key
