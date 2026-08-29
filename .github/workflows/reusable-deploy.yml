@@ -14,6 +14,14 @@ on:
                 required: true
                 type: string
 
+            application_commit:
+                description: >-
+                    Exact application commit the bundle is built from. Must be
+                    the commit the image was built from, or the deployed image
+                    and its manifest can describe different revisions.
+                required: true
+                type: string
+
             release_tag:
                 description: Human-readable release tag recorded by the platform
                 required: true
@@ -64,6 +72,7 @@ jobs:
         steps:
             - name: Validate reusable workflow inputs
               env:
+                  APPLICATION_COMMIT: ${{ inputs.application_commit }}
                   IMAGE_REFERENCE: ${{ inputs.image_reference }}
                   MANIFEST_PATH: ${{ inputs.manifest_path }}
                   MINIMUM_AGE_RECIPIENTS: ${{ inputs.minimum_age_recipients }}
@@ -74,12 +83,20 @@ jobs:
                   test -n "${MANIFEST_PATH}"
                   test "${MINIMUM_AGE_RECIPIENTS}" -ge 1
                   test -n "${IMAGE_REFERENCE}"
+                  test -n "${APPLICATION_COMMIT}"
                   test -n "${RELEASE_TAG}"
                   test -n "${TARGET_HOST}"
                   test -n "${TAILSCALE_TAG}"
 
                   if [[ ! "${IMAGE_REFERENCE}" =~ @sha256:[a-f0-9]{64}$ ]]; then
                       echo "image_reference must contain an immutable sha256 digest" >&2
+                      exit 1
+                  fi
+
+                  # A branch or tag can move between resolving the image and
+                  # building the bundle. Only a full commit SHA cannot.
+                  if [[ ! "${APPLICATION_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+                      echo "application_commit must be a full 40-character commit SHA" >&2
                       exit 1
                   fi
 
@@ -103,17 +120,18 @@ jobs:
                       exit 1
                   fi
 
-            - name: Check out application repository
+            - name: Check out the application commit the image was built from
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
+                  ref: ${{ inputs.application_commit }}
                   persist-credentials: false
 
             - name: Prepare deployment bundle
               id: bundle
-              uses: otostogan/platform-automation-core/.github/actions/build-bundle@v0.6.0
+              uses: otostogan/platform-automation-core/.github/actions/build-bundle@v0.7.0
               with:
                   manifest-path: ${{ inputs.manifest_path }}
-                  core-version: v0.6.0
+                  core-version: v0.7.0
                   github-token: ${{ secrets.platform_core_token }}
                   minimum-age-recipients: ${{ inputs.minimum_age_recipients }}
 

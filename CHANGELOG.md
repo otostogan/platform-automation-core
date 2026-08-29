@@ -7,6 +7,14 @@ release.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-29
+
+- **Breaking:** `reusable-deploy.yml` requires `application_commit`, and
+  builds the bundle from that commit. It previously used the calling
+  workflow's branch while the image came from the requested revision, so a
+  deployment could pair a new image with an older manifest and still report
+  success.
+
 ## [0.6.0] - 2026-08-29
 
 - Run the database a `mode: docker` application declares: a generated

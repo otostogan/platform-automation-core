@@ -12,6 +12,13 @@ on:
                 description: Human-readable release tag
                 required: true
                 type: string
+            application_commit:
+                description: >-
+                    Commit the image was built from. The bundle is built from
+                    this same commit, so the manifest and the image can never
+                    describe different revisions.
+                required: true
+                type: string
 
 jobs:
     deploy:
@@ -19,10 +26,11 @@ jobs:
             contents: read
             id-token: write
             packages: read
-        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.6.0
+        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.7.0
         with:
             manifest_path: deploy/platform.yml
             image_reference: ${{ inputs.image_reference }}
+            application_commit: ${{ inputs.application_commit }}
             release_tag: ${{ inputs.release_tag }}
             target_host: platform-staging.example.invalid
             tailscale_tag: tag:platform-ci
