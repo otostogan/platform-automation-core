@@ -16,9 +16,14 @@ IMAGE = "ghcr.io/example/platform-example@sha256:" + ("a" * 64)
 
 
 class RecordingRunner:
-    def __init__(self, return_codes: list[int] = None) -> None:
+    def __init__(
+        self,
+        return_codes: list[int] = None,
+        image_present: bool = False,
+    ) -> None:
         self.calls: list[dict] = []
         self.return_codes = list(return_codes or [])
+        self.image_present = image_present
 
     def __call__(self, command: list[str], **options):
         self.calls.append(
@@ -27,7 +32,14 @@ class RecordingRunner:
                 "options": options,
             }
         )
-        return_code = self.return_codes.pop(0) if self.return_codes else 0
+
+        # The presence probe answers from the daemon, not from the scripted
+        # login and pull outcomes.
+        if "inspect" in command:
+            return_code = 0 if self.image_present else 1
+        else:
+            return_code = self.return_codes.pop(0) if self.return_codes else 0
+
         return subprocess.CompletedProcess(
             args=command,
             returncode=return_code,
@@ -62,9 +74,11 @@ class RegistryPullTest(unittest.TestCase):
             runner=runner,
         )
 
-        self.assertEqual(len(runner.calls), 2)
-        login = runner.calls[0]
-        pull = runner.calls[1]
+        self.assertEqual(len(runner.calls), 3)
+        probe = runner.calls[0]
+        login = runner.calls[1]
+        pull = runner.calls[2]
+        self.assertIn("inspect", probe["command"])
 
         self.assertIn("login", login["command"])
         self.assertIn("--password-stdin", login["command"])
@@ -86,8 +100,63 @@ class RegistryPullTest(unittest.TestCase):
             runner=runner,
         )
 
+        self.assertEqual(len(runner.calls), 2)
+        self.assertIn("inspect", runner.calls[0]["command"])
+        self.assertIn("pull", runner.calls[1]["command"])
+
+    def test_present_digest_is_never_fetched_again(self) -> None:
+        """Rollback must work when the registry is unreachable."""
+        runner = RecordingRunner(image_present=True)
+
+        pull_immutable_image(
+            image=IMAGE,
+            registry_username="ci-user",
+            registry_token=b"token",
+            runtime_root=self.runtime_root,
+            docker_executable=Path("/usr/bin/docker"),
+            runner=runner,
+        )
+
         self.assertEqual(len(runner.calls), 1)
-        self.assertIn("pull", runner.calls[0]["command"])
+        self.assertIn("inspect", runner.calls[0]["command"])
+
+    def test_absent_digest_is_fetched(self) -> None:
+        runner = RecordingRunner(image_present=False)
+
+        pull_immutable_image(
+            image=IMAGE,
+            runtime_root=self.runtime_root,
+            docker_executable=Path("/usr/bin/docker"),
+            runner=runner,
+        )
+
+        self.assertIn("pull", runner.calls[-1]["command"])
+
+    def test_unreadable_probe_falls_back_to_a_pull(self) -> None:
+        """An unanswerable probe must not be read as \"already present\"."""
+        calls: list[list[str]] = []
+
+        def refuse(command: list[str], **options):
+            calls.append(command)
+
+            if "inspect" in command:
+                raise OSError("docker is unavailable")
+
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=b"",
+                stderr=b"",
+            )
+
+        pull_immutable_image(
+            image=IMAGE,
+            runtime_root=self.runtime_root,
+            docker_executable=Path("/usr/bin/docker"),
+            runner=refuse,
+        )
+
+        self.assertIn("pull", calls[-1])
 
     def test_rejects_partial_credentials(self) -> None:
         with self.assertRaisesRegex(
