@@ -255,6 +255,115 @@ class ManifestValidatorTest(unittest.TestCase):
             errors,
         )
 
+    def docker_database_compose(self) -> tuple[dict, dict]:
+        manifest = self.docker_database_manifest()
+        compose = copy.deepcopy(self.valid_compose)
+        web = manifest["service"]["web"]
+        service = compose["services"][web]
+
+        if isinstance(service.get("networks"), list):
+            service["networks"] = service["networks"] + ["db"]
+        else:
+            service.setdefault("networks", {})["db"] = None
+
+        compose["networks"]["db"] = {
+            "name": "${PLATFORM_DB_NETWORK:?PLATFORM_DB_NETWORK is required}",
+            "external": True,
+        }
+        return manifest, compose
+
+    def test_accepts_docker_database_compose(self) -> None:
+        manifest, compose = self.docker_database_compose()
+
+        self.assertEqual(
+            self.validate_compose_contract(compose, manifest),
+            [],
+        )
+
+    def test_docker_database_requires_db_network(self) -> None:
+        manifest = self.docker_database_manifest()
+
+        errors = self.validate_compose_contract(self.valid_compose, manifest)
+
+        self.assertTrue(
+            any(error.startswith("$.compose.networks.db:") for error in errors),
+            errors,
+        )
+
+    def test_db_network_name_must_be_platform_interpolation(self) -> None:
+        manifest, compose = self.docker_database_compose()
+        compose["networks"]["db"]["name"] = "platform-db-example-lab"
+
+        errors = self.validate_compose_contract(compose, manifest)
+
+        self.assertTrue(
+            any(error.startswith("$.compose.networks.db.name:") for error in errors),
+            errors,
+        )
+
+    def test_web_service_must_join_db_network(self) -> None:
+        manifest, compose = self.docker_database_compose()
+        web = manifest["service"]["web"]
+        networks = compose["services"][web]["networks"]
+
+        if isinstance(networks, list):
+            networks.remove("db")
+        else:
+            del networks["db"]
+
+        errors = self.validate_compose_contract(compose, manifest)
+
+        self.assertTrue(
+            any("web service must join db" in error for error in errors),
+            errors,
+        )
+
+    def test_external_database_must_not_reference_db_network(self) -> None:
+        _, compose = self.docker_database_compose()
+
+        errors = self.validate_compose_contract(compose, self.valid_manifest)
+
+        self.assertTrue(
+            any(
+                error.startswith("$.compose.networks.db.name:") and "forbidden" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_migration_service_must_join_db_network(self) -> None:
+        manifest, compose = self.docker_database_compose()
+        manifest["deployment"] = {
+            "migration_service": "migrator",
+            "migration_command": ["bin/migrate"],
+        }
+        compose["services"]["migrator"] = {
+            "image": "${PLATFORM_IMAGE:?PLATFORM_IMAGE is required}",
+        }
+
+        errors = self.validate_compose_contract(compose, manifest)
+
+        self.assertTrue(
+            any("migration service must join db" in error for error in errors),
+            errors,
+        )
+
+        compose["services"]["migrator"]["networks"] = ["db"]
+
+        self.assertEqual(
+            self.validate_compose_contract(compose, manifest),
+            [],
+        )
+
+    def test_external_database_may_keep_its_own_db_network(self) -> None:
+        """The key stays free; only the platform interpolation is claimed."""
+        compose = copy.deepcopy(self.valid_compose)
+        compose["networks"]["db"] = {"name": "helper-net", "external": True}
+
+        errors = self.validate_compose_contract(compose, self.valid_manifest)
+
+        self.assertEqual(errors, [])
+
     def test_rejects_compose_build(self) -> None:
         compose = copy.deepcopy(self.valid_compose)
         compose["services"]["app"]["build"] = "."

@@ -46,6 +46,12 @@ from .stage_bundle import (
     stage_verified_bundle,
 )
 
+from .database_runtime import (
+    DatabaseRuntimeError,
+    ensure_project_database,
+    inject_database_url,
+)
+
 from .deployment_request import (
     DeploymentRequest,
     DeploymentRequestError,
@@ -54,6 +60,7 @@ from .deployment_request import (
 )
 
 DEFAULT_PROJECTS_ROOT = Path("/var/lib/platform/projects")
+DEFAULT_DATABASES_ROOT = Path("/var/lib/platform/databases")
 DEFAULT_RELEASES_ROOT = Path("/var/lib/platform/releases")
 DEFAULT_LOCK_ROOT = Path("/run/platform/locks")
 DEFAULT_RUNTIME_SECRETS_ROOT = Path("/run/platform/secrets")
@@ -700,6 +707,31 @@ def execute_prepared_release(
         )
 
 
+def prepare_release_database(
+    request,
+    runtime_secrets_path: Path,
+    databases_root: Path,
+    runtime_secrets_root: Path,
+    age_key_file: Path,
+    sops_executable: Path,
+    docker_executable: Path,
+    database_ensurer,
+) -> None:
+    """Bring the declared database up and hand its URL to the release."""
+    password = database_ensurer(
+        manifest=request.bundle.manifest,
+        project=request.project,
+        environment=request.environment,
+        secrets_document=request.bundle.secrets,
+        databases_root=databases_root,
+        runtime_secrets_root=runtime_secrets_root,
+        age_key_file=age_key_file,
+        sops_executable=sops_executable,
+        docker_executable=docker_executable,
+    )
+    inject_database_url(runtime_secrets_path, password)
+
+
 def run_release_retention(
     request,
     record: dict[str, Any],
@@ -761,6 +793,8 @@ def run_deploy(
     compose_runtime_module,
     nginx_manager,
     image_remover=remove_image,
+    databases_root: Path = DEFAULT_DATABASES_ROOT,
+    database_ensurer=ensure_project_database,
 ) -> int:
     try:
         registry_username, registry_token = load_registry_credentials(
@@ -839,6 +873,16 @@ def run_deploy(
                         sops_executable=sops_executable,
                         secrets_materializer=secrets_materializer,
                     )
+                    prepare_release_database(
+                        request=request,
+                        runtime_secrets_path=runtime_secrets_path,
+                        databases_root=databases_root,
+                        runtime_secrets_root=runtime_secrets_root,
+                        age_key_file=age_key_file,
+                        sops_executable=sops_executable,
+                        docker_executable=docker_executable,
+                        database_ensurer=database_ensurer,
+                    )
 
                     document = build_deploy_result(
                         existing,
@@ -890,6 +934,19 @@ def run_deploy(
                 age_key_file=age_key_file,
                 sops_executable=sops_executable,
                 secrets_materializer=secrets_materializer,
+            )
+
+            # An application whose database will not start has nothing
+            # worth writing into the ledger.
+            prepare_release_database(
+                request=request,
+                runtime_secrets_path=runtime_secrets_path,
+                databases_root=databases_root,
+                runtime_secrets_root=runtime_secrets_root,
+                age_key_file=age_key_file,
+                sops_executable=sops_executable,
+                docker_executable=docker_executable,
+                database_ensurer=database_ensurer,
             )
 
             write_release_record(
@@ -945,6 +1002,7 @@ def run_deploy(
     except (
         BundleStagingError,
         ComposeRuntimeError,
+        DatabaseRuntimeError,
         DeploymentExecutionError,
         DeploymentRequestError,
         OperationLockError,
@@ -974,6 +1032,8 @@ def run_rollback(
     compose_runtime_module,
     nginx_manager,
     image_remover=remove_image,
+    databases_root: Path = DEFAULT_DATABASES_ROOT,
+    database_ensurer=ensure_project_database,
 ) -> int:
     try:
         registry_username, registry_token = load_registry_credentials(
@@ -1065,6 +1125,23 @@ def run_rollback(
                     )
                 )
 
+            for saved_request, saved_record in (
+                (current_request, current),
+                (request, record),
+            ):
+                prepare_release_database(
+                    request=saved_request,
+                    runtime_secrets_path=prepared_runtime_paths[
+                        saved_record["release_id"]
+                    ],
+                    databases_root=databases_root,
+                    runtime_secrets_root=runtime_secrets_root,
+                    age_key_file=age_key_file,
+                    sops_executable=sops_executable,
+                    docker_executable=docker_executable,
+                    database_ensurer=database_ensurer,
+                )
+
             compose_runtime_module.validate_release_compose(
                 **runtime_arguments(
                     current_request,
@@ -1129,6 +1206,7 @@ def run_rollback(
 
     except (
         ComposeRuntimeError,
+        DatabaseRuntimeError,
         DeploymentExecutionError,
         DeploymentRequestError,
         OperationLockError,
@@ -1155,6 +1233,8 @@ def main(
     docker_executable: Path = DEFAULT_DOCKER_EXECUTABLE,
     image_puller=pull_immutable_image,
     image_remover=remove_image,
+    databases_root: Path = DEFAULT_DATABASES_ROOT,
+    database_ensurer=ensure_project_database,
     token_stream=None,
     compose_runtime_module=compose_runtime,
     nginx_manager=None,
@@ -1198,6 +1278,8 @@ def main(
             compose_runtime_module,
             nginx_manager,
             image_remover,
+            databases_root,
+            database_ensurer,
         )
 
     if arguments.command == "status":

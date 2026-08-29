@@ -108,6 +108,34 @@ Pass the registry token on standard input. The CLI intentionally refuses a
 rollback while any release is still `deploying`, because the database migration
 outcome may be unknown. Do not bypass that guard or edit the release ledger.
 
+## Platform-owned databases
+
+An application that declares `database.mode: docker` gets a PostgreSQL
+instance the platform runs for it. The application states only the major
+version; the platform decides everything else — the image (resolved to a
+digest once and pinned until the major changes), the volume, the network,
+and the credential.
+
+What an operator needs to know:
+
+- The database is the one thing releases do not recreate. The volume is
+  keyed to project and environment and survives deploys, rollbacks, and
+  release retention. **A rollback moves the application backwards; it does
+  not move the data backwards.**
+- The database joins its own internal network, unreachable from the edge.
+  The application reaches it through `DATABASE_URL`, which the platform
+  injects beside the application's own secrets. An application that ships
+  its own `DATABASE_URL` is refused.
+- The credential lives SOPS-encrypted in
+  `/var/lib/platform/databases/{project}/{environment}/`, encrypted to the
+  same age recipients as the application's secrets, escrow included. Its
+  envelope follows the application's recipient set on each deploy; the
+  password itself does not rotate.
+- The container restarts after a reboot on its own. Boot recovery only
+  re-materialises the tmpfs files; it needs the age key, not Docker.
+- A database that will not come up fails the deploy before anything is
+  swapped, and before the ledger records a release.
+
 ## Release retention
 
 Every successful deployment reclaims artefacts left by superseded releases.
