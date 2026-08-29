@@ -283,10 +283,34 @@
 					]
 				},
 				"postgres_major": {
-					"const": 17
+					"enum": [
+						16,
+						17,
+						18
+					]
 				},
 				"backup_enabled": {
 					"type": "boolean"
+				},
+				"backup": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": [
+						"interval_minutes",
+						"retain"
+					],
+					"properties": {
+						"interval_minutes": {
+							"type": "integer",
+							"minimum": 15,
+							"maximum": 1440
+						},
+						"retain": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 100
+						}
+					}
 				}
 			},
 			"allOf": [
@@ -306,6 +330,30 @@
 							"backup_enabled": {
 								"const": false
 							}
+						}
+					}
+				},
+				{
+					"if": {
+						"properties": {
+							"backup_enabled": {
+								"const": true
+							}
+						},
+						"required": [
+							"backup_enabled"
+						]
+					},
+					"then": {
+						"required": [
+							"backup"
+						]
+					},
+					"else": {
+						"not": {
+							"required": [
+								"backup"
+							]
 						}
 					}
 				}

@@ -145,6 +145,116 @@ class ManifestValidatorTest(unittest.TestCase):
             errors,
         )
 
+    def docker_database_manifest(self) -> dict:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["database"] = {
+            "mode": "docker",
+            "postgres_major": 17,
+            "backup_enabled": True,
+            "backup": {
+                "interval_minutes": 360,
+                "retain": 14,
+            },
+        }
+        return manifest
+
+    def test_accepts_docker_database_with_backup(self) -> None:
+        self.assertEqual(self.validate(self.docker_database_manifest()), [])
+
+    def test_accepts_every_supported_postgres_major(self) -> None:
+        for major in (16, 17, 18):
+            with self.subTest(major=major):
+                manifest = self.docker_database_manifest()
+                manifest["database"]["postgres_major"] = major
+
+                self.assertEqual(self.validate(manifest), [])
+
+    def test_rejects_unsupported_postgres_major(self) -> None:
+        for major in (13, 14, 15, 19, "17"):
+            with self.subTest(major=major):
+                manifest = self.docker_database_manifest()
+                manifest["database"]["postgres_major"] = major
+
+                errors = self.validate(manifest)
+
+                self.assertTrue(
+                    any(
+                        error.startswith("$.database.postgres_major:")
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def test_rejects_backup_interval_outside_bounds(self) -> None:
+        for interval in (0, 14, 1441, 360.5, "360"):
+            with self.subTest(interval=interval):
+                manifest = self.docker_database_manifest()
+                manifest["database"]["backup"]["interval_minutes"] = interval
+
+                errors = self.validate(manifest)
+
+                self.assertTrue(
+                    any(
+                        error.startswith("$.database.backup.interval_minutes:")
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def test_rejects_backup_retain_outside_bounds(self) -> None:
+        for retain in (0, 101, True):
+            with self.subTest(retain=retain):
+                manifest = self.docker_database_manifest()
+                manifest["database"]["backup"]["retain"] = retain
+
+                errors = self.validate(manifest)
+
+                self.assertTrue(
+                    any(
+                        error.startswith("$.database.backup.retain:")
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def test_rejects_enabled_backup_without_cadence(self) -> None:
+        """A manifest may not promise a backup while withholding its schedule."""
+        manifest = self.docker_database_manifest()
+        del manifest["database"]["backup"]
+
+        errors = self.validate(manifest)
+
+        self.assertTrue(
+            any(error.startswith("$.database:") for error in errors),
+            errors,
+        )
+
+    def test_rejects_backup_object_when_backups_are_disabled(self) -> None:
+        """Dead configuration is a lie waiting to be believed."""
+        manifest = self.docker_database_manifest()
+        manifest["database"]["backup_enabled"] = False
+
+        errors = self.validate(manifest)
+
+        self.assertTrue(
+            any(error.startswith("$.database:") for error in errors),
+            errors,
+        )
+
+    def test_rejects_backup_object_for_external_database(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["database"]["backup"] = {
+            "interval_minutes": 360,
+            "retain": 14,
+        }
+
+        errors = self.validate(manifest)
+
+        self.assertTrue(
+            any(error.startswith("$.database:") for error in errors),
+            errors,
+        )
+
     def test_rejects_compose_build(self) -> None:
         compose = copy.deepcopy(self.valid_compose)
         compose["services"]["app"]["build"] = "."
