@@ -7,6 +7,13 @@ release.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-29
+
+- Widen `database.postgres_major` from exactly 17 to the supported set 16-18.
+- Add the `database.backup` contract object: `interval_minutes` (15-1440) and
+  `retain` (1-100), required exactly when `backup_enabled` is true. Nothing
+  implements it yet; the shape lands first so later phases stay additive.
+
 ## [0.4.2] - 2026-08-29
 
 - Fetch a container image only when the host does not already hold that
