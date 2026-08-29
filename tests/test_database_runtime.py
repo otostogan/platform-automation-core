@@ -51,9 +51,10 @@ def docker_manifest() -> dict:
 class FakeRunner:
     """Answer docker and sops invocations without either binary."""
 
-    def __init__(self) -> None:
+    def __init__(self, volume_present: bool = False) -> None:
         self.calls: list[list[str]] = []
         self.fail_actions: set[str] = set()
+        self.volume_present = volume_present
 
     def action(self, command: list[str]) -> str:
         joined = " ".join(command)
@@ -64,6 +65,8 @@ class FakeRunner:
             return "decrypt"
         if "pull" in command:
             return "pull"
+        if "volume" in command and "inspect" in command:
+            return "volume-inspect"
         if "inspect" in command:
             return "inspect"
         if "up" in command:
@@ -76,6 +79,14 @@ class FakeRunner:
         action = self.action(command)
         returncode = 1 if action in self.fail_actions else 0
         stdout = b""
+
+        if action == "volume-inspect":
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0 if self.volume_present else 1,
+                stdout=b"",
+                stderr=b"",
+            )
 
         if action == "encrypt":
             plaintext = json.loads(Path(command[-1]).read_text(encoding="utf-8"))
@@ -272,7 +283,7 @@ class EnsureProjectDatabaseTest(unittest.TestCase):
         )
         self.assertEqual(
             [self.runner.action(call) for call in self.runner.calls],
-            ["encrypt", "pull", "inspect", "up"],
+            ["volume-inspect", "encrypt", "pull", "inspect", "up"],
         )
 
         env_content = (
@@ -282,6 +293,7 @@ class EnsureProjectDatabaseTest(unittest.TestCase):
 
     def test_second_deploy_reuses_password_and_image_pin(self) -> None:
         first = self.ensure()
+        self.runner.volume_present = True
         self.runner.calls.clear()
 
         second = self.ensure()
@@ -289,11 +301,12 @@ class EnsureProjectDatabaseTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(
             [self.runner.action(call) for call in self.runner.calls],
-            ["decrypt", "up"],
+            ["volume-inspect", "decrypt", "up"],
         )
 
     def test_recipient_change_re_envelopes_without_rotating(self) -> None:
         first = self.ensure()
+        self.runner.volume_present = True
         self.runner.calls.clear()
 
         widened = RECIPIENTS | {"age1escrowexample"}
@@ -304,6 +317,37 @@ class EnsureProjectDatabaseTest(unittest.TestCase):
             "encrypt",
             [self.runner.action(call) for call in self.runner.calls],
         )
+
+    def test_missing_credential_on_a_live_volume_is_refused(self) -> None:
+        """A fresh password never reaches a database that already exists."""
+        self.ensure()
+        (self.databases_root / "example" / "lab" / "credentials.sops.json").unlink()
+        self.runner.volume_present = True
+
+        with self.assertRaises(DatabaseRuntimeError) as raised:
+            self.ensure()
+
+        self.assertIn("credential is missing", str(raised.exception))
+
+    def test_major_change_on_a_live_volume_is_refused(self) -> None:
+        self.ensure()
+        self.runner.volume_present = True
+
+        manifest = docker_manifest()
+        manifest["database"]["postgres_major"] = 18
+
+        with self.assertRaises(DatabaseRuntimeError) as raised:
+            self.ensure(manifest=manifest)
+
+        self.assertIn("dump the database", str(raised.exception))
+
+    def test_major_change_without_a_volume_proceeds(self) -> None:
+        self.ensure()
+
+        manifest = docker_manifest()
+        manifest["database"]["postgres_major"] = 18
+
+        self.assertTrue(self.ensure(manifest=manifest))
 
     def test_unhealthy_database_fails_the_deploy(self) -> None:
         self.runner.fail_actions.add("up")

@@ -86,6 +86,7 @@ class PlatformCliTest(unittest.TestCase):
         self.stop_error = None
         self.removed_images: list[str] = []
         self.database_ensures: list[dict] = []
+        self.backup_calls: list[dict] = []
         self.database_password = None
         self.database_error = None
         self.secrets_materializer = self.materialize_secrets
@@ -430,6 +431,20 @@ class PlatformCliTest(unittest.TestCase):
     ) -> None:
         self.removed_images.append(image)
 
+    def create_backup(self, **kwargs):
+        self.backup_calls.append(kwargs)
+
+        return {
+            "stamp": "20260829T140530Z-" + kwargs["reason"],
+            "reason": kwargs["reason"],
+            "path": "/var/backups/platform/example/lab/dump.age",
+            "bytes": 4096,
+            "recipients": 2,
+            "release_id": kwargs["record"]["release_id"],
+            "removed_backups": [],
+            "warnings": [],
+        }
+
     def ensure_database(self, **kwargs):
         self.database_ensures.append(kwargs)
 
@@ -527,6 +542,7 @@ class PlatformCliTest(unittest.TestCase):
                 image_puller=self.image_puller,
                 image_remover=self.image_remover,
                 database_ensurer=self.ensure_database,
+                backup_creator=self.create_backup,
                 token_stream=self.token_stream,
                 compose_runtime_module=self,
                 nginx_manager=self,
@@ -1062,6 +1078,69 @@ class PlatformCliTest(unittest.TestCase):
         self.assertEqual(first_code, 0)
         self.assertEqual(second_code, 0)
         self.assertEqual(len(self.database_ensures), 1)
+
+    def backup_arguments(self, *extra: str) -> tuple[str, ...]:
+        return (
+            "backup",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--json",
+            *extra,
+        )
+
+    def test_backup_describes_the_deployed_release(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, stderr = self.run_cli(*self.backup_arguments())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        document = json.loads(stdout)
+        self.assertEqual(document["reason"], "operator")
+        self.assertEqual(len(self.backup_calls), 1)
+
+        current = find_latest_deployed_release(
+            list_release_records(self.projects_root, "example", "lab")
+        )
+        self.assertEqual(
+            self.backup_calls[0]["record"]["release_id"],
+            current["release_id"],
+        )
+
+    def test_backup_reason_reaches_the_card(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, _ = self.run_cli(
+            *self.backup_arguments("--reason", "pre-migration")
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout)["reason"], "pre-migration")
+
+    def test_backup_without_a_deployed_release_is_refused(self) -> None:
+        code, stdout, stderr = self.run_cli(*self.backup_arguments())
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("backup error:", stderr)
+        self.assertEqual(self.backup_calls, [])
+
+    def test_backup_respects_the_project_environment_lock(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        with project_environment_lock(
+            self.lock_root,
+            "example",
+            "lab",
+            "deploy",
+        ):
+            code, _, stderr = self.run_cli(*self.backup_arguments())
+
+        self.assertEqual(code, 1)
+        self.assertIn("backup error:", stderr)
+        self.assertEqual(self.backup_calls, [])
 
     def test_deploy_rejects_release_tag_conflict(self) -> None:
         first_code, _, first_stderr = self.run_cli(*self.deploy_arguments())
