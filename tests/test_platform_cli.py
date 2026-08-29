@@ -71,6 +71,7 @@ class PlatformCliTest(unittest.TestCase):
         self.sops_executable = self.base / "sops"
         self.registry_runtime_root = self.base / "registry"
         self.docker_executable = self.base / "docker"
+        self.backups_root = self.base / "backups"
         self.bundle_path = self.base / "bundle.tar.gz"
         self.materialized_secrets: list[dict] = []
         self.pulled_images: list[dict] = []
@@ -87,6 +88,7 @@ class PlatformCliTest(unittest.TestCase):
         self.removed_images: list[str] = []
         self.database_ensures: list[dict] = []
         self.backup_calls: list[dict] = []
+        self.restore_calls: list[dict] = []
         self.database_password = None
         self.database_error = None
         self.secrets_materializer = self.materialize_secrets
@@ -543,6 +545,7 @@ class PlatformCliTest(unittest.TestCase):
                 image_remover=self.image_remover,
                 database_ensurer=self.ensure_database,
                 backup_creator=self.create_backup,
+                backups_root=self.backups_root,
                 token_stream=self.token_stream,
                 compose_runtime_module=self,
                 nginx_manager=self,
@@ -1141,6 +1144,76 @@ class PlatformCliTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("backup error:", stderr)
         self.assertEqual(self.backup_calls, [])
+
+    def restore_arguments(self, *extra: str) -> tuple[str, ...]:
+        return (
+            "restore",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--json",
+            *extra,
+        )
+
+    def test_restore_refuses_without_explicit_confirmation(self) -> None:
+        """Restoring replaces the live database; that needs saying out loud."""
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, stderr = self.run_cli(*self.restore_arguments())
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("--confirm-destructive", stderr)
+
+    def test_restore_refuses_while_a_deploy_holds_the_lock(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        with project_environment_lock(
+            self.lock_root,
+            "example",
+            "lab",
+            "deploy",
+        ):
+            code, _, stderr = self.run_cli(
+                *self.restore_arguments("--confirm-destructive")
+            )
+
+        self.assertEqual(code, 1)
+        self.assertIn("restore error:", stderr)
+
+    def test_restore_without_a_deployed_release_is_refused(self) -> None:
+        code, _, stderr = self.run_cli(*self.restore_arguments("--confirm-destructive"))
+
+        self.assertEqual(code, 1)
+        self.assertIn("restore error:", stderr)
+
+    def test_verify_backup_without_a_deployed_release_is_refused(self) -> None:
+        code, _, stderr = self.run_cli(
+            "verify-backup",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--json",
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIn("verify-backup error:", stderr)
+
+    def test_status_reports_an_unproven_backup_as_never_verified(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, _ = self.run_cli(
+            "status",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("last proven restorable: never", stdout)
 
     def test_deploy_rejects_release_tag_conflict(self) -> None:
         first_code, _, first_stderr = self.run_cli(*self.deploy_arguments())
