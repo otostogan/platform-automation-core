@@ -7,6 +7,13 @@ release.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-29
+
+- Fix the age install: `unarchive` does not accept `checksum`, so every
+  convergence to `0.8.0` failed. Fetch with `get_url` and verify before
+  extracting, run only when the pinned version is absent, and clean up in an
+  `always` block so a converged host reports no change. Skip `0.8.0`.
+
 ## [0.8.0] - 2026-08-29
 
 - Add `platform backup`: `pg_dump` piped straight through age, encrypted to
