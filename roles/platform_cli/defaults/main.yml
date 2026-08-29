@@ -13,7 +13,6 @@ platform_cli_runtime_packages:
 
 platform_cli_tool_files:
     - __init__.py
-    - bundle_action.py
     - compose_runtime.py
     - contract_resources.py
     - deployment_request.py
@@ -26,6 +25,7 @@ platform_cli_tool_files:
     - reboot_recovery_entrypoint.py
     - registry_pull.py
     - release_ledger.py
+    - release_retention.py
     - runtime_secrets.py
     - sops_validation.py
     - stage_bundle.py

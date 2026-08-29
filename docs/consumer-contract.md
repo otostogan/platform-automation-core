@@ -5,7 +5,7 @@ infrastructure repository owns inventory, host variables, controller-local
 secret paths, and thin execution workflows. An application repository owns
 its image, Compose model, `platform/v1` manifest, and SOPS-encrypted values.
 
-Consumers pin the `v0.4.0` release, verify `SHA256SUMS`, install the
+Consumers pin the `v0.4.1` release, verify `SHA256SUMS`, install the
 collection tarball, and invoke fully qualified playbooks. Application triggers
 call the centrally owned reusable deployment workflow. No consumer imports a
 checkout-relative Python path or receives the core Git history. The core is
