@@ -51,6 +51,14 @@ from .backup_runtime import (
     DEFAULT_BACKUPS_ROOT,
     BackupRuntimeError,
     create_backup,
+    list_backups,
+)
+
+from .restore_runtime import (
+    RestoreRuntimeError,
+    last_verification,
+    restore_backup,
+    verify_backup,
 )
 
 from .database_runtime import (
@@ -250,6 +258,43 @@ def parse_arguments(
         help="Print machine-readable JSON.",
     )
 
+    restore_parser = subparsers.add_parser(
+        "restore",
+        help="Restore a backup over the live database. Destructive.",
+    )
+    add_identity_arguments(restore_parser)
+    restore_parser.add_argument(
+        "--from",
+        dest="stamp",
+        help="Backup stamp to restore. Defaults to the newest.",
+    )
+    restore_parser.add_argument(
+        "--confirm-destructive",
+        action="store_true",
+        help="Required. Restoring replaces the contents of the live database.",
+    )
+    restore_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON.",
+    )
+
+    verify_parser = subparsers.add_parser(
+        "verify-backup",
+        help="Restore a backup into a throwaway container and query it.",
+    )
+    add_identity_arguments(verify_parser)
+    verify_parser.add_argument(
+        "--from",
+        dest="stamp",
+        help="Backup stamp to verify. Defaults to the newest.",
+    )
+    verify_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON.",
+    )
+
     rollback_parser = subparsers.add_parser(
         "rollback",
         help="Restore a previously successful release without migrations.",
@@ -283,6 +328,7 @@ def build_status_document(
     project: str,
     environment: str,
     records: list[dict[str, Any]],
+    backups: dict[str, Any] = None,
 ) -> dict[str, Any]:
     current = find_latest_deployed_release(records)
     latest = records[-1] if records else None
@@ -293,6 +339,32 @@ def build_status_document(
         "release_count": len(records),
         "current": current,
         "latest": latest,
+        "backups": backups,
+    }
+
+
+def build_backup_status(
+    backups_root: Path,
+    project: str,
+    environment: str,
+) -> dict[str, Any]:
+    """Answer when a restore was last proven, not when a dump was last taken.
+
+    The two are different questions, and only the first one matters at three
+    in the morning.
+    """
+    directory = backups_root / project / environment
+
+    try:
+        stamps = list_backups(directory)
+        verification = last_verification(directory)
+    except OSError:
+        return {"count": 0, "latest": None, "last_verified": None}
+
+    return {
+        "count": len(stamps),
+        "latest": stamps[-1] if stamps else None,
+        "last_verified": verification,
     }
 
 
@@ -315,6 +387,30 @@ def print_release_summary(
     print(f"  updated_at: {record['updated_at']}")
 
 
+def print_backup_status(backups: dict[str, Any]) -> None:
+    if backups is None:
+        return
+
+    print(f"Backups: {backups['count']}")
+    print(f"  latest: {backups['latest'] or 'none'}")
+
+    verification = backups["last_verified"]
+
+    if verification is None:
+        # A backup nobody has restored is not yet a backup.
+        print("  last proven restorable: never")
+        return
+
+    print(
+        f"  last proven restorable: {verification.get('outcome')} "
+        f"on {verification.get('stamp')} "
+        f"at {verification.get('completed_at')}"
+    )
+
+    if verification.get("error"):
+        print(f"  verification error: {verification['error']}")
+
+
 def print_human_status(document: dict[str, Any]) -> None:
     print(f"Platform status: " f"{document['project']}/{document['environment']}")
     print(f"Release records: {document['release_count']}")
@@ -327,11 +423,13 @@ def print_human_status(document: dict[str, Any]) -> None:
         "Latest release attempt",
         document["latest"],
     )
+    print_backup_status(document["backups"])
 
 
 def run_status(
     arguments: argparse.Namespace,
     projects_root: Path,
+    backups_root: Path = DEFAULT_BACKUPS_ROOT,
 ) -> int:
     try:
         records = list_release_records(
@@ -347,6 +445,11 @@ def run_status(
         arguments.project,
         arguments.environment,
         records,
+        build_backup_status(
+            backups_root,
+            arguments.project,
+            arguments.environment,
+        ),
     )
 
     if arguments.json:
@@ -1123,6 +1226,159 @@ def run_backup(
         return 1
 
 
+def load_current_manifest(
+    projects_root: Path,
+    releases_root: Path,
+    project: str,
+    environment: str,
+    minimum_age_recipients: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    records = list_release_records(projects_root, project, environment)
+    record = find_latest_deployed_release(records)
+
+    if record is None:
+        raise RestoreRuntimeError(
+            "no deployed release; the platform does not know this database"
+        )
+
+    bundle = load_release_bundle(
+        record,
+        releases_root,
+        minimum_age_recipients=minimum_age_recipients,
+    )
+
+    return bundle.manifest, record
+
+
+def run_restore(
+    arguments: argparse.Namespace,
+    projects_root: Path,
+    releases_root: Path,
+    lock_root: Path,
+    databases_root: Path,
+    backups_root: Path,
+    runtime_secrets_root: Path,
+    age_key_file: Path,
+    sops_executable: Path,
+    age_executable: Path,
+    docker_executable: Path,
+    minimum_age_recipients: int,
+    restorer=restore_backup,
+) -> int:
+    try:
+        if not arguments.confirm_destructive:
+            raise RestoreRuntimeError(
+                "restoring replaces the contents of the live database; "
+                "pass --confirm-destructive to proceed"
+            )
+
+        # The lock is the guard against restoring underneath a deployment
+        # that is mid-migration.
+        with project_environment_lock(
+            lock_root,
+            arguments.project,
+            arguments.environment,
+            "restore",
+        ):
+            _, record = load_current_manifest(
+                projects_root,
+                releases_root,
+                arguments.project,
+                arguments.environment,
+                minimum_age_recipients,
+            )
+
+            document = restorer(
+                project=arguments.project,
+                environment=arguments.environment,
+                stamp=arguments.stamp,
+                current_record=record,
+                databases_root=databases_root,
+                backups_root=backups_root,
+                runtime_secrets_root=runtime_secrets_root,
+                age_key_file=age_key_file,
+                sops_executable=sops_executable,
+                age_executable=age_executable,
+                docker_executable=docker_executable,
+            )
+
+        if arguments.json:
+            print(json.dumps(document, indent=2, sort_keys=True))
+        else:
+            print(f"Restored: {document['stamp']}")
+            print(f"Taken on release: {document['release_tag']}")
+
+            if document["revision_gap"]:
+                print(f"Note: {document['revision_gap']}")
+
+        return 0
+    except (
+        RestoreRuntimeError,
+        DatabaseRuntimeError,
+        OperationLockError,
+        ReleaseLedgerError,
+        OSError,
+    ) as error:
+        print(f"restore error: {error}", file=sys.stderr)
+        return 1
+
+
+def run_verify_backup(
+    arguments: argparse.Namespace,
+    projects_root: Path,
+    releases_root: Path,
+    lock_root: Path,
+    databases_root: Path,
+    backups_root: Path,
+    runtime_secrets_root: Path,
+    age_key_file: Path,
+    sops_executable: Path,
+    age_executable: Path,
+    docker_executable: Path,
+    minimum_age_recipients: int,
+    verifier=verify_backup,
+) -> int:
+    try:
+        manifest, _ = load_current_manifest(
+            projects_root,
+            releases_root,
+            arguments.project,
+            arguments.environment,
+            minimum_age_recipients,
+        )
+
+        document = verifier(
+            manifest=manifest,
+            project=arguments.project,
+            environment=arguments.environment,
+            stamp=arguments.stamp,
+            databases_root=databases_root,
+            backups_root=backups_root,
+            runtime_secrets_root=runtime_secrets_root,
+            age_key_file=age_key_file,
+            sops_executable=sops_executable,
+            age_executable=age_executable,
+            docker_executable=docker_executable,
+        )
+
+        if arguments.json:
+            print(json.dumps(document, indent=2, sort_keys=True))
+        else:
+            print(f"Verified: {document['stamp']}")
+            print(f"Query: {document['query']}")
+            print(f"Result: {document['result']}")
+
+        return 0
+    except (
+        RestoreRuntimeError,
+        DatabaseRuntimeError,
+        ReleaseLedgerError,
+        OSError,
+    ) as error:
+        print(f"verify-backup error: {error}", file=sys.stderr)
+        return 1
+
+
 def run_rollback(
     arguments: argparse.Namespace,
     projects_root: Path,
@@ -1392,6 +1648,23 @@ def main(
             database_ensurer,
         )
 
+    if arguments.command in ("restore", "verify-backup"):
+        handler = run_restore if arguments.command == "restore" else run_verify_backup
+        return handler(
+            arguments,
+            projects_root,
+            releases_root,
+            lock_root,
+            databases_root,
+            backups_root,
+            runtime_secrets_root,
+            age_key_file,
+            sops_executable,
+            age_executable,
+            docker_executable,
+            arguments.minimum_age_recipients,
+        )
+
     if arguments.command == "backup":
         return run_backup(
             arguments,
@@ -1412,6 +1685,7 @@ def main(
         return run_status(
             arguments,
             projects_root,
+            backups_root,
         )
 
     print(

@@ -7,6 +7,16 @@ release.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-29
+
+- Add `platform verify-backup`: restore a dump into a networkless throwaway
+  container, run the declared `restore_validation` query, tear it down either
+  way, and record the outcome. `platform status` now reports when a restore
+  was last proven, not just when a dump was last taken.
+- Add `platform restore`: replaces the live database from a dump, requires
+  `--confirm-destructive`, refuses while a deployment holds the lock, and
+  names a revision gap without refusing it.
+
 ## [0.8.1] - 2026-08-29
 
 - Fix the age install: `unarchive` does not accept `checksum`, so every

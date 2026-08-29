@@ -28,6 +28,7 @@ platform_cli_tool_files:
     - registry_pull.py
     - release_ledger.py
     - release_retention.py
+    - restore_runtime.py
     - runtime_secrets.py
     - sops_validation.py
     - stage_bundle.py

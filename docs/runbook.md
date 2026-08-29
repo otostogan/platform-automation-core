@@ -182,8 +182,54 @@ What the design guarantees, and why:
 - Retention comes from `database.backup.retain`. It drops the oldest dumps
   beyond that count, never the newest, and only ever warns.
 
-Restoring these dumps is not implemented yet. Until it is, treat a backup as
-unproven: nothing has read one back.
+## Proving a backup
+
+A backup nobody has restored is not a backup. `verify-backup` turns that from
+a slogan into a dated fact:
+
+```sh
+sudo -n platform verify-backup \
+  --project <project> \
+  --environment <environment> \
+  --json
+```
+
+It decrypts the newest dump, restores it into a **throwaway container with no
+network at all**, runs the query the application declared in
+`restore_validation`, and removes the container whether or not any of that
+worked. The live database is never touched. The container briefly holds a full
+plaintext copy of the data, which is why it gets no network and why nothing it
+writes outlives it.
+
+Every attempt is recorded, success or failure. `platform status` reports when
+a restore was last **proven**, which is a different question from when a dump
+was last taken — and the only one that matters at three in the morning.
+
+## Restoring under pressure
+
+```sh
+sudo -n platform restore \
+  --project <project> \
+  --environment <environment> \
+  --from <stamp> \
+  --confirm-destructive \
+  --json
+```
+
+Omit `--from` to take the newest dump. `--confirm-destructive` is required and
+deliberately unpleasant to type: this replaces the contents of the live
+database.
+
+The command refuses while a deployment holds the project lock, so a restore
+cannot land underneath a migration in flight. If a deploy is stuck, resolve
+that first — see the section on releases stuck in `deploying`.
+
+When the dump was taken on a different release than the one deployed, the
+command says so and continues. It warns rather than refuses because restoring
+across a revision is sometimes exactly what an operator means to do — but the
+schema lives inside the dump, so an older dump under a newer application will
+break on the first query for a column the dump does not have. Read the note
+before walking away.
 
 ## Release retention
 
