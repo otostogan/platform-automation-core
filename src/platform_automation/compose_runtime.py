@@ -59,11 +59,20 @@ def build_compose_environment(
     environment = dict(os.environ if base_environment is None else base_environment)
     tls_hosts = [domain["host"] for domain in manifest["domains"] if domain["tls"]]
 
+    database_network = (
+        f"platform-db-{manifest['project']}-{manifest['environment']}"
+        if manifest["database"]["mode"] == "docker"
+        else ""
+    )
+
     environment.update(
         {
             "PLATFORM_COMPOSE_PROJECT_NAME": (
                 f"{manifest['project']}-{manifest['environment']}"
             ),
+            # Empty for an external database, so a compose file that
+            # wrongly references it fails loudly at startup.
+            "PLATFORM_DB_NETWORK": database_network,
             "PLATFORM_IMAGE": image,
             "PLATFORM_INTERNAL_PORT": str(manifest["service"]["internal_port"]),
             "PLATFORM_RUNTIME_ENV_FILE": str(runtime_secrets_path.resolve()),

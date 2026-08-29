@@ -85,6 +85,9 @@ class PlatformCliTest(unittest.TestCase):
         self.start_error_images: set[str] = set()
         self.stop_error = None
         self.removed_images: list[str] = []
+        self.database_ensures: list[dict] = []
+        self.database_password = None
+        self.database_error = None
         self.secrets_materializer = self.materialize_secrets
         self.image_puller = self.pull_image
         self.image_remover = self.remove_image
@@ -427,6 +430,18 @@ class PlatformCliTest(unittest.TestCase):
     ) -> None:
         self.removed_images.append(image)
 
+    def ensure_database(self, **kwargs):
+        self.database_ensures.append(kwargs)
+
+        if self.database_error is not None:
+            from platform_automation.database_runtime import (
+                DatabaseRuntimeError,
+            )
+
+            raise DatabaseRuntimeError(self.database_error)
+
+        return self.database_password
+
     def validate_release_compose(self, **kwargs) -> None:
         self.runtime_events.append(("validate", kwargs["image"]))
 
@@ -511,6 +526,7 @@ class PlatformCliTest(unittest.TestCase):
                 docker_executable=self.docker_executable,
                 image_puller=self.image_puller,
                 image_remover=self.image_remover,
+                database_ensurer=self.ensure_database,
                 token_stream=self.token_stream,
                 compose_runtime_module=self,
                 nginx_manager=self,
@@ -998,6 +1014,54 @@ class PlatformCliTest(unittest.TestCase):
         current = [record for record in records if record["status"] == "deployed"]
         self.assertEqual(current[-1]["release_id"], previous["release_id"])
         self.assertEqual(self.runtime_events[-1], ("start", IMAGE))
+
+    def test_deploy_prepares_database_before_the_ledger(self) -> None:
+        code, stdout, stderr = self.run_cli(*self.deploy_arguments())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.database_ensures), 1)
+        call = self.database_ensures[0]
+        self.assertEqual(call["project"], "example")
+        self.assertEqual(call["environment"], "lab")
+        self.assertEqual(
+            call["manifest"]["database"]["mode"],
+            "external",
+        )
+
+    def test_database_failure_leaves_no_ledger_record(self) -> None:
+        self.database_error = "database is not healthy"
+
+        code, stdout, stderr = self.run_cli(*self.deploy_arguments())
+
+        self.assertEqual(code, 1)
+        self.assertIn("deploy error: database is not healthy", stderr)
+        self.assertEqual(
+            list_release_records(self.projects_root, "example", "lab"),
+            [],
+        )
+        self.assertEqual(self.runtime_events, [])
+
+    def test_platform_database_url_reaches_the_release_environment(
+        self,
+    ) -> None:
+        self.database_password = "pw-test"
+
+        code, stdout, stderr = self.run_cli(*self.deploy_arguments())
+
+        self.assertEqual(code, 0)
+        document = json.loads(stdout)
+        content = Path(document["runtime_secrets_path"]).read_text(encoding="utf-8")
+        self.assertIn('DATABASE_URL="postgresql://app:pw-test@db:5432/app"', content)
+
+    def test_noop_redeploy_still_ensures_the_database(self) -> None:
+        first_code, _, _ = self.run_cli(*self.deploy_arguments())
+        self.database_ensures.clear()
+
+        second_code, _, _ = self.run_cli(*self.deploy_arguments())
+
+        self.assertEqual(first_code, 0)
+        self.assertEqual(second_code, 0)
+        self.assertEqual(len(self.database_ensures), 1)
 
     def test_deploy_rejects_release_tag_conflict(self) -> None:
         first_code, _, first_stderr = self.run_cli(*self.deploy_arguments())

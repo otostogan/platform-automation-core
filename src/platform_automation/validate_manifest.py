@@ -16,6 +16,7 @@ from .contract_resources import contract_path
 DEFAULT_SCHEMA = contract_path("platform-v1.schema.json")
 
 PLATFORM_IMAGE_PATTERN = re.compile(r"\$\{PLATFORM_IMAGE(?::\?[^}]*)?\}")
+PLATFORM_DB_NETWORK_PATTERN = re.compile(r"\$\{PLATFORM_DB_NETWORK(?::\?[^}]*)?\}")
 IMMUTABLE_IMAGE_PATTERN = re.compile(r".+@sha256:[0-9a-f]{64}")
 
 
@@ -264,6 +265,50 @@ def validate_compose(
 
         if edge.get("name") != "platform-edge":
             errors.append("$.compose.networks.edge.name: " "must be 'platform-edge'")
+
+    errors.extend(validate_database_network(manifest, services, networks))
+
+    return errors
+
+
+def validate_database_network(
+    manifest: dict[str, Any],
+    services: dict[str, Any],
+    networks: Any,
+) -> list[str]:
+    # A docker-mode application must reach its database, and it does so
+    # through the PLATFORM_DB_NETWORK interpolation, so the compose file
+    # itself stays environment-agnostic. An external-mode application
+    # referencing that variable would start with an empty network name,
+    # so it is refused here, where the mistake is legible.
+    mode = manifest["database"]["mode"]
+    db = networks.get("db") if isinstance(networks, dict) else None
+    errors: list[str] = []
+
+    if mode != "docker":
+        if db is not None:
+            errors.append("$.compose.networks.db: forbidden for an external database")
+        return errors
+
+    if not isinstance(db, dict):
+        return ["$.compose.networks.db: external db network is required"]
+
+    if db.get("external") is not True:
+        errors.append("$.compose.networks.db.external: must be true")
+
+    name = db.get("name")
+
+    if not (isinstance(name, str) and PLATFORM_DB_NETWORK_PATTERN.fullmatch(name)):
+        errors.append("$.compose.networks.db.name: must use PLATFORM_DB_NETWORK")
+
+    web_service_name = manifest["service"]["web"]
+    web_service = services.get(web_service_name)
+
+    if isinstance(web_service, dict) and "db" not in service_network_names(web_service):
+        errors.append(
+            f"$.compose.services.{web_service_name}.networks: "
+            "web service must join db"
+        )
 
     return errors
 

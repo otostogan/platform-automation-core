@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from .operation_lock import OperationLockError
+from .database_runtime import DatabaseRuntimeError
 from .reboot_recovery import (
     RebootRecoveryError,
     discover_recovery_scopes,
@@ -106,6 +107,7 @@ def main(
         )
     except (
         BootRecoveryError,
+        DatabaseRuntimeError,
         OperationLockError,
         RebootRecoveryError,
         ReleaseLedgerError,

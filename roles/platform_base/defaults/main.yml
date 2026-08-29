@@ -14,6 +14,8 @@ platform_base_directories:
       mode: "0750"
     - path: /var/lib/platform/releases
       mode: "0750"
+    - path: /var/lib/platform/databases
+      mode: "0750"
     - path: /var/log/platform
       mode: "0750"
     - path: /var/backups/platform

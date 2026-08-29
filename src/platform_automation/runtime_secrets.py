@@ -44,7 +44,11 @@ def decrypt_sops_document(
     encrypted_file: Path,
     age_key_file: Path = DEFAULT_AGE_KEY_FILE,
     sops_executable: Path = DEFAULT_SOPS_EXECUTABLE,
+    runner=None,
 ) -> dict[str, Any]:
+    if runner is None:
+        runner = subprocess.run
+
     if encrypted_file.is_symlink() or not encrypted_file.is_file():
         raise RuntimeSecretsError("encrypted secrets file is not a regular file")
 
@@ -55,7 +59,7 @@ def decrypt_sops_document(
     environment["SOPS_AGE_KEY_FILE"] = str(age_key_file)
 
     try:
-        result = subprocess.run(
+        result = runner(
             [
                 str(sops_executable),
                 "decrypt",

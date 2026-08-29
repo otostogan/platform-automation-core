@@ -115,6 +115,48 @@ class BuildBundleTest(unittest.TestCase):
                     source_path.read_bytes(),
                 )
 
+    def test_accepts_docker_database_application(self) -> None:
+        """A docker-mode application passes the whole bundle pipeline."""
+        import yaml
+
+        manifest = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+        manifest["database"] = {
+            "mode": "docker",
+            "postgres_major": 17,
+            "backup_enabled": True,
+            "backup": {"interval_minutes": 360, "retain": 14},
+        }
+        self.manifest_path.write_text(
+            yaml.safe_dump(manifest, sort_keys=False),
+            encoding="utf-8",
+        )
+
+        compose_path = self.deploy_directory / "compose.yml"
+        compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+        web = manifest["service"]["web"]
+        service = compose["services"][web]
+
+        if isinstance(service.get("networks"), list):
+            service["networks"] = service["networks"] + ["db"]
+        else:
+            service.setdefault("networks", {})["db"] = None
+
+        compose["networks"]["db"] = {
+            "name": "${PLATFORM_DB_NETWORK:?PLATFORM_DB_NETWORK is required}",
+            "external": True,
+        }
+        compose_path.write_text(
+            yaml.safe_dump(compose, sort_keys=False),
+            encoding="utf-8",
+        )
+
+        digest = create_bundle(
+            self.manifest_path,
+            self.base / "docker-db.bundle.tar.gz",
+        )
+
+        self.assertTrue(digest)
+
     def test_build_is_reproducible(self) -> None:
         first_output = self.base / "first.tar.gz"
         second_output = self.base / "second.tar.gz"

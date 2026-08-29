@@ -7,6 +7,17 @@ release.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-29
+
+- Run the database a `mode: docker` application declares: a generated
+  per-project Compose model, an image pinned by digest until the major
+  changes, an internal-only network, a volume that survives everything, and
+  a credential encrypted to the application's own recipient set with
+  `DATABASE_URL` injected at deploy time.
+- Order deploys database-first: unhealthy database, no migrations, no swap,
+  no ledger record.
+- Restore the database's tmpfs material during boot recovery without Docker.
+
 ## [0.5.0] - 2026-08-29
 
 - Widen `database.postgres_major` from exactly 17 to the supported set 16-18.

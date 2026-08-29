@@ -15,6 +15,7 @@ platform_cli_tool_files:
     - __init__.py
     - compose_runtime.py
     - contract_resources.py
+    - database_runtime.py
     - deployment_request.py
     - nginx_config.py
     - nginx_reconcile.py

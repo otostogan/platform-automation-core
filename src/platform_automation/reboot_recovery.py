@@ -14,6 +14,10 @@ from .release_ledger import (
     resolve_release_bundle,
     validate_ledger_identity,
 )
+from .database_runtime import (
+    DEFAULT_DATABASES_ROOT,
+    restore_database_environment,
+)
 from .runtime_secrets import materialize_env_secrets
 
 
@@ -215,6 +219,7 @@ def recover_project_environment_secrets(
     age_key_file: Path,
     sops_executable: Path,
     minimum_age_recipients: int = 1,
+    databases_root: Path = DEFAULT_DATABASES_ROOT,
 ) -> Optional[Path]:
     with project_environment_lock(
         lock_root,
@@ -232,7 +237,7 @@ def recover_project_environment_secrets(
         if record is None:
             return None
 
-        return restore_release_secrets(
+        destination = restore_release_secrets(
             record=record,
             releases_root=releases_root,
             runtime_root=runtime_root,
@@ -240,3 +245,23 @@ def recover_project_environment_secrets(
             sops_executable=sops_executable,
             minimum_age_recipients=minimum_age_recipients,
         )
+
+        # Docker restarts the containers from baked configuration, but the
+        # tmpfs files a future recreate depends on must exist again.
+        bundle = load_release_bundle(
+            record,
+            releases_root,
+            minimum_age_recipients=minimum_age_recipients,
+        )
+        restore_database_environment(
+            manifest=bundle.manifest,
+            project=project,
+            environment=environment,
+            runtime_secrets_path=destination,
+            databases_root=databases_root,
+            runtime_secrets_root=runtime_root,
+            age_key_file=age_key_file,
+            sops_executable=sops_executable,
+        )
+
+        return destination
