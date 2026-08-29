@@ -31,6 +31,12 @@ from .release_ledger import (
     build_rollback_release,
     resolve_release_bundle,
 )
+from .release_retention import (
+    ReleaseRetentionError,
+    apply_retention,
+    remove_image,
+    resolve_retained_images,
+)
 from .runtime_secrets import (
     RuntimeSecretsError,
     materialize_env_secrets,
@@ -431,7 +437,10 @@ def build_deploy_result(
     staged_bundle_path: Path,
     runtime_secrets_path: Path,
     reused: bool,
+    containers_started: bool,
+    retention: dict[str, Any] = None,
 ) -> dict[str, Any]:
+    """Report what this invocation did, never what the ledger already said."""
     return {
         "project": record["project"],
         "environment": record["environment"],
@@ -444,7 +453,8 @@ def build_deploy_result(
         "runtime_secrets_path": str(runtime_secrets_path),
         "image_pulled": True,
         "reused": reused,
-        "containers_started": record["status"] == "deployed",
+        "containers_started": containers_started,
+        "retention": retention,
     }
 
 
@@ -461,6 +471,24 @@ def print_deploy_result(document: dict[str, Any]) -> None:
     print(f"Runtime secrets: {document['runtime_secrets_path']}")
     print("Image pulled: yes")
     print("Containers started: " + ("yes" if document["containers_started"] else "no"))
+    print_retention_summary(document["retention"])
+
+
+def print_retention_summary(retention: dict[str, Any]) -> None:
+    if retention is None:
+        print("Retention: not run")
+        return
+
+    print(f"Retention depth: {retention['retained_images']} image(s)")
+    print(
+        "Reclaimed: "
+        f"{len(retention['removed_images'])} image(s), "
+        f"{len(retention['removed_bundles'])} bundle(s), "
+        f"{len(retention['removed_runtime_secrets'])} secret set(s)"
+    )
+
+    for warning in retention["warnings"]:
+        print(f"Retention warning: {warning}")
 
 
 def update_release_state(
@@ -672,6 +700,51 @@ def execute_prepared_release(
         )
 
 
+def run_release_retention(
+    request,
+    record: dict[str, Any],
+    projects_root: Path,
+    releases_root: Path,
+    runtime_secrets_root: Path,
+    docker_executable: Path,
+    image_remover,
+) -> dict[str, Any]:
+    """Reclaim superseded artefacts after the ledger has been committed.
+
+    A deployment that succeeded must never be reported as failed because
+    housekeeping did not, so every outcome here is a warning.
+    """
+    try:
+        retained_images = resolve_retained_images(request.bundle.manifest)
+        records = list_release_records(
+            projects_root,
+            record["project"],
+            record["environment"],
+        )
+
+        return apply_retention(
+            records=records,
+            project=record["project"],
+            environment=record["environment"],
+            current_release_id=record["release_id"],
+            retained_images=retained_images,
+            projects_root=projects_root,
+            releases_root=releases_root,
+            runtime_secrets_root=runtime_secrets_root,
+            docker_executable=docker_executable,
+            image_remover=image_remover,
+        )
+    except (ReleaseLedgerError, ReleaseRetentionError, OSError) as error:
+        return {
+            "retained_images": None,
+            "retained_image_digests": [],
+            "removed_bundles": [],
+            "removed_runtime_secrets": [],
+            "removed_images": [],
+            "warnings": [f"retention skipped: {error}"],
+        }
+
+
 def run_deploy(
     arguments: argparse.Namespace,
     projects_root: Path,
@@ -687,6 +760,7 @@ def run_deploy(
     token_stream,
     compose_runtime_module,
     nginx_manager,
+    image_remover=remove_image,
 ) -> int:
     try:
         registry_username, registry_token = load_registry_credentials(
@@ -717,6 +791,7 @@ def run_deploy(
                 records,
                 request.release_tag,
             )
+            current = find_latest_deployed_release(records)
 
             if existing is not None:
                 if not release_matches_request(
@@ -734,9 +809,19 @@ def run_deploy(
                         "migration outcome requires operator review"
                     )
 
-                if existing["status"] in ("prepared", "deployed"):
-                    staged_bundle_path = (
-                        releases_root / existing["bundle"]["relative_path"]
+                is_current = (
+                    existing["status"] == "deployed"
+                    and current is not None
+                    and current["release_id"] == existing["release_id"]
+                )
+
+                # Only the running release makes a redeploy a genuine no-op.
+                # Any other match is an operator asking for this tag again,
+                # which the ledger must record as a new deployment.
+                if is_current:
+                    staged_bundle_path = resolve_release_bundle(
+                        existing,
+                        releases_root,
                     )
                     image_puller(
                         image=request.image,
@@ -755,26 +840,12 @@ def run_deploy(
                         secrets_materializer=secrets_materializer,
                     )
 
-                    if existing["status"] == "prepared":
-                        existing = execute_prepared_release(
-                            request=request,
-                            record=existing,
-                            records=records,
-                            staged_bundle_path=staged_bundle_path,
-                            runtime_secrets_path=runtime_secrets_path,
-                            projects_root=projects_root,
-                            releases_root=releases_root,
-                            runtime_secrets_root=runtime_secrets_root,
-                            docker_executable=docker_executable,
-                            compose_runtime_module=compose_runtime_module,
-                            nginx_manager=nginx_manager,
-                        )
-
                     document = build_deploy_result(
                         existing,
                         staged_bundle_path,
                         runtime_secrets_path,
                         reused=True,
+                        containers_started=False,
                     )
 
                     if arguments.json:
@@ -794,7 +865,6 @@ def run_deploy(
                 request.bundle,
                 releases_root,
             )
-            current = find_latest_deployed_release(records)
             previous_release_id = current["release_id"] if current is not None else None
 
             record = build_prepared_release(
@@ -841,11 +911,23 @@ def run_deploy(
                 nginx_manager=nginx_manager,
             )
 
+            retention = run_release_retention(
+                request=request,
+                record=record,
+                projects_root=projects_root,
+                releases_root=releases_root,
+                runtime_secrets_root=runtime_secrets_root,
+                docker_executable=docker_executable,
+                image_remover=image_remover,
+            )
+
             document = build_deploy_result(
                 record,
                 staged_bundle_path,
                 runtime_secrets_path,
                 reused=False,
+                containers_started=True,
+                retention=retention,
             )
 
             if arguments.json:
@@ -891,6 +973,7 @@ def run_rollback(
     token_stream,
     compose_runtime_module,
     nginx_manager,
+    image_remover=remove_image,
 ) -> int:
     try:
         registry_username, registry_token = load_registry_credentials(
@@ -1009,11 +1092,23 @@ def run_rollback(
                 nginx_manager=nginx_manager,
             )
 
+            retention = run_release_retention(
+                request=request,
+                record=record,
+                projects_root=projects_root,
+                releases_root=releases_root,
+                runtime_secrets_root=runtime_secrets_root,
+                docker_executable=docker_executable,
+                image_remover=image_remover,
+            )
+
             document = build_deploy_result(
                 record,
                 staged_bundle_path,
                 runtime_secrets_path,
                 reused=False,
+                containers_started=True,
+                retention=retention,
             )
             document.update(
                 {
@@ -1059,6 +1154,7 @@ def main(
     registry_runtime_root: Path = DEFAULT_REGISTRY_RUNTIME_ROOT,
     docker_executable: Path = DEFAULT_DOCKER_EXECUTABLE,
     image_puller=pull_immutable_image,
+    image_remover=remove_image,
     token_stream=None,
     compose_runtime_module=compose_runtime,
     nginx_manager=None,
@@ -1101,6 +1197,7 @@ def main(
             token_stream,
             compose_runtime_module,
             nginx_manager,
+            image_remover,
         )
 
     if arguments.command == "status":

@@ -251,6 +251,11 @@
 						"minLength": 1,
 						"maxLength": 4096
 					}
+				},
+				"retained_releases": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 50
 				}
 			},
 			"dependentRequired": {

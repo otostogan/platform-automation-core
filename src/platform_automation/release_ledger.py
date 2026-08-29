@@ -37,9 +37,14 @@ class ReleaseLedgerError(ValueError):
 
 
 def utc_timestamp() -> str:
-    return (
-        datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
-    )
+    """Stamp records with millisecond precision.
+
+    Release order is derived from these timestamps, and two deployments can
+    legitimately land inside the same second.
+    """
+    moment = datetime.now(timezone.utc)
+
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
 
 
 def validate_release_record(record: Any) -> None:

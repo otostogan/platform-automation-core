@@ -82,6 +82,16 @@ the host or CI workspace outside the platform's tmpfs materialization path.
 
 ## Rollback
 
+Prefer the application's own deploy workflow pointed at the older revision.
+That path rebuilds the bundle for the revision, pulls the image by digest, and
+records the result as a new deployment, so the ledger keeps a truthful forward
+history of what ran and when. Re-running the tag of the release that is already
+current is a no-op and reports `containers_started: false`.
+
+Use the host-side `platform rollback` when CI, the registry, or the network is
+unavailable. It restores a release from artefacts already on disk, which is why
+retention is expressed as an offline rollback depth (see below).
+
 Select a previously successful release tag from `platform status --json`, then:
 
 ```sh
@@ -97,6 +107,31 @@ sudo -n platform rollback \
 Pass the registry token on standard input. The CLI intentionally refuses a
 rollback while any release is still `deploying`, because the database migration
 outcome may be unknown. Do not bypass that guard or edit the release ledger.
+
+## Release retention
+
+Every successful deployment reclaims artefacts left by superseded releases.
+Retention keeps the newest distinct **image digests**, not the newest
+deployments, so repeatedly redeploying one version never evicts the versions
+behind it. The depth defaults to five and an application may override it with
+`deployment.retained_releases` in its `platform/v1` manifest.
+
+Within the retained depth a release stays rollback-able with no network. Older
+releases keep their ledger records — the audit trail is never pruned — but lose
+their staged bundle and cached image, so restoring one means deploying its
+revision again through CI.
+
+Two rules keep this safe:
+
+- An image digest is removed only when no ledger on the host still wants it.
+  Environments of the same application routinely run the same digest.
+- Decrypted runtime secrets are kept only for the release that is running.
+  Rollback and reboot recovery both re-materialize them from the staged bundle.
+
+Retention runs after the ledger is committed and can only produce warnings; a
+successful deployment is never reported as failed because housekeeping was not.
+Read `retention.warnings` in the deploy output. Never run `docker system prune`
+on a platform host: the proxy and its ACME companion share that daemon.
 
 ## A release is stuck in `deploying`
 
