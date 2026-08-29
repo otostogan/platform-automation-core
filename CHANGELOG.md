@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-29
+
+- Fetch a container image only when the host does not already hold that
+  digest. `platform rollback` pulled unconditionally, so the path meant for an
+  unreachable registry could not run without registry credentials.
+
 ## [0.4.1] - 2026-08-29
 
 - Install `release_retention.py` on the host. The `platform_cli` role copies a

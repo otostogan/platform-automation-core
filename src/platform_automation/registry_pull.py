@@ -86,6 +86,38 @@ def run_docker_command(
         raise RegistryPullError(f"Docker registry {action} failed")
 
 
+def image_is_present(
+    image: str,
+    docker_executable: Path,
+    runner,
+) -> bool:
+    """Report whether the daemon already holds this exact digest.
+
+    A reference carrying a sha256 digest names one immutable manifest, and
+    Docker only records such a reference for content it actually pulled, so a
+    local hit is as trustworthy as a fresh pull.
+    """
+    try:
+        result = runner(
+            [
+                str(docker_executable),
+                "image",
+                "inspect",
+                image,
+                "--format",
+                "{{.Id}}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+    return result.returncode == 0
+
+
 def pull_immutable_image(
     image: str,
     registry_username: str = None,
@@ -96,6 +128,12 @@ def pull_immutable_image(
 ) -> None:
     if (registry_username is None) != (registry_token is None):
         raise RegistryPullError("registry username and token must be provided together")
+
+    # Rollback and reboot recovery must work when the registry is unreachable,
+    # and retention keeps the images they need. Contacting the registry for a
+    # digest already on the host would make that impossible.
+    if image_is_present(image, docker_executable, runner):
+        return
 
     if registry_username is not None and not REGISTRY_USERNAME_PATTERN.fullmatch(
         registry_username
