@@ -20,8 +20,8 @@ from platform_automation.database_runtime import (  # noqa: E402
 
 PINNED_IMAGE = "postgres:17@sha256:" + ("d" * 64)
 RECIPIENTS = {
-    "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
-    "age1zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "age1hostexample",
+    "age1recoveryexample",
 }
 
 
@@ -271,9 +271,7 @@ class EnsureProjectDatabaseTest(unittest.TestCase):
         first = self.ensure()
         self.runner.calls.clear()
 
-        widened = RECIPIENTS | {
-            "age1yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
-        }
+        widened = RECIPIENTS | {"age1escrowexample"}
         second = self.ensure(secrets=secrets_document(widened))
 
         self.assertEqual(first, second)
