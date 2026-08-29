@@ -7,6 +7,18 @@ release.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-29
+
+- Add `platform backup`: `pg_dump` piped straight through age, encrypted to
+  the application's own recipients with escrow, described by a metadata card
+  written beside the dump and inside it, retained by `database.backup.retain`.
+- Install a pinned `age` binary beside SOPS; a dump is an opaque stream, not a
+  structured document.
+- Refuse a `postgres_major` change on an existing volume, and refuse a deploy
+  whose volume exists but whose credential has gone missing. Both would
+  otherwise report success while leaving the application broken or the data
+  ignored.
+
 ## [0.7.0] - 2026-08-29
 
 - **Breaking:** `reusable-deploy.yml` requires `application_commit`, and

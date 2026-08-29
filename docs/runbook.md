@@ -135,6 +135,55 @@ What an operator needs to know:
   re-materialises the tmpfs files; it needs the age key, not Docker.
 - A database that will not come up fails the deploy before anything is
   swapped, and before the ledger records a release.
+- **An existing volume is sacred.** Two mismatches around one stop the deploy
+  rather than being improvised past. Changing `postgres_major` while a volume
+  exists is refused: data does not move between majors on its own, and
+  PostgreSQL 18 changed where the cluster lives inside the volume, so the old
+  one would simply be ignored. A volume whose credential file has gone missing
+  is refused too: a freshly generated password never reaches a database that
+  already exists, so the application would fail to authenticate against a
+  deploy that reported success.
+- Losing the credential is recoverable and is not a data loss. The image
+  trusts local socket connections, so an operator with root on the host can
+  `docker exec` into the container, `psql` without a password, set a new one,
+  and re-encrypt the credential file. Only the volume is irreplaceable — which
+  is what backups are for.
+
+## Database backups
+
+`platform backup` writes one encrypted dump of a platform-owned database:
+
+```sh
+sudo -n platform backup \
+  --project <project> \
+  --environment <environment> \
+  --json
+```
+
+`--reason` records why it ran — `operator`, `schedule`, or `pre-migration`.
+Only `operator` is in use today; the other two arrive with scheduling.
+
+What the design guarantees, and why:
+
+- `pg_dump` is piped straight through age into its destination. The plaintext
+  exists only in that pipe, never on disk. A failed dump or a failed
+  encryption leaves nothing behind at all.
+- The dump is encrypted to the **same age recipients as the application's own
+  secrets**, escrow included. A backup therefore inherits the bus factor of
+  everything else rather than growing its own — whoever can read the secrets
+  can read the backup, and nobody else.
+- The filename carries only a timestamp and the reason. Everything else lives
+  in a metadata card beside the dump and inside the encrypted stream, so a
+  dump found alone describes itself once decrypted. The application version
+  deliberately stays out of the filename: object keys are readable by anyone
+  who can list a bucket.
+- The card keys on `release_id`, not on the release tag. A tag is a human
+  label and may be anything; `release_id` is always present and unique.
+- Retention comes from `database.backup.retain`. It drops the oldest dumps
+  beyond that count, never the newest, and only ever warns.
+
+Restoring these dumps is not implemented yet. Until it is, treat a backup as
+unproven: nothing has read one back.
 
 ## Release retention
 

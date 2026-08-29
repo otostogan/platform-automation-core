@@ -56,6 +56,85 @@ def database_resource_name(project: str, environment: str) -> str:
     return f"platform-db-{project}-{environment}"
 
 
+def database_container_name(project: str, environment: str) -> str:
+    """Compose names one replica of one service predictably."""
+    return f"{database_resource_name(project, environment)}-{DATABASE_SERVICE}-1"
+
+
+def database_volume_exists(
+    project: str,
+    environment: str,
+    docker_executable: Path,
+    runner=subprocess.run,
+) -> bool:
+    """Report whether data already exists for this project and environment."""
+    try:
+        result = runner(
+            [
+                str(docker_executable),
+                "volume",
+                "inspect",
+                database_resource_name(project, environment),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise DatabaseRuntimeError("database volume could not be inspected") from error
+
+    return result.returncode == 0
+
+
+def existing_postgres_major(
+    existing_compose: Optional[dict[str, Any]]
+) -> Optional[int]:
+    try:
+        image = existing_compose["services"][DATABASE_SERVICE]["image"]
+    except (KeyError, TypeError):
+        return None
+
+    if not isinstance(image, str) or not image.startswith("postgres:"):
+        return None
+
+    major = image[len("postgres:") :].partition("@")[0]
+
+    return int(major) if major.isdigit() else None
+
+
+def stored_database_password(
+    databases_root: Path,
+    project: str,
+    environment: str,
+    age_key_file: Path,
+    sops_executable: Path,
+    runner=subprocess.run,
+) -> str:
+    """Read the credential without touching Docker or generating anything."""
+    credentials_path = databases_root / project / environment / CREDENTIALS_FILENAME
+
+    if credentials_path.is_symlink() or not credentials_path.is_file():
+        raise DatabaseRuntimeError("database credential is missing")
+
+    try:
+        document = decrypt_sops_document(
+            credentials_path,
+            age_key_file=age_key_file,
+            sops_executable=sops_executable,
+            runner=runner,
+        )
+    except RuntimeSecretsError as error:
+        raise DatabaseRuntimeError(str(error)) from error
+
+    password = document.get("password")
+
+    if not isinstance(password, str) or not password:
+        raise DatabaseRuntimeError("stored database credential is invalid")
+
+    return password
+
+
 def database_url(password: str) -> str:
     return (
         f"postgresql://{DATABASE_USER}:{password}"
@@ -198,6 +277,7 @@ def load_or_create_credentials(
     scratch_directory: Path,
     age_key_file: Path,
     sops_executable: Path,
+    volume_exists: bool = False,
     runner=subprocess.run,
 ) -> str:
     """Return the password, creating or re-enveloping the credential.
@@ -210,6 +290,17 @@ def load_or_create_credentials(
 
     if credentials_path.is_symlink():
         raise DatabaseRuntimeError("database credential cannot be a symbolic link")
+
+    if not credentials_path.is_file() and volume_exists:
+        # A fresh password would not reach a database that already exists --
+        # POSTGRES_PASSWORD only applies while initialising an empty volume --
+        # so the application would fail to authenticate against a deploy that
+        # reported success. The operator resets it through the unix socket.
+        raise DatabaseRuntimeError(
+            "database volume exists but its credential is missing; "
+            "restore the credential or reset the password on the running "
+            "database before deploying"
+        )
 
     if credentials_path.is_file():
         try:
@@ -493,6 +584,14 @@ def ensure_project_database(
         project,
         environment,
     )
+    # An existing volume is sacred: every mismatch around it is a stop for
+    # the operator rather than an improvisation by the platform.
+    volume_exists = database_volume_exists(
+        project,
+        environment,
+        docker_executable,
+        runner=runner,
+    )
     runtime_directory = create_private_runtime_scope(
         runtime_secrets_root,
         project,
@@ -505,6 +604,7 @@ def ensure_project_database(
         runtime_directory,
         age_key_file,
         sops_executable,
+        volume_exists=volume_exists,
         runner=runner,
     )
 
@@ -523,8 +623,21 @@ def ensure_project_database(
                 "existing database compose is unreadable"
             ) from error
 
+    requested_major = manifest["database"]["postgres_major"]
+    running_major = existing_postgres_major(existing_compose)
+
+    if volume_exists and running_major is not None and running_major != requested_major:
+        # Data does not move between majors on its own, and PostgreSQL 18
+        # changed where the cluster lives inside the volume, so the old one
+        # would simply be ignored. The supported path is dump and restore.
+        raise DatabaseRuntimeError(
+            f"cannot change PostgreSQL {running_major} to {requested_major} "
+            "on an existing volume; dump the database, remove the volume, "
+            "and restore into the new major"
+        )
+
     image = resolve_postgres_image(
-        manifest["database"]["postgres_major"],
+        requested_major,
         existing_compose,
         docker_executable,
         runner=runner,

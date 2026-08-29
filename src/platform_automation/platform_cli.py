@@ -46,6 +46,13 @@ from .stage_bundle import (
     stage_verified_bundle,
 )
 
+from .backup_runtime import (
+    DEFAULT_AGE_EXECUTABLE,
+    DEFAULT_BACKUPS_ROOT,
+    BackupRuntimeError,
+    create_backup,
+)
+
 from .database_runtime import (
     DatabaseRuntimeError,
     ensure_project_database,
@@ -221,6 +228,23 @@ def parse_arguments(
     )
     add_identity_arguments(status_parser)
     status_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON.",
+    )
+
+    backup_parser = subparsers.add_parser(
+        "backup",
+        help="Write an encrypted dump of a platform-owned database.",
+    )
+    add_identity_arguments(backup_parser)
+    backup_parser.add_argument(
+        "--reason",
+        choices=("operator", "schedule", "pre-migration"),
+        default="operator",
+        help="Why this backup ran. Recorded in the metadata card.",
+    )
+    backup_parser.add_argument(
         "--json",
         action="store_true",
         help="Print machine-readable JSON.",
@@ -1016,6 +1040,89 @@ def run_deploy(
         return 1
 
 
+def print_backup_result(document: dict[str, Any]) -> None:
+    print(f"Backup written: {document['path']}")
+    print(f"Reason: {document['reason']}")
+    print(f"Size: {document['bytes']} bytes")
+    print(f"Recipients: {document['recipients']}")
+    print(f"Release: {document['release_id']}")
+    print(f"Removed by retention: {len(document['removed_backups'])}")
+
+    for warning in document["warnings"]:
+        print(f"Backup warning: {warning}")
+
+
+def run_backup(
+    arguments: argparse.Namespace,
+    projects_root: Path,
+    releases_root: Path,
+    lock_root: Path,
+    databases_root: Path,
+    backups_root: Path,
+    age_key_file: Path,
+    sops_executable: Path,
+    age_executable: Path,
+    docker_executable: Path,
+    minimum_age_recipients: int,
+    backup_creator=create_backup,
+) -> int:
+    try:
+        with project_environment_lock(
+            lock_root,
+            arguments.project,
+            arguments.environment,
+            "backup",
+        ):
+            records = list_release_records(
+                projects_root,
+                arguments.project,
+                arguments.environment,
+            )
+            record = find_latest_deployed_release(records)
+
+            if record is None:
+                raise BackupRuntimeError(
+                    "a backup describes a deployed release; none exists"
+                )
+
+            bundle = load_release_bundle(
+                record,
+                releases_root,
+                minimum_age_recipients=minimum_age_recipients,
+            )
+
+            document = backup_creator(
+                manifest=bundle.manifest,
+                project=arguments.project,
+                environment=arguments.environment,
+                record=record,
+                secrets_document=bundle.secrets,
+                reason=arguments.reason,
+                databases_root=databases_root,
+                backups_root=backups_root,
+                age_key_file=age_key_file,
+                sops_executable=sops_executable,
+                age_executable=age_executable,
+                docker_executable=docker_executable,
+            )
+
+        if arguments.json:
+            print(json.dumps(document, indent=2, sort_keys=True))
+        else:
+            print_backup_result(document)
+
+        return 0
+    except (
+        BackupRuntimeError,
+        DatabaseRuntimeError,
+        OperationLockError,
+        ReleaseLedgerError,
+        OSError,
+    ) as error:
+        print(f"backup error: {error}", file=sys.stderr)
+        return 1
+
+
 def run_rollback(
     arguments: argparse.Namespace,
     projects_root: Path,
@@ -1235,6 +1342,9 @@ def main(
     image_remover=remove_image,
     databases_root: Path = DEFAULT_DATABASES_ROOT,
     database_ensurer=ensure_project_database,
+    backups_root: Path = DEFAULT_BACKUPS_ROOT,
+    age_executable: Path = DEFAULT_AGE_EXECUTABLE,
+    backup_creator=create_backup,
     token_stream=None,
     compose_runtime_module=compose_runtime,
     nginx_manager=None,
@@ -1280,6 +1390,22 @@ def main(
             image_remover,
             databases_root,
             database_ensurer,
+        )
+
+    if arguments.command == "backup":
+        return run_backup(
+            arguments,
+            projects_root,
+            releases_root,
+            lock_root,
+            databases_root,
+            backups_root,
+            age_key_file,
+            sops_executable,
+            age_executable,
+            docker_executable,
+            arguments.minimum_age_recipients,
+            backup_creator,
         )
 
     if arguments.command == "status":
