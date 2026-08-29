@@ -286,8 +286,19 @@ def validate_database_network(
     errors: list[str] = []
 
     if mode != "docker":
-        if db is not None:
-            errors.append("$.compose.networks.db: forbidden for an external database")
+        # The key "db" stays free for application-owned helpers; only a
+        # reference to the platform interpolation is a contradiction here.
+        if isinstance(networks, dict):
+            for key, network in networks.items():
+                name = network.get("name") if isinstance(network, dict) else None
+
+                if isinstance(name, str) and PLATFORM_DB_NETWORK_PATTERN.fullmatch(
+                    name
+                ):
+                    errors.append(
+                        f"$.compose.networks.{key}.name: PLATFORM_DB_NETWORK "
+                        "is forbidden for an external database"
+                    )
         return errors
 
     if not isinstance(db, dict):
@@ -302,13 +313,21 @@ def validate_database_network(
         errors.append("$.compose.networks.db.name: must use PLATFORM_DB_NETWORK")
 
     web_service_name = manifest["service"]["web"]
-    web_service = services.get(web_service_name)
+    required_members = {web_service_name: "web service"}
+    migration_service = manifest["deployment"].get("migration_service")
 
-    if isinstance(web_service, dict) and "db" not in service_network_names(web_service):
-        errors.append(
-            f"$.compose.services.{web_service_name}.networks: "
-            "web service must join db"
-        )
+    # Migrations run in their own service via `compose run`; a migration
+    # service outside the db network would fail on the first connection.
+    if migration_service:
+        required_members.setdefault(migration_service, "migration service")
+
+    for service_name, role in required_members.items():
+        service = services.get(service_name)
+
+        if isinstance(service, dict) and "db" not in service_network_names(service):
+            errors.append(
+                f"$.compose.services.{service_name}.networks: " f"{role} must join db"
+            )
 
     return errors
 

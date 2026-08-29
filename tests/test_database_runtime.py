@@ -104,6 +104,7 @@ class DatabaseComposeTest(unittest.TestCase):
             "lab",
             PINNED_IMAGE,
             Path("/run/platform/secrets/example/lab/database.env"),
+            postgres_major=17,
         )
         self.service = self.compose["services"]["postgres"]
 
@@ -124,6 +125,30 @@ class DatabaseComposeTest(unittest.TestCase):
 
     def test_healthcheck_talks_to_the_declared_database(self) -> None:
         self.assertIn("pg_isready", self.service["healthcheck"]["test"])
+
+    def test_network_is_internal(self) -> None:
+        """No published ports stops inbound; internal stops outbound too."""
+        self.assertIs(self.compose["networks"]["db"]["internal"], True)
+
+    def test_pre_18_cluster_mounts_the_data_directory(self) -> None:
+        self.assertEqual(
+            self.service["volumes"],
+            ["data:/var/lib/postgresql/data"],
+        )
+
+    def test_postgres_18_mounts_the_image_data_root(self) -> None:
+        compose = build_database_compose(
+            "example",
+            "lab",
+            "postgres:18@sha256:" + ("d" * 64),
+            Path("/run/platform/secrets/example/lab/database.env"),
+            postgres_major=18,
+        )
+
+        self.assertEqual(
+            compose["services"]["postgres"]["volumes"],
+            ["data:/var/lib/postgresql"],
+        )
 
     def test_compose_round_trips_through_yaml(self) -> None:
         self.assertEqual(

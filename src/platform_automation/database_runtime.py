@@ -320,11 +320,26 @@ def resolve_postgres_image(
     return f"{tag}@{digest}"
 
 
+def postgres_data_mount(postgres_major: int) -> str:
+    """Mount the volume where the image actually keeps the cluster.
+
+    PostgreSQL 18 images moved PGDATA under /var/lib/postgresql/18/docker
+    and expect the persistent mount one level up; mounting the pre-18 path
+    there would leave the real cluster in image-managed storage, silently
+    lost on the first container recreation.
+    """
+    if postgres_major >= 18:
+        return "data:/var/lib/postgresql"
+
+    return "data:/var/lib/postgresql/data"
+
+
 def build_database_compose(
     project: str,
     environment: str,
     image: str,
     database_env_path: Path,
+    postgres_major: int,
 ) -> dict[str, Any]:
     resource = database_resource_name(project, environment)
 
@@ -339,7 +354,7 @@ def build_database_compose(
                 "networks": {
                     "db": {"aliases": [DATABASE_ALIAS]},
                 },
-                "volumes": ["data:/var/lib/postgresql/data"],
+                "volumes": [postgres_data_mount(postgres_major)],
                 "healthcheck": {
                     "test": [
                         "CMD",
@@ -357,7 +372,9 @@ def build_database_compose(
             },
         },
         "networks": {
-            "db": {"name": resource},
+            # internal: outbound NAT is connectivity the database never
+            # needs, and the runbook promises its absence.
+            "db": {"name": resource, "internal": True},
         },
         "volumes": {
             "data": {"name": resource},
@@ -522,6 +539,7 @@ def ensure_project_database(
         environment,
         image,
         database_env_path,
+        manifest["database"]["postgres_major"],
     )
     write_private_file(
         compose_path,

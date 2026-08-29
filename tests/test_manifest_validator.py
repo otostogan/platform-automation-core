@@ -325,11 +325,44 @@ class ManifestValidatorTest(unittest.TestCase):
 
         self.assertTrue(
             any(
-                error.startswith("$.compose.networks.db:") and "forbidden" in error
+                error.startswith("$.compose.networks.db.name:") and "forbidden" in error
                 for error in errors
             ),
             errors,
         )
+
+    def test_migration_service_must_join_db_network(self) -> None:
+        manifest, compose = self.docker_database_compose()
+        manifest["deployment"] = {
+            "migration_service": "migrator",
+            "migration_command": ["bin/migrate"],
+        }
+        compose["services"]["migrator"] = {
+            "image": "${PLATFORM_IMAGE:?PLATFORM_IMAGE is required}",
+        }
+
+        errors = self.validate_compose_contract(compose, manifest)
+
+        self.assertTrue(
+            any("migration service must join db" in error for error in errors),
+            errors,
+        )
+
+        compose["services"]["migrator"]["networks"] = ["db"]
+
+        self.assertEqual(
+            self.validate_compose_contract(compose, manifest),
+            [],
+        )
+
+    def test_external_database_may_keep_its_own_db_network(self) -> None:
+        """The key stays free; only the platform interpolation is claimed."""
+        compose = copy.deepcopy(self.valid_compose)
+        compose["networks"]["db"] = {"name": "helper-net", "external": True}
+
+        errors = self.validate_compose_contract(compose, self.valid_manifest)
+
+        self.assertEqual(errors, [])
 
     def test_rejects_compose_build(self) -> None:
         compose = copy.deepcopy(self.valid_compose)
