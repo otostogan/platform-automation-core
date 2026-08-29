@@ -7,6 +7,22 @@ release.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-29
+
+- Deploying a release tag that already had a record skipped starting
+  containers while reporting that it had started them, so redeploying an
+  earlier revision to roll back silently left the newer release running. The
+  shortcut now applies only to the release that is already current, and every
+  other deploy of a known tag becomes a new record that actually starts.
+- Reclaim superseded releases after a successful deploy or rollback. Retention
+  counts distinct image digests, never removes a digest another ledger on the
+  host still wants, keeps decrypted secrets only for the running release, and
+  can only warn.
+- Add the optional `deployment.retained_releases` manifest field, defaulting
+  to 5.
+- Record release timestamps with millisecond precision so two deployments in
+  the same second have a defined order.
+
 ## [0.3.4] - 2026-08-28
 
 - Stop reporting a change when a task only refreshes the APT package index.

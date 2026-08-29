@@ -110,10 +110,10 @@ jobs:
 
             - name: Prepare deployment bundle
               id: bundle
-              uses: otostogan/platform-automation-core/.github/actions/build-bundle@v0.3.4
+              uses: otostogan/platform-automation-core/.github/actions/build-bundle@v0.4.0
               with:
                   manifest-path: ${{ inputs.manifest_path }}
-                  core-version: v0.3.4
+                  core-version: v0.4.0
                   github-token: ${{ secrets.platform_core_token }}
                   minimum-age-recipients: ${{ inputs.minimum_age_recipients }}
 

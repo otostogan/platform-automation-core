@@ -28,6 +28,7 @@ from platform_automation.registry_pull import RegistryPullError  # noqa: E402
 from platform_automation.release_ledger import (  # noqa: E402
     build_prepared_release,
     create_private_ledger_directory,
+    find_latest_deployed_release,
     list_release_records,
     write_release_record,
     replace_release_record,
@@ -83,8 +84,10 @@ class PlatformCliTest(unittest.TestCase):
         self.migration_error = None
         self.start_error_images: set[str] = set()
         self.stop_error = None
+        self.removed_images: list[str] = []
         self.secrets_materializer = self.materialize_secrets
         self.image_puller = self.pull_image
+        self.image_remover = self.remove_image
         self.token_stream = io.BytesIO()
 
         create_bundle(
@@ -417,6 +420,13 @@ class PlatformCliTest(unittest.TestCase):
             }
         )
 
+    def remove_image(
+        self,
+        image: str,
+        docker_executable: Path,
+    ) -> None:
+        self.removed_images.append(image)
+
     def validate_release_compose(self, **kwargs) -> None:
         self.runtime_events.append(("validate", kwargs["image"]))
 
@@ -500,6 +510,7 @@ class PlatformCliTest(unittest.TestCase):
                 registry_runtime_root=self.registry_runtime_root,
                 docker_executable=self.docker_executable,
                 image_puller=self.image_puller,
+                image_remover=self.image_remover,
                 token_stream=self.token_stream,
                 compose_runtime_module=self,
                 nginx_manager=self,
@@ -775,6 +786,8 @@ class PlatformCliTest(unittest.TestCase):
 
         self.assertFalse(first["reused"])
         self.assertTrue(second["reused"])
+        self.assertTrue(first["containers_started"])
+        self.assertFalse(second["containers_started"])
         self.assertEqual(
             first["release_id"],
             second["release_id"],
@@ -785,6 +798,11 @@ class PlatformCliTest(unittest.TestCase):
             first["runtime_secrets_path"],
             second["runtime_secrets_path"],
         )
+        self.assertEqual(
+            [event for event in self.runtime_events if event[0] == "start"],
+            [("start", IMAGE)],
+        )
+        self.assertIsNone(second["retention"])
 
         records = list_release_records(
             self.projects_root,
@@ -793,7 +811,7 @@ class PlatformCliTest(unittest.TestCase):
         )
         self.assertEqual(len(records), 1)
 
-    def test_deploy_resumes_existing_prepared_release(self) -> None:
+    def test_deploy_supersedes_abandoned_prepared_release(self) -> None:
         prepared = build_prepared_release(
             request=self.request,
             staged_bundle_path=self.staged_bundle,
@@ -808,9 +826,62 @@ class PlatformCliTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         document = json.loads(stdout)
-        self.assertTrue(document["reused"])
-        self.assertEqual(document["release_id"], prepared["release_id"])
+        self.assertFalse(document["reused"])
+        self.assertTrue(document["containers_started"])
+        self.assertNotEqual(document["release_id"], prepared["release_id"])
         self.assertEqual(document["status"], "deployed")
+        self.assertEqual(self.runtime_events[-1], ("start", IMAGE))
+
+        records = list_release_records(
+            self.projects_root,
+            "example",
+            "lab",
+        )
+        self.assertEqual(len(records), 2)
+
+    def test_redeploying_a_superseded_tag_starts_containers(self) -> None:
+        first_code, first_stdout, _ = self.run_cli(*self.deploy_arguments())
+
+        newer_image = "ghcr.io/example/platform-example@sha256:" + ("c" * 64)
+        newer_code, newer_stdout, _ = self.run_cli(
+            *self.deploy_arguments(newer_image, release_tag="v2")
+        )
+
+        self.runtime_events.clear()
+
+        rollforward_code, rollback_stdout, rollback_stderr = self.run_cli(
+            *self.deploy_arguments()
+        )
+
+        self.assertEqual(first_code, 0)
+        self.assertEqual(newer_code, 0)
+        self.assertEqual(rollforward_code, 0)
+        self.assertEqual(rollback_stderr, "")
+
+        first = json.loads(first_stdout)
+        newer = json.loads(newer_stdout)
+        restored = json.loads(rollback_stdout)
+
+        self.assertFalse(restored["reused"])
+        self.assertTrue(restored["containers_started"])
+        self.assertEqual(restored["release_tag"], "v1")
+        self.assertEqual(restored["image"], IMAGE)
+        self.assertNotEqual(restored["release_id"], first["release_id"])
+        self.assertEqual(self.runtime_events[-1], ("start", IMAGE))
+
+        records = list_release_records(
+            self.projects_root,
+            "example",
+            "lab",
+        )
+        self.assertEqual(len(records), 3)
+
+        current = find_latest_deployed_release(records)
+        self.assertEqual(current["release_id"], restored["release_id"])
+        self.assertEqual(
+            current["previous_release_id"],
+            newer["release_id"],
+        )
 
     def test_migration_failure_leaves_release_failed(self) -> None:
         self.migration_error = "migration command failed"
