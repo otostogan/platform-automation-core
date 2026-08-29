@@ -97,6 +97,7 @@ jobs:
               run: >-
                   python -m unittest
                   tests.test_nginx_transaction_ansible
+                  tests.test_platform_cli_ansible
                   tests.test_reboot_recovery_ansible
                   tests.test_vps_bootstrap_ansible
                   tests.test_vps_readiness_ansible

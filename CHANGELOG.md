@@ -7,6 +7,16 @@ release.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-29
+
+- Install `release_retention.py` on the host. The `platform_cli` role copies a
+  named list of modules and this one was missing, so converging to `0.4.0`
+  installed a CLI that cannot start. Skip `0.4.0`.
+- Stop installing `bundle_action.py` on the host. It is a CI entry point that
+  imports a module the host does not have; nothing on the host imported it.
+- Add a structural test that keeps the role's module list, the runtime package,
+  and the contract list in agreement.
+
 ## [0.4.0] - 2026-08-29
 
 - Deploying a release tag that already had a record skipped starting
