@@ -88,7 +88,10 @@ class PlatformCliTest(unittest.TestCase):
         self.removed_images: list[str] = []
         self.database_ensures: list[dict] = []
         self.backup_calls: list[dict] = []
+        self.backup_error = None
         self.restore_calls: list[dict] = []
+        self.timer_calls: list[dict] = []
+        self.timer_error = None
         self.database_password = None
         self.database_error = None
         self.secrets_materializer = self.materialize_secrets
@@ -433,8 +436,27 @@ class PlatformCliTest(unittest.TestCase):
     ) -> None:
         self.removed_images.append(image)
 
+    def reconcile_timer(self, **kwargs):
+        self.timer_calls.append(kwargs)
+
+        if self.timer_error is not None:
+            from platform_automation.backup_schedule import BackupScheduleError
+
+            raise BackupScheduleError(self.timer_error)
+
+        return {
+            "unit": "platform-backup@example-lab.timer",
+            "state": "enabled",
+            "interval_minutes": 360,
+        }
+
     def create_backup(self, **kwargs):
         self.backup_calls.append(kwargs)
+
+        if self.backup_error is not None:
+            from platform_automation.backup_runtime import BackupRuntimeError
+
+            raise BackupRuntimeError(self.backup_error)
 
         return {
             "stamp": "20260829T140530Z-" + kwargs["reason"],
@@ -546,6 +568,8 @@ class PlatformCliTest(unittest.TestCase):
                 database_ensurer=self.ensure_database,
                 backup_creator=self.create_backup,
                 backups_root=self.backups_root,
+                timer_reconciler=self.reconcile_timer,
+                systemd_root=self.base / "systemd",
                 token_stream=self.token_stream,
                 compose_runtime_module=self,
                 nginx_manager=self,
@@ -1214,6 +1238,115 @@ class PlatformCliTest(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("last proven restorable: never", stdout)
+
+    def test_an_external_database_takes_no_pre_migration_backup(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        self.assertEqual(self.backup_calls, [])
+
+    def test_deploy_reconciles_the_backup_timer(self) -> None:
+        code, stdout, _ = self.run_cli(*self.deploy_arguments())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.timer_calls), 1)
+        self.assertEqual(self.timer_calls[0]["project"], "example")
+        self.assertEqual(self.timer_calls[0]["environment"], "lab")
+        self.assertEqual(
+            json.loads(stdout)["schedule"]["state"],
+            "enabled",
+        )
+
+    def test_a_timer_failure_warns_without_failing_the_deploy(self) -> None:
+        """A release already serving traffic is not a failed release."""
+        self.timer_error = "systemctl enable failed"
+
+        code, stdout, stderr = self.run_cli(*self.deploy_arguments())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        schedule = json.loads(stdout)["schedule"]
+        self.assertEqual(schedule["state"], "unknown")
+        self.assertIn("systemctl enable failed", schedule["warning"])
+
+    def use_docker_database_bundle(self) -> None:
+        """Rebuild the bundle as a docker-mode application with backups on.
+
+        The shared fixture declares an external database, where a
+        pre-migration backup is correctly a no-op.
+        """
+        import shutil
+
+        import yaml
+
+        app_root = self.base / "docker-db-app"
+        deploy = app_root / "deploy"
+        deploy.mkdir(parents=True)
+
+        for name in ("platform.yml", "compose.yml", "secrets.lab.sops.yaml"):
+            shutil.copy2(EXAMPLE_MANIFEST.parent / name, deploy / name)
+
+        manifest_path = deploy / "platform.yml"
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        manifest["database"] = {
+            "mode": "docker",
+            "postgres_major": 18,
+            "backup_enabled": True,
+            "backup": {"interval_minutes": 360, "retain": 14},
+        }
+        manifest_path.write_text(
+            yaml.safe_dump(manifest, sort_keys=False),
+            encoding="utf-8",
+        )
+
+        compose_path = deploy / "compose.yml"
+        compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+        service = compose["services"][manifest["service"]["web"]]
+        service["networks"] = list(service.get("networks", [])) + ["db"]
+        compose["networks"]["db"] = {
+            "name": "${PLATFORM_DB_NETWORK:?PLATFORM_DB_NETWORK is required}",
+            "external": True,
+        }
+        compose_path.write_text(
+            yaml.safe_dump(compose, sort_keys=False),
+            encoding="utf-8",
+        )
+
+        self.bundle_path = self.base / "docker-db.bundle.tar.gz"
+        create_bundle(manifest_path, self.bundle_path)
+
+    def test_a_migration_takes_a_backup_first(self) -> None:
+        self.use_docker_database_bundle()
+
+        self.run_cli(*self.deploy_arguments())
+
+        reasons = [call["reason"] for call in self.backup_calls]
+
+        self.assertEqual(reasons, ["pre-migration"])
+        self.assertEqual(
+            self.backup_calls[0]["record"]["release_tag"],
+            "v1",
+        )
+        # The dump must precede the migration it is protecting.
+        self.assertEqual(self.runtime_events[0][0], "validate")
+        self.assertEqual(self.runtime_events[1][0], "migration")
+
+    def test_a_failed_pre_migration_backup_stops_the_migration(self) -> None:
+        """No safety net, no destructive step."""
+        self.use_docker_database_bundle()
+        self.backup_error = "database dump failed"
+
+        code, _, stderr = self.run_cli(*self.deploy_arguments())
+
+        self.assertEqual(code, 1)
+        self.assertIn("pre-migration backup failed", stderr)
+        self.assertNotIn(
+            "migration",
+            [event[0] for event in self.runtime_events],
+        )
+
+        records = list_release_records(self.projects_root, "example", "lab")
+        self.assertEqual(records[-1]["status"], "failed")
+        self.assertEqual(records[-1]["migration"]["status"], "failed")
 
     def test_deploy_rejects_release_tag_conflict(self) -> None:
         first_code, _, first_stderr = self.run_cli(*self.deploy_arguments())

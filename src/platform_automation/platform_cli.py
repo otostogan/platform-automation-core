@@ -54,6 +54,14 @@ from .backup_runtime import (
     list_backups,
 )
 
+from .backup_schedule import (
+    DEFAULT_SYSTEMCTL_EXECUTABLE,
+    DEFAULT_SYSTEMD_ROOT,
+    BackupScheduleError,
+    backups_are_scheduled,
+    reconcile_backup_timer,
+)
+
 from .restore_runtime import (
     RestoreRuntimeError,
     last_verification,
@@ -573,6 +581,7 @@ def build_deploy_result(
     reused: bool,
     containers_started: bool,
     retention: dict[str, Any] = None,
+    schedule: dict[str, Any] = None,
 ) -> dict[str, Any]:
     """Report what this invocation did, never what the ledger already said."""
     return {
@@ -589,6 +598,7 @@ def build_deploy_result(
         "reused": reused,
         "containers_started": containers_started,
         "retention": retention,
+        "schedule": schedule,
     }
 
 
@@ -606,6 +616,23 @@ def print_deploy_result(document: dict[str, Any]) -> None:
     print("Image pulled: yes")
     print("Containers started: " + ("yes" if document["containers_started"] else "no"))
     print_retention_summary(document["retention"])
+    print_schedule_summary(document["schedule"])
+
+
+def print_schedule_summary(schedule: dict[str, Any]) -> None:
+    if schedule is None:
+        return
+
+    if schedule["state"] == "enabled":
+        print(
+            f"Backup schedule: every {schedule['interval_minutes']} minute(s) "
+            f"via {schedule['unit']}"
+        )
+    else:
+        print(f"Backup schedule: {schedule['state']}")
+
+    if schedule.get("warning"):
+        print(f"Schedule warning: {schedule['warning']}")
 
 
 def print_retention_summary(retention: dict[str, Any]) -> None:
@@ -701,6 +728,25 @@ def restore_previous_release(
     )
 
 
+def pre_migration_backup(
+    request,
+    record: dict[str, Any],
+    projects_root: Path,
+    backup_runner,
+) -> None:
+    if not backups_are_scheduled(request.bundle.manifest):
+        return
+
+    backup_runner(
+        manifest=request.bundle.manifest,
+        project=request.project,
+        environment=request.environment,
+        record=record,
+        secrets_document=request.bundle.secrets,
+        reason="pre-migration",
+    )
+
+
 def execute_prepared_release(
     request,
     record: dict[str, Any],
@@ -713,6 +759,7 @@ def execute_prepared_release(
     docker_executable: Path,
     compose_runtime_module,
     nginx_manager,
+    backup_runner=None,
 ) -> dict[str, Any]:
     arguments = runtime_arguments(
         request,
@@ -743,6 +790,29 @@ def execute_prepared_release(
         )
 
         if record["migration"]["status"] != "not_required":
+            # The most valuable snapshot is the one taken immediately before a
+            # migration, and unlike retention this is not housekeeping: it is
+            # the safety net for a destructive step. If the net cannot be
+            # strung, the step does not happen.
+            try:
+                pre_migration_backup(
+                    request=request,
+                    record=record,
+                    projects_root=projects_root,
+                    backup_runner=backup_runner,
+                )
+            except (BackupRuntimeError, DatabaseRuntimeError) as error:
+                update_release_state(
+                    projects_root,
+                    record,
+                    status="failed",
+                    migration_status="failed",
+                    migration_error=f"pre-migration backup failed: {error}",
+                )
+                raise DeploymentExecutionError(
+                    f"pre-migration backup failed: {error}"
+                ) from error
+
             record = update_release_state(
                 projects_root,
                 record,
@@ -859,6 +929,60 @@ def prepare_release_database(
     inject_database_url(runtime_secrets_path, password)
 
 
+def build_backup_runner(
+    databases_root: Path,
+    backups_root: Path,
+    age_key_file: Path,
+    sops_executable: Path,
+    age_executable: Path,
+    docker_executable: Path,
+    backup_creator,
+):
+    """Bind the host paths so the release path can ask for a backup plainly."""
+
+    def take_backup(**arguments):
+        return backup_creator(
+            databases_root=databases_root,
+            backups_root=backups_root,
+            age_key_file=age_key_file,
+            sops_executable=sops_executable,
+            age_executable=age_executable,
+            docker_executable=docker_executable,
+            **arguments,
+        )
+
+    return take_backup
+
+
+def run_backup_schedule(
+    request,
+    systemd_root: Path,
+    systemctl_executable: Path,
+    timer_reconciler,
+) -> dict[str, Any]:
+    """Match the host timer to the release, warning rather than failing.
+
+    A deployment that is already serving traffic must not be reported as
+    failed because a timer could not be written; the warning surfaces in the
+    deploy output and in `platform status`.
+    """
+    try:
+        return timer_reconciler(
+            manifest=request.bundle.manifest,
+            project=request.project,
+            environment=request.environment,
+            systemd_root=systemd_root,
+            systemctl_executable=systemctl_executable,
+        )
+    except (BackupScheduleError, OSError) as error:
+        return {
+            "unit": None,
+            "state": "unknown",
+            "interval_minutes": None,
+            "warning": f"backup schedule not applied: {error}",
+        }
+
+
 def run_release_retention(
     request,
     record: dict[str, Any],
@@ -922,6 +1046,12 @@ def run_deploy(
     image_remover=remove_image,
     databases_root: Path = DEFAULT_DATABASES_ROOT,
     database_ensurer=ensure_project_database,
+    backups_root: Path = DEFAULT_BACKUPS_ROOT,
+    age_executable: Path = DEFAULT_AGE_EXECUTABLE,
+    backup_creator=create_backup,
+    systemd_root: Path = DEFAULT_SYSTEMD_ROOT,
+    systemctl_executable: Path = DEFAULT_SYSTEMCTL_EXECUTABLE,
+    timer_reconciler=reconcile_backup_timer,
 ) -> int:
     try:
         registry_username, registry_token = load_registry_credentials(
@@ -1017,6 +1147,12 @@ def run_deploy(
                         runtime_secrets_path,
                         reused=True,
                         containers_started=False,
+                        schedule=run_backup_schedule(
+                            request,
+                            systemd_root,
+                            systemctl_executable,
+                            timer_reconciler,
+                        ),
                     )
 
                     if arguments.json:
@@ -1093,6 +1229,22 @@ def run_deploy(
                 docker_executable=docker_executable,
                 compose_runtime_module=compose_runtime_module,
                 nginx_manager=nginx_manager,
+                backup_runner=build_backup_runner(
+                    databases_root,
+                    backups_root,
+                    age_key_file,
+                    sops_executable,
+                    age_executable,
+                    docker_executable,
+                    backup_creator,
+                ),
+            )
+
+            schedule = run_backup_schedule(
+                request,
+                systemd_root,
+                systemctl_executable,
+                timer_reconciler,
             )
 
             retention = run_release_retention(
@@ -1112,6 +1264,7 @@ def run_deploy(
                 reused=False,
                 containers_started=True,
                 retention=retention,
+                schedule=schedule,
             )
 
             if arguments.json:
@@ -1397,6 +1550,12 @@ def run_rollback(
     image_remover=remove_image,
     databases_root: Path = DEFAULT_DATABASES_ROOT,
     database_ensurer=ensure_project_database,
+    backups_root: Path = DEFAULT_BACKUPS_ROOT,
+    age_executable: Path = DEFAULT_AGE_EXECUTABLE,
+    backup_creator=create_backup,
+    systemd_root: Path = DEFAULT_SYSTEMD_ROOT,
+    systemctl_executable: Path = DEFAULT_SYSTEMCTL_EXECUTABLE,
+    timer_reconciler=reconcile_backup_timer,
 ) -> int:
     try:
         registry_username, registry_token = load_registry_credentials(
@@ -1549,6 +1708,12 @@ def run_rollback(
                 reused=False,
                 containers_started=True,
                 retention=retention,
+                schedule=run_backup_schedule(
+                    request,
+                    systemd_root,
+                    systemctl_executable,
+                    timer_reconciler,
+                ),
             )
             document.update(
                 {
@@ -1601,6 +1766,9 @@ def main(
     backups_root: Path = DEFAULT_BACKUPS_ROOT,
     age_executable: Path = DEFAULT_AGE_EXECUTABLE,
     backup_creator=create_backup,
+    systemd_root: Path = DEFAULT_SYSTEMD_ROOT,
+    systemctl_executable: Path = DEFAULT_SYSTEMCTL_EXECUTABLE,
+    timer_reconciler=reconcile_backup_timer,
     token_stream=None,
     compose_runtime_module=compose_runtime,
     nginx_manager=None,
@@ -1646,6 +1814,12 @@ def main(
             image_remover,
             databases_root,
             database_ensurer,
+            backups_root,
+            age_executable,
+            backup_creator,
+            systemd_root,
+            systemctl_executable,
+            timer_reconciler,
         )
 
     if arguments.command in ("restore", "verify-backup"):

@@ -182,6 +182,42 @@ What the design guarantees, and why:
 - Retention comes from `database.backup.retain`. It drops the oldest dumps
   beyond that count, never the newest, and only ever warns.
 
+## Scheduled backups
+
+A deployment reconciles the host timer with what the release declares. An
+application with `backup_enabled: true` gets
+`platform-backup@{project}-{environment}.timer` running at its declared
+`interval_minutes`; one that turns backups off, or moves to an external
+database, has its timer disabled and its override removed. Host state that
+outlives the release which created it needs a removal path, and this is it.
+
+```sh
+systemctl list-timers 'platform-backup@*'
+journalctl --unit 'platform-backup@*' --since today
+```
+
+The units themselves are installed by convergence, not written by a deploy:
+what runs and as whom is fixed by the operator, and a deploy only supplies the
+cadence through a drop-in. Timers carry a randomized delay so several projects
+on one host do not all dump at the same instant, and `Persistent=true` catches
+up **once** after downtime rather than once per window missed.
+
+A timer that cannot be written produces a warning, not a failed deployment: a
+release already serving traffic is not a failed release. The warning appears in
+the deploy output under `schedule`.
+
+## Backups before migrations
+
+A migration is the most common way to lose data, so a deploy that runs one
+takes a dump first, automatically, regardless of the schedule. This narrows the
+loss window at the riskiest moment to seconds.
+
+**This one is not housekeeping, and it does fail the deploy.** Retention and
+scheduling only ever warn, because they are tidying up around a release that
+already works. A pre-migration dump is the safety net for a destructive step:
+if the net cannot be strung, the step does not happen. The release is recorded
+as `failed` with the migration never attempted.
+
 ## Proving a backup
 
 A backup nobody has restored is not a backup. `verify-backup` turns that from

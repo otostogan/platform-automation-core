@@ -1,0 +1,35 @@
+[Unit]
+Description=Scheduled platform database backup for %i
+Documentation=file://{{ platform_cli_executable }}
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+# The instance is project-environment. Environment never contains a hyphen
+# and comes from a closed set, so the split is unambiguous.
+ExecStart=/bin/sh -c '\
+    instance="%i"; \
+    environment="${instance##*-}"; \
+    project="${instance%-${environment}}"; \
+    exec {{ platform_cli_executable }} backup \
+        --project "${project}" \
+        --environment "${environment}" \
+        --reason schedule \
+        --json'
+TimeoutStartSec={{ platform_cli_backup_timeout }}
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/var/backups/platform /run/platform
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
