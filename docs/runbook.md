@@ -199,8 +199,12 @@ journalctl --unit 'platform-backup@*' --since today
 The units themselves are installed by convergence, not written by a deploy:
 what runs and as whom is fixed by the operator, and a deploy only supplies the
 cadence through a drop-in. Timers carry a randomized delay so several projects
-on one host do not all dump at the same instant, and `Persistent=true` catches
-up **once** after downtime rather than once per window missed.
+on one host do not all dump at the same instant.
+
+These are monotonic timers: the first run is scheduled relative to boot, and
+every run after that relative to the previous one. A host that was switched off
+does not replay the windows it missed — it simply resumes. `platform status`
+reports the newest dump, which is where a long gap becomes visible.
 
 A timer that cannot be written produces a warning, not a failed deployment: a
 release already serving traffic is not a failed release. The warning appears in

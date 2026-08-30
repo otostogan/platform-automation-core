@@ -7,6 +7,15 @@ release.
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-08-30
+
+- Fix the interval drop-in resetting the timer list twice. An empty assignment
+  resets every monotonic timer, not the option it names, so the second reset
+  discarded the interval and left a timer that fired once and never computed a
+  next elapse. Skip `0.10.0` and `0.10.1` for scheduled backups.
+- Remove `Persistent=true`, which only affects calendar timers and was inert
+  here while the documentation claimed otherwise.
+
 ## [0.10.1] - 2026-08-30
 
 - Fix the scheduled backup unit: it split the systemd instance with shell

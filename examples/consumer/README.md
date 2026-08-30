@@ -8,7 +8,7 @@ release without importing its source tree.
   and a thin trigger workflow.
 
 The sample values use documentation-only addresses and domains. The workflows
-pin `v0.10.1`. The core repository is public, so reading its releases needs no
+pin `v0.10.2`. The core repository is public, so reading its releases needs no
 credential.
 
 The fixture demonstrates the steady-state bus-factor policy: application

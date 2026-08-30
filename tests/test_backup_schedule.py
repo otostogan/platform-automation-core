@@ -93,9 +93,27 @@ class IntervalTest(unittest.TestCase):
         content = render_interval_override(60).decode("utf-8")
 
         self.assertIn("OnUnitActiveSec=60min", content)
+        self.assertIn("OnBootSec=30min", content)
         self.assertIn("RandomizedDelaySec=6min", content)
-        # Clearing the inherited value first stops systemd merging two.
-        self.assertIn("OnUnitActiveSec=\n", content)
+
+    def test_the_override_resets_the_timer_list_exactly_once(self) -> None:
+        """An empty assignment resets every monotonic timer, not one option.
+
+        A second reset discards what the first pass already set, leaving only
+        the last option written -- a timer that never computes a next elapse.
+        """
+        lines = render_interval_override(15).decode("utf-8").splitlines()
+        resets = [line for line in lines if line.endswith("=")]
+
+        self.assertEqual(resets, ["OnUnitActiveSec="])
+        self.assertLess(
+            lines.index("OnUnitActiveSec="),
+            lines.index("OnUnitActiveSec=15min"),
+        )
+        self.assertLess(
+            lines.index("OnUnitActiveSec="),
+            lines.index("OnBootSec=15min"),
+        )
 
     def test_a_short_interval_still_gets_a_delay(self) -> None:
         self.assertIn(
