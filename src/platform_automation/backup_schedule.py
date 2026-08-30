@@ -102,18 +102,21 @@ def backups_are_scheduled(manifest: dict[str, Any]) -> bool:
 
 
 def render_interval_override(interval_minutes: int) -> bytes:
-    """Spread the load, and never let a missed window pile up.
+    """Pin the cadence, and spread the load across projects.
 
-    RandomizedDelaySec keeps every project on a host from dumping at the same
-    instant; Persistent catches up one run after downtime rather than one per
-    window missed.
+    An empty assignment resets the *entire* list of monotonic timers, not the
+    one option it names. Exactly one reset therefore precedes every value; a
+    second would silently discard whatever the first pass had already set, and
+    the timer would keep only the last option written.
+
+    OnBootSec gives the first run something to hang on, because OnUnitActiveSec
+    has no reference point until the service has been activated once.
     """
     return (
         "# Written by platform deploy from database.backup.interval_minutes.\n"
         "[Timer]\n"
         "OnUnitActiveSec=\n"
         f"OnUnitActiveSec={interval_minutes}min\n"
-        "OnBootSec=\n"
         f"OnBootSec={min(interval_minutes, 30)}min\n"
         "RandomizedDelaySec="
         f"{max(interval_minutes // 10, 1)}min\n"
