@@ -1239,6 +1239,18 @@ class PlatformCliTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("last proven restorable: never", stdout)
 
+    def test_disabled_scheduling_still_backs_up_before_a_migration(self) -> None:
+        """backup_enabled governs the schedule, not the safety net."""
+        self.use_docker_database_bundle(backups_enabled=False)
+
+        code, _, _ = self.run_cli(*self.deploy_arguments())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [call["reason"] for call in self.backup_calls],
+            ["pre-migration"],
+        )
+
     def test_an_external_database_takes_no_pre_migration_backup(self) -> None:
         self.run_cli(*self.deploy_arguments())
 
@@ -1268,7 +1280,7 @@ class PlatformCliTest(unittest.TestCase):
         self.assertEqual(schedule["state"], "unknown")
         self.assertIn("systemctl enable failed", schedule["warning"])
 
-    def use_docker_database_bundle(self) -> None:
+    def use_docker_database_bundle(self, backups_enabled: bool = True) -> None:
         """Rebuild the bundle as a docker-mode application with backups on.
 
         The shared fixture declares an external database, where a
@@ -1290,9 +1302,14 @@ class PlatformCliTest(unittest.TestCase):
         manifest["database"] = {
             "mode": "docker",
             "postgres_major": 18,
-            "backup_enabled": True,
-            "backup": {"interval_minutes": 360, "retain": 14},
+            "backup_enabled": backups_enabled,
         }
+
+        if backups_enabled:
+            manifest["database"]["backup"] = {
+                "interval_minutes": 360,
+                "retain": 14,
+            }
         manifest_path.write_text(
             yaml.safe_dump(manifest, sort_keys=False),
             encoding="utf-8",

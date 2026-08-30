@@ -56,6 +56,15 @@ class InstanceNameTest(unittest.TestCase):
                     (project, environment),
                 )
 
+    def test_the_longest_valid_project_still_gets_a_timer(self) -> None:
+        """A project may use all 63 characters the manifest schema allows."""
+        project = "a" + "b" * 62
+
+        self.assertEqual(
+            split_instance(timer_instance(project, "production")),
+            (project, "production"),
+        )
+
     def test_an_unknown_environment_is_refused(self) -> None:
         with self.assertRaises(BackupScheduleError):
             timer_instance("example", "sandbox")

@@ -734,7 +734,10 @@ def pre_migration_backup(
     projects_root: Path,
     backup_runner,
 ) -> None:
-    if not backups_are_scheduled(request.bundle.manifest):
+    # Deliberately not gated on backup_enabled: that flag governs the
+    # schedule, while this dump is a precondition for a destructive step.
+    # Turning scheduling off must not silently remove the safety net.
+    if request.bundle.manifest["database"]["mode"] != "docker":
         return
 
     backup_runner(

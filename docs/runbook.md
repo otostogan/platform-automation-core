@@ -212,6 +212,11 @@ A migration is the most common way to lose data, so a deploy that runs one
 takes a dump first, automatically, regardless of the schedule. This narrows the
 loss window at the riskiest moment to seconds.
 
+This is not gated on `backup_enabled`. That flag governs the *schedule*;
+turning it off must not silently remove the safety net from a destructive
+step. Any platform-owned database gets a dump before its migration, and the
+dump lands under the same retention as any other.
+
 **This one is not housekeeping, and it does fail the deploy.** Retention and
 scheduling only ever warn, because they are tidying up around a release that
 already works. A pre-migration dump is the safety net for a destructive step:

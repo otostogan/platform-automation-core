@@ -26,7 +26,10 @@ DEFAULT_SYSTEMCTL_EXECUTABLE = Path("/usr/bin/systemctl")
 
 TIMER_TEMPLATE = "platform-backup@"
 ALLOWED_ENVIRONMENTS = ("lab", "staging", "production")
-INSTANCE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
+# A project may be 63 characters on its own, so the combined instance has
+# room for the longest project plus the longest environment. systemd
+# allows far more than this.
+INSTANCE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,126}$")
 
 MIN_INTERVAL_MINUTES = 15
 MAX_INTERVAL_MINUTES = 1440
