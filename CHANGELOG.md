@@ -7,6 +7,15 @@ release.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-30
+
+- Fix the scheduled backup unit: it split the systemd instance with shell
+  parameter expansion, but systemd resolves `${...}` in `ExecStart` before a
+  shell sees it, so every scheduled run reached the CLI with an empty
+  environment and exited 2. `platform backup` now accepts `--instance` and the
+  unit runs without a shell. Skip `0.10.0` for scheduled backups.
+- Refuse shell parameter expansion in unit `Exec*` lines in tests.
+
 ## [0.10.0] - 2026-08-30
 
 - Reconcile a systemd backup timer on every deploy from
