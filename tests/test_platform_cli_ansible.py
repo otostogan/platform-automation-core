@@ -60,6 +60,28 @@ class PlatformCliRoleFilesTest(unittest.TestCase):
                 if node.level and node.module in controller_names:
                     self.fail(f"{name} imports controller-only {node.module}")
 
+    def test_units_never_rely_on_shell_expansion(self) -> None:
+        """systemd expands ${...} itself, before any shell sees it.
+
+        A unit that writes shell parameter expansion gets empty strings
+        substituted by systemd and fails at runtime, which no test without a
+        real systemd can observe. Refusing the syntax outright is what can be
+        checked here.
+        """
+        units = sorted(
+            (ROOT / "roles" / "platform_cli" / "templates").glob("*.service.j2")
+        )
+
+        self.assertTrue(units)
+
+        for unit in units:
+            with self.subTest(unit=unit.name):
+                for line in unit.read_text(encoding="utf-8").splitlines():
+                    if not line.startswith(("ExecStart", "ExecStop", "Exec")):
+                        continue
+
+                    self.assertNotIn("${", line, unit.name)
+
     def test_every_contract_is_installed(self) -> None:
         contracts = {
             path.name for path in (RUNTIME_PACKAGE / "contracts").glob("*.json")

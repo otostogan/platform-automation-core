@@ -1136,6 +1136,47 @@ class PlatformCliTest(unittest.TestCase):
             current["release_id"],
         )
 
+    def test_backup_accepts_a_systemd_instance(self) -> None:
+        """The scheduled unit knows one instance name, not two arguments."""
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, stderr = self.run_cli(
+            "backup",
+            "--instance",
+            "example-lab",
+            "--reason",
+            "schedule",
+            "--json",
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(json.loads(stdout)["reason"], "schedule")
+        self.assertEqual(self.backup_calls[-1]["project"], "example")
+        self.assertEqual(self.backup_calls[-1]["environment"], "lab")
+
+    def test_backup_refuses_a_malformed_instance(self) -> None:
+        code, _, stderr = self.run_cli(
+            "backup",
+            "--instance",
+            "../etc-lab",
+            "--json",
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIn("backup error:", stderr)
+
+    def test_backup_project_still_needs_an_environment(self) -> None:
+        code, _, stderr = self.run_cli(
+            "backup",
+            "--project",
+            "example",
+            "--json",
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIn("--environment is required", stderr)
+
     def test_backup_reason_reaches_the_card(self) -> None:
         self.run_cli(*self.deploy_arguments())
 

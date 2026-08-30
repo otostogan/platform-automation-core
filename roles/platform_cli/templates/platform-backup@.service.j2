@@ -9,17 +9,9 @@ Type=oneshot
 User=root
 Group=root
 UMask=0077
-# The instance is project-environment. Environment never contains a hyphen
-# and comes from a closed set, so the split is unambiguous.
-ExecStart=/bin/sh -c '\
-    instance="%i"; \
-    environment="${instance##*-}"; \
-    project="${instance%-${environment}}"; \
-    exec {{ platform_cli_executable }} backup \
-        --project "${project}" \
-        --environment "${environment}" \
-        --reason schedule \
-        --json'
+# No shell: systemd expands ${...} itself before a shell would ever see it,
+# so the instance is split by the CLI, where that parsing is tested.
+ExecStart={{ platform_cli_executable }} backup --instance %i --reason schedule --json
 TimeoutStartSec={{ platform_cli_backup_timeout }}
 
 NoNewPrivileges=yes

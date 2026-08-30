@@ -58,8 +58,8 @@ from .backup_schedule import (
     DEFAULT_SYSTEMCTL_EXECUTABLE,
     DEFAULT_SYSTEMD_ROOT,
     BackupScheduleError,
-    backups_are_scheduled,
     reconcile_backup_timer,
+    split_instance,
 )
 
 from .restore_runtime import (
@@ -253,7 +253,23 @@ def parse_arguments(
         "backup",
         help="Write an encrypted dump of a platform-owned database.",
     )
-    add_identity_arguments(backup_parser)
+    # The scheduled unit knows one systemd instance name, not two arguments.
+    # Splitting it here rather than in the unit keeps the parsing in tested
+    # code and out of a shell that systemd expands before the shell sees it.
+    backup_identity = backup_parser.add_mutually_exclusive_group(required=True)
+    backup_identity.add_argument(
+        "--instance",
+        help="systemd instance name, as {project}-{environment}.",
+    )
+    backup_identity.add_argument(
+        "--project",
+        help="Application project name.",
+    )
+    backup_parser.add_argument(
+        "--environment",
+        choices=("lab", "staging", "production"),
+        help="Deployment environment. Required with --project.",
+    )
     backup_parser.add_argument(
         "--reason",
         choices=("operator", "schedule", "pre-migration"),
@@ -1311,6 +1327,18 @@ def print_backup_result(document: dict[str, Any]) -> None:
         print(f"Backup warning: {warning}")
 
 
+def resolve_backup_identity(
+    arguments: argparse.Namespace,
+) -> tuple[str, str]:
+    if arguments.instance is not None:
+        return split_instance(arguments.instance)
+
+    if arguments.environment is None:
+        raise BackupScheduleError("--environment is required with --project")
+
+    return arguments.project, arguments.environment
+
+
 def run_backup(
     arguments: argparse.Namespace,
     projects_root: Path,
@@ -1326,16 +1354,18 @@ def run_backup(
     backup_creator=create_backup,
 ) -> int:
     try:
+        project, environment = resolve_backup_identity(arguments)
+
         with project_environment_lock(
             lock_root,
-            arguments.project,
-            arguments.environment,
+            project,
+            environment,
             "backup",
         ):
             records = list_release_records(
                 projects_root,
-                arguments.project,
-                arguments.environment,
+                project,
+                environment,
             )
             record = find_latest_deployed_release(records)
 
@@ -1352,8 +1382,8 @@ def run_backup(
 
             document = backup_creator(
                 manifest=bundle.manifest,
-                project=arguments.project,
-                environment=arguments.environment,
+                project=project,
+                environment=environment,
                 record=record,
                 secrets_document=bundle.secrets,
                 reason=arguments.reason,
@@ -1373,6 +1403,7 @@ def run_backup(
         return 0
     except (
         BackupRuntimeError,
+        BackupScheduleError,
         DatabaseRuntimeError,
         OperationLockError,
         ReleaseLedgerError,
