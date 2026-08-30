@@ -1,0 +1,16 @@
+[Unit]
+Description=Scheduled platform database backup for %i
+Documentation=file://{{ platform_cli_executable }}
+
+[Timer]
+# Deliberately conservative defaults. Each deploy writes a drop-in carrying
+# the cadence the application actually declared.
+OnBootSec=30min
+OnUnitActiveSec={{ platform_cli_backup_default_interval }}min
+# Catch up once after downtime rather than once per window missed.
+Persistent=true
+AccuracySec=1min
+Unit=platform-backup@%i.service
+
+[Install]
+WantedBy=timers.target

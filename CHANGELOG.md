@@ -7,6 +7,17 @@ release.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-30
+
+- Reconcile a systemd backup timer on every deploy from
+  `database.backup.interval_minutes`, and remove it when an application stops
+  asking for backups. Units come from convergence; a deploy supplies only the
+  cadence. A timer that cannot be written warns rather than failing a release
+  that already serves traffic.
+- Take a dump immediately before any migration, regardless of schedule. Unlike
+  retention and scheduling this failure does stop the deploy: it is the safety
+  net for a destructive step, not housekeeping.
+
 ## [0.9.0] - 2026-08-29
 
 - Add `platform verify-backup`: restore a dump into a networkless throwaway

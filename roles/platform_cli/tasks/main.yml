@@ -63,6 +63,20 @@
       group: root
       mode: "0755"
 
+# The units are installed by convergence, not written by a deploy: what runs
+# and as whom is fixed by the operator, and a deploy only supplies the cadence.
+- name: Install scheduled backup units
+  ansible.builtin.template:
+      src: "{{ item }}.j2"
+      dest: "/etc/systemd/system/{{ item }}"
+      owner: root
+      group: root
+      mode: "0644"
+  loop:
+      - platform-backup@.service
+      - platform-backup@.timer
+  notify: Reload systemd after installing backup units
+
 - name: Validate installed platform CLI
   ansible.builtin.command:
       cmd: "{{ platform_cli_executable }} --help"

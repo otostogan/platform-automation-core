@@ -17,6 +17,23 @@ IPV6_CANDIDATE_PATTERN = re.compile(
     rb"(?<![A-Za-z0-9_:])(?:[0-9A-Fa-f]*:){2,7}[0-9A-Fa-f]*" rb"(?![A-Za-z0-9_:])"
 )
 EMAIL_PATTERN = re.compile(rb"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
+
+# A systemd template instance name puts an at-sign between the unit and the
+# instance, which the address pattern above reads as an email. The exemption is
+# keyed on the trailing unit type, so it cannot be widened into a real domain.
+SYSTEMD_UNIT_TYPES = (
+    "automount",
+    "device",
+    "mount",
+    "path",
+    "scope",
+    "service",
+    "slice",
+    "socket",
+    "swap",
+    "target",
+    "timer",
+)
 AGE_RECIPIENT_PATTERN = re.compile(rb"\bage1[0-9a-z]{20,}\b")
 FQDN_PATTERN = re.compile(
     rb"(?<![A-Za-z0-9_-])"
@@ -187,6 +204,10 @@ def validate_content(content: bytes) -> List[str]:
 
     for match in EMAIL_PATTERN.finditer(content):
         domain = match.group(1).decode("ascii").lower()
+
+        if domain.rpartition(".")[2] in SYSTEMD_UNIT_TYPES:
+            continue
+
         if not domain.endswith(".invalid"):
             issues.append("non-documentation email address")
 
