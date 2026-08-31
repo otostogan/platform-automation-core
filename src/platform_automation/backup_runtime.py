@@ -237,6 +237,19 @@ def age_command(
     return command
 
 
+def card_path(dump_path: Path) -> Path:
+    """Name the sidecar from the dump it belongs to.
+
+    Derived rather than substituted: a name that does not end in the dump
+    suffix would otherwise produce the dump's own path, and the card would
+    overwrite the thing it describes.
+    """
+    if not dump_path.name.endswith(DUMP_SUFFIX):
+        raise BackupRuntimeError(f"not a dump path: {dump_path.name}")
+
+    return dump_path.with_name(dump_path.name[: -len(DUMP_SUFFIX)] + CARD_SUFFIX)
+
+
 def render_envelope_header(card: dict[str, Any]) -> bytes:
     """One readable line, then the card, then the dump."""
     body = json.dumps(card, sort_keys=True).encode("utf-8")
@@ -339,7 +352,12 @@ def stream_encrypted_dump(
                 encrypt.stdin.close()
                 dump.stdout.close()
 
-            encrypt.communicate(timeout=3600)
+            # Not communicate(): it flushes stdin, which is already closed.
+            # Draining stderr blocks until each process exits, which is both
+            # the wait and the guard against a full pipe.
+            encrypt.stderr.read()
+            dump.stderr.read()
+            encrypt.wait(timeout=3600)
             dump.wait(timeout=60)
 
         if dump.returncode != 0:
@@ -363,7 +381,7 @@ def stream_encrypted_dump(
         raise
 
     write_private_file(
-        destination.with_name(destination.name.replace(DUMP_SUFFIX, CARD_SUFFIX)),
+        card_path(destination),
         json.dumps(card, indent=2, sort_keys=True).encode("utf-8") + b"\n",
     )
 

@@ -26,7 +26,7 @@ jobs:
             contents: read
             id-token: write
             packages: read
-        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.13.1
+        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.13.2
         with:
             manifest_path: deploy/platform.yml
             image_reference: ${{ inputs.image_reference }}
