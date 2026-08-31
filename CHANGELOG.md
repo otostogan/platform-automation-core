@@ -7,6 +7,16 @@ release.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-31
+
+- Report the loss window in `platform status`: the age of the newest dump
+  against the configured cadence, and a plain statement when the schedule has
+  stopped producing dumps at all.
+- Add `platform backups`, listing each dump with its release, size, offsite state
+  and whether a restore from it has been proven.
+- Reorder the runbook for the moment it is opened: emergencies first, setup
+  last, and the two things worth knowing stated up front.
+
 ## [0.11.0] - 2026-08-31
 
 - Upload encrypted dumps to object storage, reconciling rather than pushing:
