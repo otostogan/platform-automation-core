@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -15,7 +16,7 @@ from platform_automation.backup_runtime import (  # noqa: E402
     build_metadata_card,
     create_backup,
     loss_window,
-    read_envelope,
+    split_envelope,
     render_envelope_header,
     stamp_taken_at,
     list_backups,
@@ -164,32 +165,78 @@ class RetentionTest(unittest.TestCase):
 
 
 class EnvelopeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.base = Path(self.temporary_directory.name)
+
+    def tearDown(self) -> None:
+        self.temporary_directory.cleanup()
+
     def card(self) -> dict:
         return {"release_id": "a" * 32, "stamp": "s"}
+
+    def write(self, body: bytes) -> Path:
+        path = self.base / "dump"
+        path.write_bytes(body)
+        return path
 
     def test_a_dump_without_an_envelope_is_left_alone(self) -> None:
         """A backup that stopped restoring because the format improved would
         not be an improvement."""
-        stream = io.BytesIO(b"PGDMP\x01\x02legacy body")
+        card, offset = split_envelope(self.write(b"PGDMP\x01\x02legacy body"))
 
-        self.assertIsNone(read_envelope(stream))
-        self.assertEqual(stream.read(), b"PGDMP\x01\x02legacy body")
+        self.assertIsNone(card)
+        self.assertEqual(offset, 0)
 
     def test_an_envelope_round_trips(self) -> None:
-        stream = io.BytesIO(render_envelope_header(self.card()) + b"PGDMP-body")
+        body = render_envelope_header(self.card()) + b"PGDMP-body"
+        card, offset = split_envelope(self.write(body))
 
-        self.assertEqual(read_envelope(stream)["release_id"], "a" * 32)
-        self.assertEqual(stream.read(), b"PGDMP-body")
+        self.assertEqual(card["release_id"], "a" * 32)
+        self.assertEqual(body[offset:], b"PGDMP-body")
+
+    def test_the_offset_survives_being_handed_to_a_real_process(self) -> None:
+        """The bug this guards against was invisible to a fake runner.
+
+        A buffered reader's seek restores the Python-level position but leaves
+        the descriptor where read-ahead put it, so a child handed that
+        descriptor received an empty stream, and pg_dump's own complaint was
+        the only evidence it had happened.
+        """
+        for label, body, expected in (
+            ("legacy", b"PGDMP\x01\x02legacy body", b"PGDMP\x01\x02legacy body"),
+            (
+                "enveloped",
+                render_envelope_header(self.card()) + b"PGDMP-body",
+                b"PGDMP-body",
+            ),
+        ):
+            with self.subTest(label=label):
+                path = self.write(body)
+                _, offset = split_envelope(path)
+                descriptor = os.open(path, os.O_RDONLY)
+
+                try:
+                    os.lseek(descriptor, offset, os.SEEK_SET)
+                    result = subprocess.run(
+                        ["cat"],
+                        stdin=descriptor,
+                        capture_output=True,
+                    )
+                finally:
+                    os.close(descriptor)
+
+                self.assertEqual(result.stdout, expected)
 
     def test_a_truncated_envelope_is_loud(self) -> None:
         header = render_envelope_header(self.card())
 
         with self.assertRaises(BackupRuntimeError):
-            read_envelope(io.BytesIO(header[:-20]))
+            split_envelope(self.write(header[:-20]))
 
     def test_a_malformed_length_is_loud(self) -> None:
         with self.assertRaises(BackupRuntimeError):
-            read_envelope(io.BytesIO(b"PLATFORM-BACKUP/1 notanumber\n{}"))
+            split_envelope(self.write(b"PLATFORM-BACKUP/1 notanumber\n{}"))
 
     def test_an_oversized_card_is_refused(self) -> None:
         with self.assertRaises(BackupRuntimeError):
@@ -409,24 +456,20 @@ class CreateBackupTest(unittest.TestCase):
 
     def test_the_dump_carries_its_own_card(self) -> None:
         """A dump found alone still describes itself once decrypted."""
-        from platform_automation.backup_runtime import read_envelope
-
         self.backup()
 
-        written = (
+        path = (
             self.backups_root
             / "example"
             / "lab"
             / f"20260829T140530Z-operator{DUMP_SUFFIX}"
-        ).read_bytes()
-
-        stream = io.BytesIO(written)
-        card = read_envelope(stream)
+        )
+        card, offset = split_envelope(path)
 
         self.assertEqual(card["release_id"], "a" * 32)
         self.assertEqual(card["stamp"], "20260829T140530Z-operator")
         # The pg_dump bytes follow the envelope untouched.
-        self.assertEqual(stream.read(), b"PGDMP-body")
+        self.assertEqual(path.read_bytes()[offset:], b"PGDMP-body")
 
     def test_the_envelope_opens_with_a_readable_line(self) -> None:
         """Someone holding only age should see what they have."""

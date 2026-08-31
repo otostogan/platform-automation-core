@@ -30,7 +30,7 @@ from .backup_runtime import (
     DUMP_SUFFIX,
     BackupRuntimeError,
     list_backups,
-    read_envelope,
+    split_envelope,
     write_private_file,
 )
 from .database_runtime import (
@@ -196,8 +196,13 @@ def run_pg_restore(
     whole. Returns the card the stream carried, if any.
     """
     try:
-        with dump_path.open("rb") as dump:
-            embedded = read_envelope(dump)
+        embedded, offset = split_envelope(dump_path)
+        # A raw descriptor, positioned explicitly: this is what the child
+        # process inherits, and no buffering sits between the two.
+        descriptor = os.open(dump_path, os.O_RDONLY)
+
+        try:
+            os.lseek(descriptor, offset, os.SEEK_SET)
             result = runner(
                 [
                     str(docker_executable),
@@ -217,12 +222,14 @@ def run_pg_restore(
                     "--no-privileges",
                     "--exit-on-error",
                 ],
-                stdin=dump,
+                stdin=descriptor,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False,
                 timeout=3600,
             )
+        finally:
+            os.close(descriptor)
     except BackupRuntimeError as error:
         raise RestoreRuntimeError(str(error)) from error
     except (OSError, subprocess.TimeoutExpired) as error:

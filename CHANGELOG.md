@@ -7,6 +7,14 @@ release.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-31
+
+- Fix `pg_restore` receiving an empty stream. A buffered reader's `seek`
+  restores the Python-level position but not the file descriptor a child
+  inherits, so every restore and verification in `0.13.0` failed. The envelope
+  is now an offset and the caller seeks a raw descriptor. Skip `0.13.0`.
+- Test the handover with a real subprocess rather than a fake runner.
+
 ## [0.13.0] - 2026-08-31
 
 - Carry the metadata card inside the encrypted dump as well as beside it, in a
