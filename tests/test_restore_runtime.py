@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -80,6 +81,7 @@ class BackupDirectoryFixture(unittest.TestCase):
         self.commands: list[list[str]] = []
         self.fail_actions: set[str] = set()
         self.embedded_card = None
+        self.restored_bytes = None
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -117,6 +119,11 @@ class BackupDirectoryFixture(unittest.TestCase):
                 options["stdout"].write(render_envelope_header(self.embedded_card))
 
             options["stdout"].write(b"PGDMP-plaintext")
+
+        if action == "pg_restore":
+            # The child is handed a raw descriptor; record what it would
+            # actually have read from that offset.
+            self.restored_bytes = os.read(options["stdin"], 4096)
 
         return subprocess.CompletedProcess(
             args=command,
@@ -211,6 +218,16 @@ class RestoreTest(BackupDirectoryFixture):
 
         self.assertEqual(result["stamp"], NEWER)
         self.assertFalse(result["self_describing"])
+        # pg_restore must receive the dump, not an exhausted stream.
+        self.assertEqual(self.restored_bytes, b"PGDMP-plaintext")
+
+    def test_an_enveloped_dump_feeds_pg_restore_only_the_dump(self) -> None:
+        self.seed(NEWER)
+        self.embedded_card = card()
+
+        self.restore(current=record())
+
+        self.assertEqual(self.restored_bytes, b"PGDMP-plaintext")
 
     def test_the_card_inside_the_stream_wins_over_the_sidecar(self) -> None:
         """The embedded card travelled with the data; the sidecar beside it."""

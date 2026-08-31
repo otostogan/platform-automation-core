@@ -247,29 +247,41 @@ def render_envelope_header(card: dict[str, Any]) -> bytes:
     return ENVELOPE_MAGIC + b" " + str(len(body)).encode("ascii") + b"\n" + body
 
 
-def read_envelope(stream) -> Optional[dict[str, Any]]:
-    """Consume the envelope if there is one, leaving the dump at the cursor.
+def split_envelope(path: Path) -> tuple[Optional[dict[str, Any]], int]:
+    """Return the card a dump carries and the offset where its bytes begin.
+
+    An offset rather than a positioned file object, deliberately. A buffered
+    reader's `seek` restores the Python-level position but leaves the file
+    descriptor wherever read-ahead put it, and a subprocess handed that
+    descriptor inherits the descriptor, not the buffer -- it would be given an
+    empty stream. Callers seek the raw descriptor to this offset instead.
 
     Dumps written before the envelope existed begin with pg_dump's own magic
-    and are left untouched: a backup that stopped restoring because the format
+    and report offset zero: a backup that stopped restoring because the format
     improved would not be an improvement.
     """
-    start = stream.tell()
-    header = stream.readline(len(ENVELOPE_MAGIC) + 32)
+    with path.open("rb") as stream:
+        head = stream.read(len(ENVELOPE_MAGIC) + 32)
 
-    if not header.startswith(ENVELOPE_MAGIC):
-        stream.seek(start)
-        return None
+    if not head.startswith(ENVELOPE_MAGIC):
+        return None, 0
+
+    newline = head.find(b"\n")
+
+    if newline < 0:
+        raise BackupRuntimeError("backup envelope header is malformed")
 
     try:
-        length = int(header[len(ENVELOPE_MAGIC) :].strip())
+        length = int(head[len(ENVELOPE_MAGIC) : newline])
     except ValueError as error:
         raise BackupRuntimeError("backup envelope header is malformed") from error
 
     if length < 0 or length > MAX_ENVELOPE_CARD_BYTES:
         raise BackupRuntimeError("backup envelope card exceeds the size limit")
 
-    body = stream.read(length)
+    with path.open("rb") as stream:
+        stream.seek(newline + 1)
+        body = stream.read(length)
 
     if len(body) != length:
         raise BackupRuntimeError("backup envelope is truncated")
@@ -279,7 +291,7 @@ def read_envelope(stream) -> Optional[dict[str, Any]]:
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise BackupRuntimeError("backup envelope card is not valid JSON") from error
 
-    return card if isinstance(card, dict) else None
+    return (card if isinstance(card, dict) else None), newline + 1 + length
 
 
 def stream_encrypted_dump(
