@@ -7,6 +7,19 @@ release.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-31
+
+- Upload encrypted dumps to object storage, reconciling rather than pushing:
+  each run sends whatever is missing remotely, so enabling offsite carries
+  existing dumps up and a failed upload is retried next run. A failed upload
+  fails the command; the dump still stays on disk.
+- Add `platform restore --from-offsite`, taking reader credentials on stdin.
+- Report offsite state in `platform status`: current, behind, or not
+  configured.
+- Install `python3-boto3` from apt rather than adding a bundled CLI.
+- Narrow the `aws_secret_access_key` boundary rule from the name to a
+  realistic value; the name is a boto3 keyword argument.
+
 ## [0.10.2] - 2026-08-30
 
 - Fix the interval drop-in resetting the timer list twice. An empty assignment

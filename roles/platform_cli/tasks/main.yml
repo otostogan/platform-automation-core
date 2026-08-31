@@ -63,6 +63,54 @@
       group: root
       mode: "0755"
 
+- name: Validate offsite backup settings
+  ansible.builtin.assert:
+      that:
+          - backup_s3_bucket | length > 0
+          - backup_s3_region | length > 0
+          - backup_s3_prefix | length > 0
+          - backup_s3_credentials_source | length > 0
+      fail_msg: >-
+          backup_s3_enabled requires bucket, region and prefix in inventory,
+          and backup_s3_credentials_source in the ignored local-secrets.yml
+  when: backup_s3_enabled | bool
+
+# Not secret: this is a description of where backups go, and it belongs in
+# the inventory rather than beside the credential.
+- name: Install offsite backup configuration
+  ansible.builtin.copy:
+      content: "{{ platform_cli_offsite_settings | to_nice_json }}\n"
+      dest: "{{ platform_cli_offsite_config }}"
+      owner: root
+      group: root
+      mode: "0644"
+  vars:
+      platform_cli_offsite_settings:
+          enabled: "{{ backup_s3_enabled | bool }}"
+          endpoint: "{{ backup_s3_endpoint }}"
+          region: "{{ backup_s3_region }}"
+          bucket: "{{ backup_s3_bucket }}"
+          prefix: "{{ backup_s3_prefix }}"
+
+# The host holds a write-only credential on purpose: it can add backups and
+# neither read the history back nor remove any of it. Reading is an operator
+# action with an operator key.
+- name: Install offsite backup credentials
+  ansible.builtin.copy:
+      src: "{{ backup_s3_credentials_source }}"
+      dest: "{{ platform_cli_offsite_credentials }}"
+      owner: root
+      group: root
+      mode: "0600"
+  no_log: true
+  when: backup_s3_enabled | bool
+
+- name: Remove offsite backup credentials when disabled
+  ansible.builtin.file:
+      path: "{{ platform_cli_offsite_credentials }}"
+      state: absent
+  when: not (backup_s3_enabled | bool)
+
 # The units are installed by convergence, not written by a deploy: what runs
 # and as whom is fixed by the operator, and a deploy only supplies the cadence.
 - name: Install scheduled backup units

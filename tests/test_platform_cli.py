@@ -91,6 +91,9 @@ class PlatformCliTest(unittest.TestCase):
         self.backup_error = None
         self.restore_calls: list[dict] = []
         self.timer_calls: list[dict] = []
+        self.upload_calls: list[dict] = []
+        self.upload_error = None
+        self.offsite_report = {"state": "not-configured"}
         self.timer_error = None
         self.database_password = None
         self.database_error = None
@@ -436,6 +439,23 @@ class PlatformCliTest(unittest.TestCase):
     ) -> None:
         self.removed_images.append(image)
 
+    def upload_offsite(self, **kwargs):
+        self.upload_calls.append(kwargs)
+
+        if self.upload_error is not None:
+            from platform_automation.backup_offsite import OffsiteError
+
+            raise OffsiteError(self.upload_error)
+
+        return {
+            "state": "uploaded",
+            "bucket": "aiworldhub-platform-backups",
+            "uploaded": ["dump.age", "dump.json"],
+        }
+
+    def report_offsite(self, **kwargs):
+        return self.offsite_report
+
     def reconcile_timer(self, **kwargs):
         self.timer_calls.append(kwargs)
 
@@ -569,6 +589,8 @@ class PlatformCliTest(unittest.TestCase):
                 backup_creator=self.create_backup,
                 backups_root=self.backups_root,
                 timer_reconciler=self.reconcile_timer,
+                uploader=self.upload_offsite,
+                offsite_reporter=self.report_offsite,
                 systemd_root=self.base / "systemd",
                 token_stream=self.token_stream,
                 compose_runtime_module=self,
@@ -1176,6 +1198,62 @@ class PlatformCliTest(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertIn("--environment is required", stderr)
+
+    def test_a_backup_is_carried_offsite(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, _ = self.run_cli(*self.backup_arguments())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.upload_calls), 1)
+        self.assertEqual(json.loads(stdout)["offsite"]["state"], "uploaded")
+
+    def test_a_failed_upload_is_loud_but_keeps_the_dump(self) -> None:
+        """The one place warnings-only bends: silence here is discovered late."""
+        self.run_cli(*self.deploy_arguments())
+        self.upload_error = "offsite upload failed: AccessDenied"
+
+        code, stdout, stderr = self.run_cli(*self.backup_arguments())
+
+        self.assertEqual(code, 1)
+        self.assertIn("AccessDenied", stderr)
+
+        document = json.loads(stdout)
+        self.assertEqual(document["offsite"]["state"], "failed")
+        # The dump itself succeeded and stays for the next run to carry up.
+        self.assertEqual(document["reason"], "operator")
+
+    def test_status_names_a_host_that_stopped_uploading(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+        self.offsite_report = {
+            "state": "behind",
+            "bucket": "aiworldhub-platform-backups",
+            "not_uploaded": ["20260829T140530Z-operator"],
+        }
+
+        code, stdout, _ = self.run_cli(
+            "status",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("offsite: BEHIND", stdout)
+
+    def test_status_says_when_offsite_is_not_configured(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, _ = self.run_cli(
+            "status",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+        )
+
+        self.assertIn("offsite: not configured", stdout)
 
     def test_backup_reason_reaches_the_card(self) -> None:
         self.run_cli(*self.deploy_arguments())
