@@ -53,6 +53,7 @@ class FakeRunner:
 
     def __init__(self, volume_present: bool = False) -> None:
         self.calls: list[list[str]] = []
+        self.inputs: list = []
         self.fail_actions: set[str] = set()
         self.volume_present = volume_present
 
@@ -65,7 +66,7 @@ class FakeRunner:
             return "decrypt"
         if "pull" in command:
             return "pull"
-        if "ALTER USER" in joined:
+        if "psql" in command:
             return "alter"
         if "volume" in command and "inspect" in command:
             return "volume-inspect"
@@ -78,6 +79,7 @@ class FakeRunner:
 
     def __call__(self, command, **options):
         self.calls.append(list(command))
+        self.inputs.append(options.get("input"))
         action = self.action(command)
         returncode = 1 if action in self.fail_actions else 0
         stdout = b""
@@ -379,6 +381,40 @@ class EnsureProjectDatabaseTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn(f"POSTGRES_PASSWORD={second}", env)
+
+    def test_the_new_password_never_reaches_the_command_line(self) -> None:
+        """argv is readable by any user through `ps`; stdin is not.
+
+        It also has to be stdin for correctness: psql interpolates variables
+        for input it reads and not for --command.
+        """
+        from platform_automation.database_runtime import rotate_database_password
+
+        self.ensure()
+        self.runner.calls.clear()
+        self.runner.inputs.clear()
+
+        new_password = rotate_database_password(
+            project="example",
+            environment="lab",
+            recipients=RECIPIENTS,
+            databases_root=self.databases_root,
+            runtime_secrets_root=self.runtime_root,
+            age_key_file=self.age_key_file,
+            sops_executable=Path("sops"),
+            docker_executable=Path("docker"),
+            runner=self.runner,
+        )
+
+        alter = [
+            (call, payload)
+            for call, payload in zip(self.runner.calls, self.runner.inputs)
+            if self.runner.action(call) == "alter"
+        ][0]
+
+        self.assertNotIn(new_password, " ".join(alter[0]))
+        self.assertIn(new_password, alter[1].decode("utf-8"))
+        self.assertIn("ALTER USER app WITH PASSWORD", alter[1].decode("utf-8"))
 
     def test_rotation_without_a_credential_is_refused(self) -> None:
         from platform_automation.database_runtime import rotate_database_password

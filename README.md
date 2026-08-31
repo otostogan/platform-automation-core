@@ -13,7 +13,7 @@ The operational handoff, recovery controls, and bus-factor drill are defined in
 
 ## Status
 
-`v0.13.2` is the current installable release. Consumers pin the release, verify
+`v0.13.3` is the current installable release. Consumers pin the release, verify
 `SHA256SUMS`, and keep inventory and credentials in their own private
 repositories.
 

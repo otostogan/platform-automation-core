@@ -7,6 +7,16 @@ release.
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-08-31
+
+- Fix `platform rotate-database-password`: psql interpolates variables for
+  input it reads and not for `--command`, so the placeholder reached the
+  server as literal SQL and every rotation failed. The statement now arrives
+  on stdin, which also keeps the new password out of `argv` and therefore out
+  of `ps`.
+- Check the generated password against a conservative alphabet before it
+  reaches SQL.
+
 ## [0.13.2] - 2026-08-31
 
 - Fix `platform backup` raising `ValueError: flush of closed file`: writing the
