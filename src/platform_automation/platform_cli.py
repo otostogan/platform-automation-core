@@ -47,11 +47,14 @@ from .stage_bundle import (
 )
 
 from .backup_runtime import (
+    CARD_SUFFIX,
     DEFAULT_AGE_EXECUTABLE,
     DEFAULT_BACKUPS_ROOT,
+    DUMP_SUFFIX,
     BackupRuntimeError,
     create_backup,
     list_backups,
+    loss_window,
 )
 
 from .backup_offsite import (
@@ -68,7 +71,9 @@ from .backup_schedule import (
     DEFAULT_SYSTEMCTL_EXECUTABLE,
     DEFAULT_SYSTEMD_ROOT,
     BackupScheduleError,
+    backups_are_scheduled,
     reconcile_backup_timer,
+    resolve_interval,
     split_instance,
 )
 
@@ -292,6 +297,17 @@ def parse_arguments(
         help="Print machine-readable JSON.",
     )
 
+    backups_parser = subparsers.add_parser(
+        "backups",
+        help="List the backups on this host and what is known about them.",
+    )
+    add_identity_arguments(backups_parser)
+    backups_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON.",
+    )
+
     restore_parser = subparsers.add_parser(
         "restore",
         help="Restore a backup over the live database. Destructive.",
@@ -390,11 +406,14 @@ def build_backup_status(
     project: str,
     environment: str,
     offsite: dict[str, Any] = None,
+    interval_minutes: int = None,
 ) -> dict[str, Any]:
     """Answer when a restore was last proven, not when a dump was last taken.
 
     The two are different questions, and only the first one matters at three
-    in the morning.
+    in the morning. Neither is the question an operator actually has, which is
+    how much data an outage right now would cost -- so that is answered too,
+    rather than left as arithmetic on a timestamp.
     """
     directory = backups_root / project / environment
 
@@ -402,14 +421,56 @@ def build_backup_status(
         stamps = list_backups(directory)
         verification = last_verification(directory)
     except OSError:
-        return {"count": 0, "latest": None, "last_verified": None}
+        return {
+            "count": 0,
+            "latest": None,
+            "last_verified": None,
+            "offsite": offsite,
+            "loss_window": loss_window(None, interval_minutes),
+        }
+
+    latest = stamps[-1] if stamps else None
 
     return {
         "count": len(stamps),
-        "latest": stamps[-1] if stamps else None,
+        "latest": latest,
         "last_verified": verification,
         "offsite": offsite,
+        "loss_window": loss_window(latest, interval_minutes),
     }
+
+
+def scheduled_interval(
+    projects_root: Path,
+    releases_root: Path,
+    project: str,
+    environment: str,
+    minimum_age_recipients: int,
+) -> int:
+    """Read the declared cadence, or report that there is none.
+
+    Status must survive a bundle it cannot read: an unreadable manifest costs
+    one line of the report, not the whole report.
+    """
+    try:
+        records = list_release_records(projects_root, project, environment)
+        record = find_latest_deployed_release(records)
+
+        if record is None:
+            return None
+
+        bundle = load_release_bundle(
+            record,
+            releases_root,
+            minimum_age_recipients=minimum_age_recipients,
+        )
+
+        if not backups_are_scheduled(bundle.manifest):
+            return None
+
+        return resolve_interval(bundle.manifest)
+    except (ReleaseLedgerError, BackupScheduleError, OSError):
+        return None
 
 
 def print_release_summary(
@@ -436,10 +497,44 @@ def print_backup_status(backups: dict[str, Any]) -> None:
         return
 
     print(f"Backups: {backups['count']}")
-    print(f"  latest: {backups['latest'] or 'none'}")
-
+    print_loss_window(backups["latest"], backups.get("loss_window"))
     print_verification_status(backups["last_verified"])
     print_offsite_status(backups.get("offsite"))
+
+
+def describe_minutes(minutes: int) -> str:
+    if minutes < 60:
+        return f"{minutes} minute(s)"
+
+    if minutes < 1440:
+        return f"{minutes // 60}h {minutes % 60}m"
+
+    return f"{minutes // 1440}d {(minutes % 1440) // 60}h"
+
+
+def print_loss_window(latest: str, window: dict[str, Any]) -> None:
+    """State the cost of an outage now, rather than leaving it as arithmetic."""
+    if window is None:
+        print(f"  latest: {latest or 'none'}")
+        return
+
+    age = window["newest_age_minutes"]
+    interval = window["interval_minutes"]
+
+    if latest is None:
+        print("  latest: none")
+    else:
+        print(f"  latest: {latest} ({describe_minutes(age)} ago)")
+
+    if interval is None:
+        print("  schedule: none; every dump is taken by an operator")
+    else:
+        print(f"  schedule: every {describe_minutes(interval)}")
+
+    if window["overdue"]:
+        print("  LOSS WINDOW: unknown — the schedule has stopped producing dumps")
+    elif age is not None:
+        print(f"  loss window now: up to {describe_minutes(age)}")
 
 
 def print_verification_status(verification: dict[str, Any]) -> None:
@@ -498,6 +593,7 @@ def print_human_status(document: dict[str, Any]) -> None:
 def run_status(
     arguments: argparse.Namespace,
     projects_root: Path,
+    releases_root: Path = DEFAULT_RELEASES_ROOT,
     backups_root: Path = DEFAULT_BACKUPS_ROOT,
     offsite_config: Path = DEFAULT_OFFSITE_CONFIG,
     offsite_credentials: Path = DEFAULT_CREDENTIALS_FILE,
@@ -527,6 +623,13 @@ def run_status(
                 directory=backups_root / arguments.project / arguments.environment,
                 config_path=offsite_config,
                 credentials_path=offsite_credentials,
+            ),
+            scheduled_interval(
+                projects_root,
+                releases_root,
+                arguments.project,
+                arguments.environment,
+                arguments.minimum_age_recipients,
             ),
         ),
     )
@@ -1409,6 +1512,121 @@ def resolve_backup_identity(
     return arguments.project, arguments.environment
 
 
+def describe_backup(directory: Path, stamp: str) -> dict[str, Any]:
+    """Pair a dump with what its card says, tolerating a missing card."""
+    dump = directory / f"{stamp}{DUMP_SUFFIX}"
+    card_path = directory / f"{stamp}{CARD_SUFFIX}"
+    entry = {
+        "stamp": stamp,
+        "reason": stamp.split("-", 1)[1] if "-" in stamp else None,
+        "bytes": dump.stat().st_size if dump.is_file() else None,
+        "release_tag": None,
+        "release_id": None,
+    }
+
+    if card_path.is_symlink() or not card_path.is_file():
+        return entry
+
+    try:
+        card = json.loads(card_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return entry
+
+    if isinstance(card, dict):
+        entry["release_tag"] = card.get("release_tag")
+        entry["release_id"] = card.get("release_id")
+
+    return entry
+
+
+def build_backups_document(
+    backups_root: Path,
+    project: str,
+    environment: str,
+    offsite: dict[str, Any],
+) -> dict[str, Any]:
+    directory = backups_root / project / environment
+    verified = set()
+    log = last_verification(directory)
+
+    if log is not None and log.get("outcome") == "succeeded":
+        verified.add(log.get("stamp"))
+
+    not_uploaded = set(offsite.get("not_uploaded") or [])
+    configured = offsite.get("state") not in (None, "not-configured")
+
+    entries = []
+
+    for stamp in reversed(list_backups(directory)):
+        entry = describe_backup(directory, stamp)
+        entry["verified"] = stamp in verified
+        entry["offsite"] = None if not configured else stamp not in not_uploaded
+        entries.append(entry)
+
+    return {
+        "project": project,
+        "environment": environment,
+        "count": len(entries),
+        "backups": entries,
+    }
+
+
+def print_backups(document: dict[str, Any]) -> None:
+    if not document["backups"]:
+        print(f"No backups for {document['project']}/{document['environment']}")
+        return
+
+    print(f"Backups: {document['project']}/{document['environment']}")
+    print(
+        f"{'STAMP':<26} {'REASON':<14} {'SIZE':>9}  "
+        f"{'RELEASE':<22} {'OFF':<4} VERIFIED"
+    )
+
+    for entry in document["backups"]:
+        size = "-" if entry["bytes"] is None else f"{entry['bytes']}"
+        offsite = {None: "n/a", True: "yes", False: "NO"}[entry["offsite"]]
+        stamp = entry["stamp"].split("-", 1)[0]
+
+        print(
+            f"{stamp:<26} {(entry['reason'] or '-'):<14} {size:>9}  "
+            f"{(entry['release_tag'] or '-'):<22} {offsite:<4} "
+            f"{'yes' if entry['verified'] else ''}"
+        )
+
+
+def run_backups(
+    arguments: argparse.Namespace,
+    backups_root: Path,
+    offsite_config: Path,
+    offsite_credentials: Path,
+    offsite_reporter,
+) -> int:
+    try:
+        directory = backups_root / arguments.project / arguments.environment
+        document = build_backups_document(
+            backups_root,
+            arguments.project,
+            arguments.environment,
+            offsite_reporter(
+                project=arguments.project,
+                environment=arguments.environment,
+                directory=directory,
+                config_path=offsite_config,
+                credentials_path=offsite_credentials,
+            ),
+        )
+    except (OffsiteError, OSError) as error:
+        print(f"backups error: {error}", file=sys.stderr)
+        return 1
+
+    if arguments.json:
+        print(json.dumps(document, indent=2, sort_keys=True))
+    else:
+        print_backups(document)
+
+    return 0
+
+
 def run_backup(
     arguments: argparse.Namespace,
     projects_root: Path,
@@ -1998,6 +2216,15 @@ def main(
             ),
         )
 
+    if arguments.command == "backups":
+        return run_backups(
+            arguments,
+            backups_root,
+            offsite_config,
+            offsite_credentials,
+            offsite_reporter,
+        )
+
     if arguments.command == "backup":
         return run_backup(
             arguments,
@@ -2021,6 +2248,7 @@ def main(
         return run_status(
             arguments,
             projects_root,
+            releases_root,
             backups_root,
             offsite_config,
             offsite_credentials,

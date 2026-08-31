@@ -2,7 +2,7 @@ import json
 import subprocess
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from platform_automation.backup_runtime import (  # noqa: E402
@@ -13,6 +13,8 @@ from platform_automation.backup_runtime import (  # noqa: E402
     backup_stamp,
     build_metadata_card,
     create_backup,
+    loss_window,
+    stamp_taken_at,
     list_backups,
     prune_backups,
     resolve_retention,
@@ -156,6 +158,53 @@ class RetentionTest(unittest.TestCase):
         del document["database"]["backup"]
 
         self.assertEqual(resolve_retention(document), 14)
+
+
+class LossWindowTest(unittest.TestCase):
+    def now(self, minutes_after: int) -> datetime:
+        return datetime(2026, 8, 29, 14, 5, 30, tzinfo=timezone.utc) + timedelta(
+            minutes=minutes_after
+        )
+
+    def test_the_age_of_the_newest_dump_is_the_window(self) -> None:
+        window = loss_window("20260829T140530Z-schedule", 15, self.now(4))
+
+        self.assertEqual(window["newest_age_minutes"], 4)
+        self.assertEqual(window["interval_minutes"], 15)
+        self.assertFalse(window["overdue"])
+
+    def test_a_late_run_inside_the_slack_is_not_overdue(self) -> None:
+        """A randomised delay makes running late normal; crying wolf is how
+        a signal gets ignored."""
+        window = loss_window("20260829T140530Z-schedule", 15, self.now(25))
+
+        self.assertFalse(window["overdue"])
+
+    def test_a_stopped_schedule_is_named(self) -> None:
+        window = loss_window("20260829T140530Z-schedule", 15, self.now(120))
+
+        self.assertTrue(window["overdue"])
+
+    def test_no_schedule_is_never_overdue(self) -> None:
+        window = loss_window("20260829T140530Z-operator", None, self.now(9999))
+
+        self.assertFalse(window["overdue"])
+        self.assertIsNone(window["interval_minutes"])
+
+    def test_no_dumps_with_a_schedule_is_overdue(self) -> None:
+        window = loss_window(None, 15, self.now(0))
+
+        self.assertTrue(window["overdue"])
+        self.assertIsNone(window["newest_age_minutes"])
+
+    def test_a_malformed_stamp_yields_no_age(self) -> None:
+        self.assertIsNone(loss_window("garbage", 15, self.now(0))["newest_age_minutes"])
+
+    def test_the_stamp_is_read_as_utc(self) -> None:
+        self.assertEqual(
+            stamp_taken_at("20260829T140530Z-operator"),
+            datetime(2026, 8, 29, 14, 5, 30, tzinfo=timezone.utc),
+        )
 
 
 class FakeProcess:

@@ -61,6 +61,57 @@ def backup_stamp(reason: str, moment: datetime = None) -> str:
     return f"{moment.strftime('%Y%m%dT%H%M%SZ')}-{reason}"
 
 
+def stamp_taken_at(stamp: str) -> Optional[datetime]:
+    """Recover when a dump was taken from its own name."""
+    if not STAMP_PATTERN.fullmatch(stamp):
+        return None
+
+    try:
+        moment = datetime.strptime(stamp.split("-", 1)[0], "%Y%m%dT%H%M%SZ")
+    except ValueError:
+        return None
+
+    return moment.replace(tzinfo=timezone.utc)
+
+
+def loss_window(
+    latest_stamp: Optional[str],
+    interval_minutes: Optional[int],
+    now: datetime = None,
+) -> dict[str, Any]:
+    """Say how much data an outage right now would cost.
+
+    An operator reading a timestamp has to do this arithmetic themselves, at
+    the worst possible moment. The schedule bounds the answer; the age of the
+    newest dump is the answer. When the age exceeds the interval by a clear
+    margin the schedule has stopped without anyone noticing, and saying so is
+    the whole point of reporting it.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    taken = stamp_taken_at(latest_stamp) if latest_stamp else None
+
+    if taken is None:
+        return {
+            "interval_minutes": interval_minutes,
+            "newest_age_minutes": None,
+            "overdue": interval_minutes is not None,
+        }
+
+    age = max(int((now - taken).total_seconds() // 60), 0)
+
+    # One whole interval of slack: a timer with a randomised delay is
+    # expected to run late, and crying wolf is how a signal gets ignored.
+    overdue = interval_minutes is not None and age > interval_minutes * 2
+
+    return {
+        "interval_minutes": interval_minutes,
+        "newest_age_minutes": age,
+        "overdue": overdue,
+    }
+
+
 def create_private_backup_directory(
     backups_root: Path,
     project: str,

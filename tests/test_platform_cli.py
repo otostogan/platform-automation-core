@@ -1255,6 +1255,128 @@ class PlatformCliTest(unittest.TestCase):
 
         self.assertIn("offsite: not configured", stdout)
 
+    def seed_backup_files(self, *stamps: str) -> None:
+        from platform_automation.backup_runtime import CARD_SUFFIX, DUMP_SUFFIX
+
+        directory = self.backups_root / "example" / "lab"
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+        for stamp in stamps:
+            (directory / f"{stamp}{DUMP_SUFFIX}").write_bytes(b"encrypted")
+            (directory / f"{stamp}{CARD_SUFFIX}").write_text(
+                json.dumps({"release_tag": "lab-v0.1.7", "release_id": "a" * 32})
+            )
+
+    def status_output(self) -> str:
+        _, stdout, _ = self.run_cli(
+            "status",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+        )
+        return stdout
+
+    def test_status_states_the_cost_of_an_outage_now(self) -> None:
+        """An operator should not have to do arithmetic on a timestamp."""
+        self.run_cli(*self.deploy_arguments())
+        self.seed_backup_files("20260829T140530Z-schedule")
+
+        stdout = self.status_output()
+
+        self.assertIn("loss window now: up to", stdout)
+        self.assertIn("ago)", stdout)
+
+    def test_status_says_there_is_no_schedule_when_there_is_none(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+        self.seed_backup_files("20260829T140530Z-operator")
+
+        self.assertIn(
+            "schedule: none; every dump is taken by an operator",
+            self.status_output(),
+        )
+
+    def test_backups_lists_what_is_known_about_each(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+        self.seed_backup_files(
+            "20260828T120000Z-schedule",
+            "20260829T140530Z-operator",
+        )
+
+        code, stdout, stderr = self.run_cli(
+            "backups",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--json",
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        document = json.loads(stdout)
+        self.assertEqual(document["count"], 2)
+        # Newest first: an operator reads the top of the list.
+        self.assertEqual(
+            document["backups"][0]["stamp"],
+            "20260829T140530Z-operator",
+        )
+        self.assertEqual(document["backups"][0]["reason"], "operator")
+        self.assertEqual(document["backups"][0]["release_tag"], "lab-v0.1.7")
+
+    def test_backups_renders_a_table(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+        self.seed_backup_files("20260829T140530Z-operator")
+
+        code, stdout, _ = self.run_cli(
+            "backups",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("STAMP", stdout)
+        self.assertIn("20260829T140530Z", stdout)
+        self.assertIn("lab-v0.1.7", stdout)
+
+    def test_backups_says_so_when_there_are_none(self) -> None:
+        code, stdout, _ = self.run_cli(
+            "backups",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("No backups", stdout)
+
+    def test_backups_survives_a_card_that_will_not_parse(self) -> None:
+        """A damaged card costs one column, not the whole listing."""
+        from platform_automation.backup_runtime import CARD_SUFFIX, DUMP_SUFFIX
+
+        directory = self.backups_root / "example" / "lab"
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        stamp = "20260829T140530Z-operator"
+        (directory / f"{stamp}{DUMP_SUFFIX}").write_bytes(b"x")
+        (directory / f"{stamp}{CARD_SUFFIX}").write_text("{not json")
+
+        code, stdout, _ = self.run_cli(
+            "backups",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--json",
+        )
+
+        self.assertEqual(code, 0)
+        entry = json.loads(stdout)["backups"][0]
+        self.assertEqual(entry["stamp"], stamp)
+        self.assertIsNone(entry["release_tag"])
+
     def test_backup_reason_reaches_the_card(self) -> None:
         self.run_cli(*self.deploy_arguments())
 
