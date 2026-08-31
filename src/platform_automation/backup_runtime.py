@@ -16,6 +16,7 @@ filename: object keys are readable by anyone who can list a bucket.
 
 import json
 import os
+import shutil
 import re
 import subprocess
 import tempfile
@@ -43,6 +44,15 @@ BACKUP_REASONS = ("operator", "schedule", "pre-migration")
 DUMP_SUFFIX = ".dump.age"
 CARD_SUFFIX = ".json"
 CARD_MEMBER = "platform-backup.json"
+
+# The card travels inside the encrypted stream as well as beside it, so a
+# dump found alone still describes itself once decrypted. The envelope is a
+# single readable line followed by the card and then the untouched pg_dump
+# bytes: streamable in constant memory, and legible to a human holding
+# nothing but `age`. Tar cannot do this -- it needs a member's size before
+# its data, and a dump's size is not known until it has finished.
+ENVELOPE_MAGIC = b"PLATFORM-BACKUP/1"
+MAX_ENVELOPE_CARD_BYTES = 64 * 1024
 
 STAMP_PATTERN = re.compile(r"^[0-9]{8}T[0-9]{6}Z-(?:[a-z-]+)$")
 
@@ -227,6 +237,51 @@ def age_command(
     return command
 
 
+def render_envelope_header(card: dict[str, Any]) -> bytes:
+    """One readable line, then the card, then the dump."""
+    body = json.dumps(card, sort_keys=True).encode("utf-8")
+
+    if len(body) > MAX_ENVELOPE_CARD_BYTES:
+        raise BackupRuntimeError("backup metadata card exceeds the size limit")
+
+    return ENVELOPE_MAGIC + b" " + str(len(body)).encode("ascii") + b"\n" + body
+
+
+def read_envelope(stream) -> Optional[dict[str, Any]]:
+    """Consume the envelope if there is one, leaving the dump at the cursor.
+
+    Dumps written before the envelope existed begin with pg_dump's own magic
+    and are left untouched: a backup that stopped restoring because the format
+    improved would not be an improvement.
+    """
+    start = stream.tell()
+    header = stream.readline(len(ENVELOPE_MAGIC) + 32)
+
+    if not header.startswith(ENVELOPE_MAGIC):
+        stream.seek(start)
+        return None
+
+    try:
+        length = int(header[len(ENVELOPE_MAGIC) :].strip())
+    except ValueError as error:
+        raise BackupRuntimeError("backup envelope header is malformed") from error
+
+    if length < 0 or length > MAX_ENVELOPE_CARD_BYTES:
+        raise BackupRuntimeError("backup envelope card exceeds the size limit")
+
+    body = stream.read(length)
+
+    if len(body) != length:
+        raise BackupRuntimeError("backup envelope is truncated")
+
+    try:
+        card = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise BackupRuntimeError("backup envelope card is not valid JSON") from error
+
+    return card if isinstance(card, dict) else None
+
+
 def stream_encrypted_dump(
     destination: Path,
     container: str,
@@ -237,10 +292,11 @@ def stream_encrypted_dump(
     age_executable: Path,
     popen=subprocess.Popen,
 ) -> int:
-    """Pipe pg_dump through age into a private file.
+    """Pipe the envelope and pg_dump through age into a private file.
 
     Nothing is written until both processes succeed, and the plaintext exists
-    only in the pipe between them.
+    only in the pipe between them -- the copy runs in bounded chunks rather
+    than buffering a dump that may be far larger than memory.
     """
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{destination.name}.",
@@ -258,13 +314,18 @@ def stream_encrypted_dump(
             )
             encrypt = popen(
                 age_command(recipients, age_executable),
-                stdin=dump.stdout,
+                stdin=subprocess.PIPE,
                 stdout=output,
                 stderr=subprocess.PIPE,
             )
 
-            # Let pg_dump see a closed pipe if age dies first.
-            dump.stdout.close()
+            try:
+                encrypt.stdin.write(render_envelope_header(card))
+                shutil.copyfileobj(dump.stdout, encrypt.stdin)
+            finally:
+                # Let pg_dump see a closed pipe if age dies first.
+                encrypt.stdin.close()
+                dump.stdout.close()
 
             encrypt.communicate(timeout=3600)
             dump.wait(timeout=60)

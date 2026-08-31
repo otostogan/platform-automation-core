@@ -30,6 +30,7 @@ from .backup_runtime import (
     DUMP_SUFFIX,
     BackupRuntimeError,
     list_backups,
+    read_envelope,
     write_private_file,
 )
 from .database_runtime import (
@@ -187,10 +188,16 @@ def run_pg_restore(
     dump_path: Path,
     docker_executable: Path,
     runner=subprocess.run,
-) -> None:
-    """Replace the contents of a database from a custom-format dump."""
+) -> Optional[dict[str, Any]]:
+    """Replace the contents of a database from a custom-format dump.
+
+    Reads the envelope first when there is one, leaving the file positioned at
+    the pg_dump bytes; a dump written before the envelope existed is fed
+    whole. Returns the card the stream carried, if any.
+    """
     try:
         with dump_path.open("rb") as dump:
+            embedded = read_envelope(dump)
             result = runner(
                 [
                     str(docker_executable),
@@ -216,11 +223,15 @@ def run_pg_restore(
                 check=False,
                 timeout=3600,
             )
+    except BackupRuntimeError as error:
+        raise RestoreRuntimeError(str(error)) from error
     except (OSError, subprocess.TimeoutExpired) as error:
         raise RestoreRuntimeError("database restore could not be executed") from error
 
     if result.returncode != 0:
         raise RestoreRuntimeError("database restore failed")
+
+    return embedded
 
 
 def restore_backup(
@@ -267,7 +278,7 @@ def restore_backup(
             age_executable,
             runner=runner,
         )
-        run_pg_restore(
+        embedded = run_pg_restore(
             database_container_name(project, environment),
             password,
             dump_path,
@@ -275,13 +286,18 @@ def restore_backup(
             runner=runner,
         )
 
+    # The card inside the stream travelled with the data; the sidecar merely
+    # travelled beside it. Prefer the one that cannot be separated.
+    authoritative = embedded if embedded is not None else card
+
     return {
         "operation": "restore",
         "stamp": selected,
-        "release_id": card.get("release_id"),
-        "release_tag": card.get("release_tag"),
+        "release_id": authoritative.get("release_id"),
+        "release_tag": authoritative.get("release_tag"),
+        "self_describing": embedded is not None,
         "restored_at": utc_now(),
-        "revision_gap": describe_revision_gap(card, current_record),
+        "revision_gap": describe_revision_gap(authoritative, current_record),
     }
 
 

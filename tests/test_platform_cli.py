@@ -1377,6 +1377,51 @@ class PlatformCliTest(unittest.TestCase):
         self.assertEqual(entry["stamp"], stamp)
         self.assertIsNone(entry["release_tag"])
 
+    def rotate_arguments(self, *extra: str) -> tuple[str, ...]:
+        return (
+            "rotate-database-password",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--json",
+            *extra,
+        )
+
+    def test_rotation_refuses_without_explicit_confirmation(self) -> None:
+        """It restarts the application; that needs saying out loud."""
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, stderr = self.run_cli(*self.rotate_arguments())
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("--confirm-disruptive", stderr)
+
+    def test_rotation_is_refused_for_an_external_database(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        code, _, stderr = self.run_cli(*self.rotate_arguments("--confirm-disruptive"))
+
+        self.assertEqual(code, 1)
+        self.assertIn("platform-owned database", stderr)
+
+    def test_rotation_refuses_while_a_deploy_holds_the_lock(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        with project_environment_lock(
+            self.lock_root,
+            "example",
+            "lab",
+            "deploy",
+        ):
+            code, _, stderr = self.run_cli(
+                *self.rotate_arguments("--confirm-disruptive")
+            )
+
+        self.assertEqual(code, 1)
+        self.assertIn("rotate error:", stderr)
+
     def test_backup_reason_reaches_the_card(self) -> None:
         self.run_cli(*self.deploy_arguments())
 

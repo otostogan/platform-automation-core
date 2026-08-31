@@ -28,6 +28,31 @@ storage is current, and how much data an outage right now would cost.
 
 # When something is wrong
 
+## Rotating the database password
+
+```sh
+sudo -n platform rotate-database-password \
+  --project <project> \
+  --environment <environment> \
+  --confirm-disruptive \
+  --json
+```
+
+The database is changed first, then the stored credential, then the
+application is restarted so it picks up the new URL. That order is deliberate:
+a stored credential that no longer opens the database is a worse failure than
+a database whose new password is not yet stored, because the second is visible
+immediately and the first is not.
+
+`--confirm-disruptive` is required because the application restarts. If the
+restart fails after the password has changed, the command says so — deploy the
+current release to recover.
+
+Losing the password is not a data loss and does not need this command. The
+image trusts local socket connections, so an operator with root can
+`docker exec` into the container, `psql` with no password, set one, and
+re-encrypt the credential file.
+
 ## Restoring under pressure
 
 Find the dump first. `platform backups` lists what this host holds, newest
@@ -203,10 +228,21 @@ What the design guarantees, and why:
   everything else rather than growing its own — whoever can read the secrets
   can read the backup, and nobody else.
 - The filename carries only a timestamp and the reason. Everything else lives
-  in a metadata card beside the dump and inside the encrypted stream, so a
-  dump found alone describes itself once decrypted. The application version
-  deliberately stays out of the filename: object keys are readable by anyone
-  who can list a bucket.
+  in a metadata card **both beside the dump and inside the encrypted stream**,
+  so a dump found alone describes itself once decrypted. The application
+  version deliberately stays out of the filename: object keys are readable by
+  anyone who can list a bucket.
+- The stream opens with one readable line — `PLATFORM-BACKUP/1 <length>` —
+  followed by the card and then the untouched `pg_dump` bytes. Someone holding
+  nothing but `age` can read the card directly:
+
+  ```sh
+  age --decrypt -i /etc/platform/keys/age.key <dump> | head -c 800
+  ```
+
+  Dumps written before this envelope existed begin with `pg_dump`'s own magic
+  instead. `platform restore` reads both; a backup that stopped restoring
+  because the format improved would not be an improvement.
 - The card keys on `release_id`, not on the release tag. A tag is a human
   label and may be anything; `release_id` is always present and unique.
 - Retention comes from `database.backup.retain`. It drops the oldest dumps

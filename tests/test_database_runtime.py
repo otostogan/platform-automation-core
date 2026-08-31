@@ -65,6 +65,8 @@ class FakeRunner:
             return "decrypt"
         if "pull" in command:
             return "pull"
+        if "ALTER USER" in joined:
+            return "alter"
         if "volume" in command and "inspect" in command:
             return "volume-inspect"
         if "inspect" in command:
@@ -348,6 +350,74 @@ class EnsureProjectDatabaseTest(unittest.TestCase):
         manifest["database"]["postgres_major"] = 18
 
         self.assertTrue(self.ensure(manifest=manifest))
+
+    def test_rotation_changes_the_database_before_the_file(self) -> None:
+        """A stored credential that no longer opens the database is the worse
+        failure: it is invisible until someone needs it."""
+        from platform_automation.database_runtime import rotate_database_password
+
+        first = self.ensure()
+        self.runner.calls.clear()
+
+        second = rotate_database_password(
+            project="example",
+            environment="lab",
+            recipients=RECIPIENTS,
+            databases_root=self.databases_root,
+            runtime_secrets_root=self.runtime_root,
+            age_key_file=self.age_key_file,
+            sops_executable=Path("sops"),
+            docker_executable=Path("docker"),
+            runner=self.runner,
+        )
+
+        self.assertNotEqual(first, second)
+        actions = [self.runner.action(call) for call in self.runner.calls]
+        self.assertEqual(actions, ["decrypt", "alter", "encrypt"])
+
+        env = (self.runtime_root / "example" / "lab" / "database.env").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(f"POSTGRES_PASSWORD={second}", env)
+
+    def test_rotation_without_a_credential_is_refused(self) -> None:
+        from platform_automation.database_runtime import rotate_database_password
+
+        with self.assertRaises(DatabaseRuntimeError):
+            rotate_database_password(
+                project="example",
+                environment="lab",
+                recipients=RECIPIENTS,
+                databases_root=self.databases_root,
+                runtime_secrets_root=self.runtime_root,
+                age_key_file=self.age_key_file,
+                sops_executable=Path("sops"),
+                docker_executable=Path("docker"),
+                runner=self.runner,
+            )
+
+    def test_a_refused_alter_leaves_the_stored_credential_alone(self) -> None:
+        from platform_automation.database_runtime import rotate_database_password
+
+        first = self.ensure()
+        self.runner.fail_actions.add("alter")
+
+        with self.assertRaises(DatabaseRuntimeError):
+            rotate_database_password(
+                project="example",
+                environment="lab",
+                recipients=RECIPIENTS,
+                databases_root=self.databases_root,
+                runtime_secrets_root=self.runtime_root,
+                age_key_file=self.age_key_file,
+                sops_executable=Path("sops"),
+                docker_executable=Path("docker"),
+                runner=self.runner,
+            )
+
+        self.runner.fail_actions.clear()
+        self.runner.volume_present = True
+        self.assertEqual(self.ensure(), first)
 
     def test_unhealthy_database_fails_the_deploy(self) -> None:
         self.runner.fail_actions.add("up")
