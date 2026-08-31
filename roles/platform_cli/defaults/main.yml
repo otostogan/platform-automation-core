@@ -15,13 +15,14 @@ platform_cli_runtime_packages:
     - python3-boto3
 
 # Offsite backup storage. Absent settings keep backups local, which stays a
-# supported answer rather than an error.
-backup_s3_enabled: false
-backup_s3_endpoint: ""
-backup_s3_region: ""
-backup_s3_bucket: ""
-backup_s3_prefix: ""
-backup_s3_credentials_source: ""
+# supported answer rather than an error. Not named for S3: the endpoint is
+# configurable, and any compatible object store works.
+platform_cli_offsite_enabled: false
+platform_cli_offsite_endpoint: ""
+platform_cli_offsite_region: ""
+platform_cli_offsite_bucket: ""
+platform_cli_offsite_prefix: ""
+platform_cli_offsite_credentials_source: ""
 
 platform_cli_offsite_config: /etc/platform/backup-offsite.json
 platform_cli_offsite_credentials: /etc/platform/keys/s3.env

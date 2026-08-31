@@ -253,7 +253,7 @@ was last taken — and the only one that matters at three in the morning.
 ## Getting backups off the host
 
 A backup on the same disk as its database does not survive losing the disk.
-When `backup_s3_enabled` is set for a host, every backup run carries dumps to
+When `platform_cli_offsite_enabled` is set for a host, every backup run carries dumps to
 object storage. A host without that configuration keeps its backups local,
 which stays a supported answer rather than an error.
 
