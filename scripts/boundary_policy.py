@@ -49,7 +49,13 @@ SECRET_PATTERNS = (
     re.compile(rb"AGE-SECRET-KEY-1[0-9A-Z]+"),
     re.compile(rb"(?:github_pat_|ghp_)[A-Za-z0-9_]{20,}"),
     re.compile(rb"tskey-[A-Za-z0-9_-]{20,}"),
-    re.compile(rb"aws_secret_access_key\s*[:=]", re.IGNORECASE),
+    # The name alone is unavoidable in any code that talks to S3 -- it is a
+    # boto3 keyword argument. Match an assignment of something the length and
+    # shape of a real key instead, which no source file has cause to carry.
+    re.compile(
+        rb"aws_secret_access_key\s*[:=]\s*[\"']?[A-Za-z0-9/+=]{20,}",
+        re.IGNORECASE,
+    ),
 )
 
 LOCAL_PATH_PATTERNS = (

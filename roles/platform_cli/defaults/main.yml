@@ -10,12 +10,29 @@ platform_cli_runtime_packages:
     - python3
     - python3-jsonschema
     - python3-yaml
+    # Offsite backups speak S3. boto3 arrives the same way every other
+    # runtime dependency does, rather than introducing a bundled CLI.
+    - python3-boto3
+
+# Offsite backup storage. Absent settings keep backups local, which stays a
+# supported answer rather than an error. Not named for S3: the endpoint is
+# configurable, and any compatible object store works.
+platform_cli_offsite_enabled: false
+platform_cli_offsite_endpoint: ""
+platform_cli_offsite_region: ""
+platform_cli_offsite_bucket: ""
+platform_cli_offsite_prefix: ""
+platform_cli_offsite_credentials_source: ""
+
+platform_cli_offsite_config: /etc/platform/backup-offsite.json
+platform_cli_offsite_credentials: /etc/platform/keys/s3.env
 
 platform_cli_backup_timeout: 3600
 platform_cli_backup_default_interval: 360
 
 platform_cli_tool_files:
     - __init__.py
+    - backup_offsite.py
     - backup_runtime.py
     - backup_schedule.py
     - compose_runtime.py

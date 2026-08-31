@@ -25,9 +25,9 @@ jobs:
               env:
                   GH_TOKEN: ${{ secrets.PLATFORM_CORE_TOKEN }}
               run: >-
-                  gh release download v0.10.2
+                  gh release download v0.11.0
                   --repo otostogan/platform-automation-core
-                  --pattern otostogan-platform-0.10.2.tar.gz
+                  --pattern otostogan-platform-0.11.0.tar.gz
                   --pattern SHA256SUMS
                   --dir "${RUNNER_TEMP}/platform-core"
 
@@ -36,7 +36,7 @@ jobs:
                   cd "${RUNNER_TEMP}/platform-core"
                   sha256sum --check --ignore-missing SHA256SUMS
                   ansible-galaxy collection install \
-                      otostogan-platform-0.10.2.tar.gz
+                      otostogan-platform-0.11.0.tar.gz
                   cd "${GITHUB_WORKSPACE}"
                   ansible-galaxy collection install --requirement requirements.yml
 

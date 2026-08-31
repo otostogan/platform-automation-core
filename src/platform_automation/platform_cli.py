@@ -54,6 +54,16 @@ from .backup_runtime import (
     list_backups,
 )
 
+from .backup_offsite import (
+    DEFAULT_CREDENTIALS_FILE,
+    DEFAULT_OFFSITE_CONFIG,
+    OffsiteError,
+    download_backup,
+    offsite_status,
+    read_operator_credentials,
+    upload_backups,
+)
+
 from .backup_schedule import (
     DEFAULT_SYSTEMCTL_EXECUTABLE,
     DEFAULT_SYSTEMD_ROOT,
@@ -293,6 +303,14 @@ def parse_arguments(
         help="Backup stamp to restore. Defaults to the newest.",
     )
     restore_parser.add_argument(
+        "--from-offsite",
+        action="store_true",
+        help=(
+            "Fetch the backup from object storage first. Reader credentials "
+            "are read from stdin; the host holds none."
+        ),
+    )
+    restore_parser.add_argument(
         "--confirm-destructive",
         action="store_true",
         help="Required. Restoring replaces the contents of the live database.",
@@ -371,6 +389,7 @@ def build_backup_status(
     backups_root: Path,
     project: str,
     environment: str,
+    offsite: dict[str, Any] = None,
 ) -> dict[str, Any]:
     """Answer when a restore was last proven, not when a dump was last taken.
 
@@ -389,6 +408,7 @@ def build_backup_status(
         "count": len(stamps),
         "latest": stamps[-1] if stamps else None,
         "last_verified": verification,
+        "offsite": offsite,
     }
 
 
@@ -418,8 +438,11 @@ def print_backup_status(backups: dict[str, Any]) -> None:
     print(f"Backups: {backups['count']}")
     print(f"  latest: {backups['latest'] or 'none'}")
 
-    verification = backups["last_verified"]
+    print_verification_status(backups["last_verified"])
+    print_offsite_status(backups.get("offsite"))
 
+
+def print_verification_status(verification: dict[str, Any]) -> None:
     if verification is None:
         # A backup nobody has restored is not yet a backup.
         print("  last proven restorable: never")
@@ -433,6 +456,28 @@ def print_backup_status(backups: dict[str, Any]) -> None:
 
     if verification.get("error"):
         print(f"  verification error: {verification['error']}")
+
+
+def print_offsite_status(offsite: dict[str, Any]) -> None:
+    if offsite is None:
+        return
+
+    state = offsite["state"]
+
+    if state == "not-configured":
+        print("  offsite: not configured; backups stay on this host")
+    elif state == "error":
+        print(f"  offsite: UNKNOWN — {offsite['error']}")
+    elif state == "behind":
+        print(
+            f"  offsite: BEHIND — {len(offsite['not_uploaded'])} backup(s) "
+            f"not in {offsite['bucket']}"
+        )
+    else:
+        print(
+            f"  offsite: current, {offsite['remote_objects']} object(s) in "
+            f"{offsite['bucket']}"
+        )
 
 
 def print_human_status(document: dict[str, Any]) -> None:
@@ -454,6 +499,9 @@ def run_status(
     arguments: argparse.Namespace,
     projects_root: Path,
     backups_root: Path = DEFAULT_BACKUPS_ROOT,
+    offsite_config: Path = DEFAULT_OFFSITE_CONFIG,
+    offsite_credentials: Path = DEFAULT_CREDENTIALS_FILE,
+    offsite_reporter=offsite_status,
 ) -> int:
     try:
         records = list_release_records(
@@ -473,6 +521,13 @@ def run_status(
             backups_root,
             arguments.project,
             arguments.environment,
+            offsite_reporter(
+                project=arguments.project,
+                environment=arguments.environment,
+                directory=backups_root / arguments.project / arguments.environment,
+                config_path=offsite_config,
+                credentials_path=offsite_credentials,
+            ),
         ),
     )
 
@@ -1326,6 +1381,21 @@ def print_backup_result(document: dict[str, Any]) -> None:
     for warning in document["warnings"]:
         print(f"Backup warning: {warning}")
 
+    offsite = document.get("offsite")
+
+    if offsite is None:
+        return
+
+    if offsite["state"] == "not-configured":
+        print("Offsite: not configured; backups stay on this host")
+    elif offsite["state"] == "failed":
+        print(f"Offsite: FAILED — {offsite['error']}")
+    else:
+        print(
+            f"Offsite: {len(offsite['uploaded'])} object(s) uploaded to "
+            f"{offsite['bucket']}"
+        )
+
 
 def resolve_backup_identity(
     arguments: argparse.Namespace,
@@ -1352,6 +1422,9 @@ def run_backup(
     docker_executable: Path,
     minimum_age_recipients: int,
     backup_creator=create_backup,
+    offsite_config: Path = DEFAULT_OFFSITE_CONFIG,
+    offsite_credentials: Path = DEFAULT_CREDENTIALS_FILE,
+    uploader=upload_backups,
 ) -> int:
     try:
         project, environment = resolve_backup_identity(arguments)
@@ -1395,10 +1468,33 @@ def run_backup(
                 docker_executable=docker_executable,
             )
 
+        # This is the one place the warnings-only rule bends. A host set up
+        # for offsite backups that has quietly stopped uploading is exactly
+        # the failure discovered too late, so the command exits non-zero --
+        # while still reporting the dump that did succeed and stays on disk
+        # for the next run to carry up.
+        offsite_error = None
+
+        try:
+            document["offsite"] = uploader(
+                project=project,
+                environment=environment,
+                directory=backups_root / project / environment,
+                config_path=offsite_config,
+                credentials_path=offsite_credentials,
+            )
+        except OffsiteError as error:
+            document["offsite"] = {"state": "failed", "error": str(error)}
+            offsite_error = error
+
         if arguments.json:
             print(json.dumps(document, indent=2, sort_keys=True))
         else:
             print_backup_result(document)
+
+        if offsite_error is not None:
+            print(f"backup error: {offsite_error}", file=sys.stderr)
+            return 1
 
         return 0
     except (
@@ -1451,12 +1547,30 @@ def run_restore(
     docker_executable: Path,
     minimum_age_recipients: int,
     restorer=restore_backup,
+    offsite_config: Path = DEFAULT_OFFSITE_CONFIG,
+    downloader=download_backup,
+    token_stream=None,
 ) -> int:
     try:
         if not arguments.confirm_destructive:
             raise RestoreRuntimeError(
                 "restoring replaces the contents of the live database; "
                 "pass --confirm-destructive to proceed"
+            )
+
+        if arguments.from_offsite:
+            if arguments.stamp is None:
+                raise RestoreRuntimeError(
+                    "--from-offsite needs --from: name the backup to fetch"
+                )
+
+            downloader(
+                project=arguments.project,
+                environment=arguments.environment,
+                stamp=arguments.stamp,
+                directory=backups_root / arguments.project / arguments.environment,
+                credentials=read_operator_credentials(token_stream),
+                config_path=offsite_config,
             )
 
         # The lock is the guard against restoring underneath a deployment
@@ -1500,6 +1614,7 @@ def run_restore(
 
         return 0
     except (
+        OffsiteError,
         RestoreRuntimeError,
         DatabaseRuntimeError,
         OperationLockError,
@@ -1803,6 +1918,11 @@ def main(
     systemd_root: Path = DEFAULT_SYSTEMD_ROOT,
     systemctl_executable: Path = DEFAULT_SYSTEMCTL_EXECUTABLE,
     timer_reconciler=reconcile_backup_timer,
+    offsite_config: Path = DEFAULT_OFFSITE_CONFIG,
+    offsite_credentials: Path = DEFAULT_CREDENTIALS_FILE,
+    uploader=upload_backups,
+    offsite_reporter=offsite_status,
+    downloader=download_backup,
     token_stream=None,
     compose_runtime_module=compose_runtime,
     nginx_manager=None,
@@ -1871,6 +1991,11 @@ def main(
             age_executable,
             docker_executable,
             arguments.minimum_age_recipients,
+            *(
+                (restore_backup, offsite_config, downloader, token_stream)
+                if arguments.command == "restore"
+                else ()
+            ),
         )
 
     if arguments.command == "backup":
@@ -1887,6 +2012,9 @@ def main(
             docker_executable,
             arguments.minimum_age_recipients,
             backup_creator,
+            offsite_config,
+            offsite_credentials,
+            uploader,
         )
 
     if arguments.command == "status":
@@ -1894,6 +2022,9 @@ def main(
             arguments,
             projects_root,
             backups_root,
+            offsite_config,
+            offsite_credentials,
+            offsite_reporter,
         )
 
     print(

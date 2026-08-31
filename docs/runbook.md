@@ -250,6 +250,59 @@ Every attempt is recorded, success or failure. `platform status` reports when
 a restore was last **proven**, which is a different question from when a dump
 was last taken — and the only one that matters at three in the morning.
 
+## Getting backups off the host
+
+A backup on the same disk as its database does not survive losing the disk.
+When `platform_cli_offsite_enabled` is set for a host, every backup run carries dumps to
+object storage. A host without that configuration keeps its backups local,
+which stays a supported answer rather than an error.
+
+The upload **reconciles rather than pushes**: each run sends whatever local
+dump is missing remotely, not merely the one just taken. Three consequences
+worth knowing:
+
+- Enabling offsite storage carries the existing dumps up on the first run.
+- An upload that failed yesterday is retried today instead of being lost.
+- The work is bounded by local retention, which already capped how many dumps
+  exist.
+
+Nothing readable leaves the host: dumps are encrypted to the application's own
+age recipients before this step ever sees them. Object keys carry no
+application version — they are readable by anyone who can list the bucket, and
+the version lives in the metadata card.
+
+**The host holds a write-only credential.** It can add backups, and can
+neither read the history back nor delete any of it. Remote retention is a
+bucket lifecycle rule, not something the platform does — a backup an attacker
+can erase only protects against a failed disk.
+
+**A failed upload fails the command.** This is the one place the
+warnings-only rule bends: a host configured for offsite backups that has
+quietly stopped uploading is exactly the failure discovered too late. The dump
+itself still succeeded and stays on disk for the next run to carry up.
+`platform status` reports whether offsite storage is current, behind, or not
+configured.
+
+## Restoring from object storage
+
+Reading the history back is an operator action with an operator key. Supply it
+on standard input, the same way a registry token reaches a deployment; it
+never lands on the host.
+
+```sh
+cat ~/.config/platform-keys/reader-s3.env |
+  sudo -n platform restore \
+    --project <project> \
+    --environment <environment> \
+    --from <stamp> \
+    --from-offsite \
+    --confirm-destructive \
+    --json
+```
+
+`--from-offsite` needs an explicit `--from`: there is no "newest" to infer
+when the local copy is what went missing.
+
 ## Restoring under pressure
 
 ```sh
