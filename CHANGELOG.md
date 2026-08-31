@@ -7,6 +7,17 @@ release.
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-08-31
+
+- Fix `platform backup` raising `ValueError: flush of closed file`: writing the
+  envelope means feeding age's stdin directly, and `communicate()` flushes a
+  stdin that is already closed. Scheduled backups have failed since `0.13.0`;
+  skip `0.13.0` and `0.13.1`.
+- Derive the metadata sidecar's name instead of substituting a substring, so a
+  path not ending in the dump suffix cannot resolve to the dump itself.
+- Test the dump pipeline with real processes; three defects in a row hid
+  behind doubles that did not model process semantics.
+
 ## [0.13.1] - 2026-08-31
 
 - Fix `pg_restore` receiving an empty stream. A buffered reader's `seek`

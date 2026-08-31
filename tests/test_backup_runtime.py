@@ -14,10 +14,12 @@ from platform_automation.backup_runtime import (  # noqa: E402
     age_command,
     backup_stamp,
     build_metadata_card,
+    card_path,
     create_backup,
     loss_window,
     split_envelope,
     render_envelope_header,
+    stream_encrypted_dump,
     stamp_taken_at,
     list_backups,
     prune_backups,
@@ -290,6 +292,69 @@ class LossWindowTest(unittest.TestCase):
         )
 
 
+class RealPipelineTest(unittest.TestCase):
+    """Exercise the dump pipeline with real processes.
+
+    Two defects in a row hid behind fakes that did not model process
+    semantics: a descriptor a child inherits, and a stdin that cannot be
+    flushed once closed. `cat` stands in for both pg_dump and age, so the
+    pipes, the closes and the waits are the real ones.
+    """
+
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.base = Path(self.temporary_directory.name)
+        self.body = b"PGDMP" + bytes(range(256)) * 40
+
+    def tearDown(self) -> None:
+        self.temporary_directory.cleanup()
+
+    def popen(self, command, **options):
+        # pg_dump emits the body; age passes it through untouched.
+        if "pg_dump" in command:
+            source = self.base / "source.bin"
+            source.write_bytes(self.body)
+            return subprocess.Popen(
+                ["cat", str(source)],
+                stdout=options["stdout"],
+                stderr=options["stderr"],
+            )
+
+        return subprocess.Popen(
+            ["cat"],
+            stdin=options["stdin"],
+            stdout=options["stdout"],
+            stderr=options["stderr"],
+        )
+
+    def test_the_pipeline_writes_the_envelope_and_the_whole_dump(self) -> None:
+        destination = self.base / f"20260829T140530Z-operator{DUMP_SUFFIX}"
+        card = {"release_id": "a" * 32, "stamp": "s"}
+
+        written = stream_encrypted_dump(
+            destination=destination,
+            container="c",
+            password="p",
+            recipients={"age1example"},
+            card=card,
+            docker_executable=Path("docker"),
+            age_executable=Path("age"),
+            popen=self.popen,
+        )
+
+        self.assertEqual(written, destination.stat().st_size)
+
+        parsed, offset = split_envelope(destination)
+        self.assertEqual(parsed["release_id"], "a" * 32)
+        self.assertEqual(destination.read_bytes()[offset:], self.body)
+
+    def test_a_path_that_is_not_a_dump_is_refused(self) -> None:
+        """The sidecar name is derived, not substituted: a mismatched name
+        would otherwise resolve to the dump's own path and overwrite it."""
+        with self.assertRaises(BackupRuntimeError):
+            card_path(self.base / "out.age")
+
+
 class FakeStdin:
     """Collect what the platform writes into age, so tests can read it back."""
 
@@ -315,6 +380,7 @@ class FakeProcess:
         self._output = output
         self.stdout = stdout_pipe
         self.stdin = stdin
+        self.stderr = io.BytesIO(b"")
 
     def communicate(self, timeout=None):
         return b"", b""
