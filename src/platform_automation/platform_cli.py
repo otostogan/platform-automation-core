@@ -88,7 +88,11 @@ from .database_runtime import (
     DatabaseRuntimeError,
     ensure_project_database,
     inject_database_url,
+    rotate_database_password,
+    stored_database_password,
 )
+
+from .sops_validation import valid_age_recipients
 
 from .deployment_request import (
     DeploymentRequest,
@@ -292,6 +296,25 @@ def parse_arguments(
         help="Why this backup ran. Recorded in the metadata card.",
     )
     backup_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON.",
+    )
+
+    rotate_parser = subparsers.add_parser(
+        "rotate-database-password",
+        help="Replace the database password and restart the application.",
+    )
+    add_identity_arguments(rotate_parser)
+    rotate_parser.add_argument(
+        "--confirm-disruptive",
+        action="store_true",
+        help=(
+            "Required. The application is restarted so it picks up the new "
+            "credential."
+        ),
+    )
+    rotate_parser.add_argument(
         "--json",
         action="store_true",
         help="Print machine-readable JSON.",
@@ -1594,6 +1617,147 @@ def print_backups(document: dict[str, Any]) -> None:
         )
 
 
+def run_rotate_database_password(
+    arguments: argparse.Namespace,
+    projects_root: Path,
+    releases_root: Path,
+    lock_root: Path,
+    databases_root: Path,
+    runtime_secrets_root: Path,
+    age_key_file: Path,
+    sops_executable: Path,
+    docker_executable: Path,
+    minimum_age_recipients: int,
+    compose_runtime_module,
+    rotator=rotate_database_password,
+) -> int:
+    """Rotate the credential and hand the running application the new one.
+
+    Changing the password alone would leave the application authenticating
+    with a URL that no longer works, so the restart is part of the operation
+    rather than a step an operator has to remember.
+    """
+    try:
+        if not arguments.confirm_disruptive:
+            raise DatabaseRuntimeError(
+                "rotating restarts the application so it picks up the new "
+                "credential; pass --confirm-disruptive to proceed"
+            )
+
+        with project_environment_lock(
+            lock_root,
+            arguments.project,
+            arguments.environment,
+            "rotate",
+        ):
+            manifest, record = load_current_manifest(
+                projects_root,
+                releases_root,
+                arguments.project,
+                arguments.environment,
+                minimum_age_recipients,
+            )
+
+            if manifest["database"]["mode"] != "docker":
+                raise DatabaseRuntimeError(
+                    "only a platform-owned database has a credential to rotate"
+                )
+
+            request = load_saved_release_request(
+                record,
+                releases_root,
+                minimum_age_recipients=minimum_age_recipients,
+            )
+            recipients = valid_age_recipients(request.bundle.secrets)
+
+            if not recipients:
+                raise DatabaseRuntimeError(
+                    "application secrets carry no age recipients"
+                )
+
+            rotator(
+                project=arguments.project,
+                environment=arguments.environment,
+                recipients=recipients,
+                databases_root=databases_root,
+                runtime_secrets_root=runtime_secrets_root,
+                age_key_file=age_key_file,
+                sops_executable=sops_executable,
+                docker_executable=docker_executable,
+            )
+
+            # From here the database only accepts the new credential. A
+            # failure below leaves the application unable to authenticate
+            # until a deploy, which is recoverable and is said out loud.
+            staged_bundle_path = resolve_release_bundle(record, releases_root)
+            runtime_secrets_path = materialize_release_secrets(
+                request=request,
+                staged_bundle_path=staged_bundle_path,
+                release_id=record["release_id"],
+                runtime_secrets_root=runtime_secrets_root,
+                age_key_file=age_key_file,
+                sops_executable=sops_executable,
+                secrets_materializer=materialize_env_secrets,
+            )
+            inject_database_url(
+                runtime_secrets_path,
+                stored_database_password(
+                    databases_root,
+                    arguments.project,
+                    arguments.environment,
+                    age_key_file,
+                    sops_executable,
+                ),
+            )
+
+            try:
+                compose_runtime_module.start_release(
+                    **runtime_arguments(
+                        request,
+                        staged_bundle_path,
+                        runtime_secrets_path,
+                        docker_executable,
+                    )
+                )
+            except ComposeRuntimeError as error:
+                raise DatabaseRuntimeError(
+                    f"password rotated but the application did not restart: "
+                    f"{error}. Deploy the current release to recover."
+                ) from error
+
+        document = {
+            "operation": "rotate-database-password",
+            "project": arguments.project,
+            "environment": arguments.environment,
+            "release_id": record["release_id"],
+            "recipients": len(recipients),
+            "rotated_at": utc_timestamp(),
+        }
+
+        if arguments.json:
+            print(json.dumps(document, indent=2, sort_keys=True))
+        else:
+            print(
+                f"Database password rotated: {document['project']}/{document['environment']}"
+            )
+            print(f"Encrypted to {document['recipients']} recipient(s)")
+            print("Application restarted with the new credential.")
+
+        return 0
+    except (
+        ComposeRuntimeError,
+        DatabaseRuntimeError,
+        DeploymentRequestError,
+        OperationLockError,
+        ReleaseLedgerError,
+        RestoreRuntimeError,
+        RuntimeSecretsError,
+        OSError,
+    ) as error:
+        print(f"rotate error: {error}", file=sys.stderr)
+        return 1
+
+
 def run_backups(
     arguments: argparse.Namespace,
     backups_root: Path,
@@ -2214,6 +2378,21 @@ def main(
                 if arguments.command == "restore"
                 else ()
             ),
+        )
+
+    if arguments.command == "rotate-database-password":
+        return run_rotate_database_password(
+            arguments,
+            projects_root,
+            releases_root,
+            lock_root,
+            databases_root,
+            runtime_secrets_root,
+            age_key_file,
+            sops_executable,
+            docker_executable,
+            arguments.minimum_age_recipients,
+            compose_runtime_module,
         )
 
     if arguments.command == "backups":

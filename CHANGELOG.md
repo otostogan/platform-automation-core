@@ -7,6 +7,15 @@ release.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-31
+
+- Carry the metadata card inside the encrypted dump as well as beside it, in a
+  streamable envelope that opens with one readable line. `0.8.0` claimed this
+  and did not do it.
+- Read both dump formats on restore; the embedded card wins over the sidecar.
+- Add `platform rotate-database-password`: database first, stored credential
+  second, application restart third, all under the project lock.
+
 ## [0.12.0] - 2026-08-31
 
 - Report the loss window in `platform status`: the age of the newest dump

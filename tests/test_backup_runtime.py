@@ -1,3 +1,4 @@
+import io
 import json
 import subprocess
 import tempfile
@@ -14,6 +15,8 @@ from platform_automation.backup_runtime import (  # noqa: E402
     build_metadata_card,
     create_backup,
     loss_window,
+    read_envelope,
+    render_envelope_header,
     stamp_taken_at,
     list_backups,
     prune_backups,
@@ -160,6 +163,39 @@ class RetentionTest(unittest.TestCase):
         self.assertEqual(resolve_retention(document), 14)
 
 
+class EnvelopeTest(unittest.TestCase):
+    def card(self) -> dict:
+        return {"release_id": "a" * 32, "stamp": "s"}
+
+    def test_a_dump_without_an_envelope_is_left_alone(self) -> None:
+        """A backup that stopped restoring because the format improved would
+        not be an improvement."""
+        stream = io.BytesIO(b"PGDMP\x01\x02legacy body")
+
+        self.assertIsNone(read_envelope(stream))
+        self.assertEqual(stream.read(), b"PGDMP\x01\x02legacy body")
+
+    def test_an_envelope_round_trips(self) -> None:
+        stream = io.BytesIO(render_envelope_header(self.card()) + b"PGDMP-body")
+
+        self.assertEqual(read_envelope(stream)["release_id"], "a" * 32)
+        self.assertEqual(stream.read(), b"PGDMP-body")
+
+    def test_a_truncated_envelope_is_loud(self) -> None:
+        header = render_envelope_header(self.card())
+
+        with self.assertRaises(BackupRuntimeError):
+            read_envelope(io.BytesIO(header[:-20]))
+
+    def test_a_malformed_length_is_loud(self) -> None:
+        with self.assertRaises(BackupRuntimeError):
+            read_envelope(io.BytesIO(b"PLATFORM-BACKUP/1 notanumber\n{}"))
+
+    def test_an_oversized_card_is_refused(self) -> None:
+        with self.assertRaises(BackupRuntimeError):
+            render_envelope_header({"pad": "x" * 70000})
+
+
 class LossWindowTest(unittest.TestCase):
     def now(self, minutes_after: int) -> datetime:
         return datetime(2026, 8, 29, 14, 5, 30, tzinfo=timezone.utc) + timedelta(
@@ -207,11 +243,31 @@ class LossWindowTest(unittest.TestCase):
         )
 
 
+class FakeStdin:
+    """Collect what the platform writes into age, so tests can read it back."""
+
+    def __init__(self, sink) -> None:
+        self.sink = sink
+
+    def write(self, data: bytes) -> int:
+        return self.sink.write(data)
+
+    def close(self) -> None:
+        pass
+
+
 class FakeProcess:
-    def __init__(self, returncode: int, output: bytes = b"", stdout_pipe=None):
+    def __init__(
+        self,
+        returncode: int,
+        output: bytes = b"",
+        stdout_pipe=None,
+        stdin=None,
+    ):
         self.returncode = returncode
         self._output = output
         self.stdout = stdout_pipe
+        self.stdin = stdin
 
     def communicate(self, timeout=None):
         return b"", b""
@@ -254,10 +310,17 @@ class CreateBackupTest(unittest.TestCase):
         self.commands.append(list(command))
 
         if "pg_dump" in command:
-            return FakeProcess(self.dump_code, stdout_pipe=FakeStdout())
+            return FakeProcess(
+                self.dump_code,
+                stdout_pipe=io.BytesIO(b"PGDMP-body"),
+            )
 
-        options["stdout"].write(b"age-encrypted-payload")
-        return FakeProcess(self.encrypt_code)
+        # age is faked as a passthrough so a test can read the envelope the
+        # platform wrote and confirm the dump follows it untouched.
+        return FakeProcess(
+            self.encrypt_code,
+            stdin=FakeStdin(options["stdout"]),
+        )
 
     def backup(self, document=None, secrets=None, reason="operator"):
         return create_backup(
@@ -288,7 +351,7 @@ class CreateBackupTest(unittest.TestCase):
         self.assertTrue(dump.is_file())
         self.assertTrue(card.is_file())
         self.assertEqual(result["recipients"], 2)
-        self.assertEqual(result["bytes"], len(b"age-encrypted-payload"))
+        self.assertGreater(result["bytes"], 0)
         self.assertEqual(
             json.loads(card.read_text())["release_id"],
             "a" * 32,
@@ -344,16 +407,45 @@ class CreateBackupTest(unittest.TestCase):
             [],
         )
 
+    def test_the_dump_carries_its_own_card(self) -> None:
+        """A dump found alone still describes itself once decrypted."""
+        from platform_automation.backup_runtime import read_envelope
+
+        self.backup()
+
+        written = (
+            self.backups_root
+            / "example"
+            / "lab"
+            / f"20260829T140530Z-operator{DUMP_SUFFIX}"
+        ).read_bytes()
+
+        stream = io.BytesIO(written)
+        card = read_envelope(stream)
+
+        self.assertEqual(card["release_id"], "a" * 32)
+        self.assertEqual(card["stamp"], "20260829T140530Z-operator")
+        # The pg_dump bytes follow the envelope untouched.
+        self.assertEqual(stream.read(), b"PGDMP-body")
+
+    def test_the_envelope_opens_with_a_readable_line(self) -> None:
+        """Someone holding only age should see what they have."""
+        self.backup()
+
+        written = (
+            self.backups_root
+            / "example"
+            / "lab"
+            / f"20260829T140530Z-operator{DUMP_SUFFIX}"
+        ).read_bytes()
+
+        self.assertTrue(written.startswith(b"PLATFORM-BACKUP/1 "))
+
     def test_missing_credential_is_loud(self) -> None:
         (self.databases_root / "example" / "lab" / "credentials.sops.json").unlink()
 
         with self.assertRaises(BackupRuntimeError):
             self.backup()
-
-
-class FakeStdout:
-    def close(self) -> None:
-        pass
 
 
 if __name__ == "__main__":

@@ -674,6 +674,117 @@ def ensure_project_database(
     return password
 
 
+def alter_database_password(
+    project: str,
+    environment: str,
+    current_password: str,
+    new_password: str,
+    docker_executable: Path,
+    runner=subprocess.run,
+) -> None:
+    """Change the password on the running database.
+
+    Existing connections survive; only new ones need the new password. The
+    application therefore keeps working for a moment after this and must be
+    restarted before its pool turns over.
+    """
+    try:
+        result = runner(
+            [
+                str(docker_executable),
+                "exec",
+                "--env",
+                f"PGPASSWORD={current_password}",
+                database_container_name(project, environment),
+                "psql",
+                "--username",
+                DATABASE_USER,
+                "--dbname",
+                DATABASE_NAME,
+                "--quiet",
+                "--no-align",
+                "--tuples-only",
+                "--set",
+                "ON_ERROR_STOP=1",
+                "--set",
+                f"password={new_password}",
+                "--command",
+                f"ALTER USER {DATABASE_USER} WITH PASSWORD :'password'",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise DatabaseRuntimeError(
+            "database password change could not be executed"
+        ) from error
+
+    if result.returncode != 0:
+        raise DatabaseRuntimeError("database password change failed")
+
+
+def rotate_database_password(
+    project: str,
+    environment: str,
+    recipients: set[str],
+    databases_root: Path,
+    runtime_secrets_root: Path,
+    age_key_file: Path,
+    sops_executable: Path,
+    docker_executable: Path,
+    runner=subprocess.run,
+) -> str:
+    """Replace the credential on the database and on disk, in that order.
+
+    The database is changed first: a stored credential that no longer opens
+    the database is a worse failure than a database whose new password is not
+    yet stored, because the second is visible immediately and the first is
+    not.
+    """
+    database_directory = databases_root / project / environment
+    credentials_path = database_directory / CREDENTIALS_FILENAME
+
+    if credentials_path.is_symlink() or not credentials_path.is_file():
+        raise DatabaseRuntimeError("database credential is missing")
+
+    current = stored_database_password(
+        databases_root,
+        project,
+        environment,
+        age_key_file,
+        sops_executable,
+        runner=runner,
+    )
+    new_password = generate_password()
+    runtime_directory = create_private_runtime_scope(
+        runtime_secrets_root,
+        project,
+        environment,
+    )
+
+    alter_database_password(
+        project,
+        environment,
+        current,
+        new_password,
+        docker_executable,
+        runner=runner,
+    )
+    encrypt_credentials(
+        new_password,
+        recipients,
+        credentials_path,
+        runtime_directory,
+        sops_executable,
+        runner=runner,
+    )
+    write_database_environment(runtime_directory, new_password)
+
+    return new_password
+
+
 def inject_database_url(
     runtime_secrets_path: Path,
     password: Optional[str],

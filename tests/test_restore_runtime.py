@@ -79,6 +79,7 @@ class BackupDirectoryFixture(unittest.TestCase):
 
         self.commands: list[list[str]] = []
         self.fail_actions: set[str] = set()
+        self.embedded_card = None
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -108,6 +109,13 @@ class BackupDirectoryFixture(unittest.TestCase):
         action = self.action(command)
 
         if action == "age-decrypt":
+            from platform_automation.backup_runtime import (
+                render_envelope_header,
+            )
+
+            if self.embedded_card is not None:
+                options["stdout"].write(render_envelope_header(self.embedded_card))
+
             options["stdout"].write(b"PGDMP-plaintext")
 
         return subprocess.CompletedProcess(
@@ -194,6 +202,29 @@ class RestoreTest(BackupDirectoryFixture):
         self.assertIn("platform-db-example-lab-postgres-1", restore_call)
         self.assertIn("--clean", restore_call)
         self.assertIn("--exit-on-error", restore_call)
+
+    def test_a_legacy_dump_without_an_envelope_still_restores(self) -> None:
+        """Dumps written before the envelope existed must keep working."""
+        self.seed(NEWER)
+
+        result = self.restore(current=record())
+
+        self.assertEqual(result["stamp"], NEWER)
+        self.assertFalse(result["self_describing"])
+
+    def test_the_card_inside_the_stream_wins_over_the_sidecar(self) -> None:
+        """The embedded card travelled with the data; the sidecar beside it."""
+        self.seed(NEWER)
+        # A sidecar that disagrees is exactly the drift the envelope removes.
+        (self.directory / f"{NEWER}{CARD_SUFFIX}").write_text(
+            json.dumps(card("f" * 32, "sidecar-drifted"))
+        )
+        self.embedded_card = card("a" * 32, "lab-from-the-stream")
+
+        result = self.restore(current=record())
+
+        self.assertTrue(result["self_describing"])
+        self.assertEqual(result["release_tag"], "lab-from-the-stream")
 
     def test_a_revision_gap_is_reported_not_refused(self) -> None:
         self.seed(NEWER)
