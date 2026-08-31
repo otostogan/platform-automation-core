@@ -16,6 +16,7 @@ factor of the database password equals the bus factor of everything else.
 
 import json
 import os
+import re
 import secrets
 import subprocess
 import tempfile
@@ -44,6 +45,11 @@ COMPOSE_FILENAME = "compose.yml"
 DATABASE_ENV_FILENAME = "database.env"
 
 PASSWORD_ENTROPY_BYTES = 32
+
+# token_urlsafe stays inside this alphabet. Asserting it before the password
+# reaches SQL means a future change to the generator cannot quietly turn an
+# interpolation into an injection.
+SAFE_PASSWORD_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 SUPPORTED_POSTGRES_MAJORS = (16, 17, 18)
 
 
@@ -688,11 +694,23 @@ def alter_database_password(
     application therefore keeps working for a moment after this and must be
     restarted before its pool turns over.
     """
+    # psql performs variable interpolation for input it reads, and not for
+    # --command. The statement therefore arrives on stdin, which also keeps
+    # the password out of argv, where any user could read it from `ps`.
+    if not SAFE_PASSWORD_PATTERN.fullmatch(new_password):
+        raise DatabaseRuntimeError("generated password has unexpected characters")
+
+    statement = (
+        f"\\set password '{new_password}'\n"
+        f"ALTER USER {DATABASE_USER} WITH PASSWORD :'password';\n"
+    ).encode("utf-8")
+
     try:
         result = runner(
             [
                 str(docker_executable),
                 "exec",
+                "--interactive",
                 "--env",
                 f"PGPASSWORD={current_password}",
                 database_container_name(project, environment),
@@ -706,11 +724,8 @@ def alter_database_password(
                 "--tuples-only",
                 "--set",
                 "ON_ERROR_STOP=1",
-                "--set",
-                f"password={new_password}",
-                "--command",
-                f"ALTER USER {DATABASE_USER} WITH PASSWORD :'password'",
             ],
+            input=statement,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
