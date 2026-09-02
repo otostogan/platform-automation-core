@@ -7,6 +7,27 @@ release.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-02
+
+- Add `docs/handbook.html`: an interactive operator handbook in Russian, in a
+  single self-contained file with no build step and no network access. Guided
+  flows for each routine task — new host, new application, deploy, rollback,
+  backups, database work, domains, operators, core update, reboot acceptance,
+  incidents — where every step that gives a command also states how to tell it
+  worked and what the known failures look like. Alongside them, a reference for
+  the manifest, the Compose contract, inventory variables, keys, the release
+  ledger, host layout and the CLI, a glossary, and a register of the claims
+  that have not been verified in practice yet.
+- Rewrite `README.md` around what the platform does and the rules that enforce
+  it, rather than around the contents of the repository.
+- Fix `docs/qa-digest.md`, which named the server tag `tag:platform-server`.
+  No such tag exists: the inventory advertises `tag:server-platform`. An
+  operator following the digest would have issued an auth key carrying a tag
+  that no access rule matches, and the host would have joined the tailnet
+  without the access it needs. Real endpoints and bucket names in the same file
+  were replaced with placeholders so it passes the repository boundary check.
+
+
 ## [0.13.3] - 2026-08-31
 
 - Fix `platform rotate-database-password`: psql interpolates variables for
