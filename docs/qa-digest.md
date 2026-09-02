@@ -12,7 +12,7 @@
   compose, SOPS-секреты, свои workflows (build / release / deploy).
 
 Живой пример хоста: `medkeep-host`, проект `health-client`, окружения `lab`
-(dev.medkeep.ai) и `production`.
+(dev-поддомен) и `production`.
 
 ---
 
@@ -103,7 +103,7 @@ sops encrypt --in-place deploy/secrets.lab.sops.yaml
 Тегированное принадлежит тейлнету и не протухает.
 
 **В: Новый сервер — надо редачить ACL?**
-О: Нет. Выпустить auth key с `tag:platform-server`, добавить хост в
+О: Нет. Выпустить auth key с `tag:server-platform`, добавить хост в
 `inventory/hosts.yml`, bootstrap, converge. ACL правится только для нового
 *приложения* (новый CI-тег: tagOwners + grants + ssh + tests) или для хоста
 с *другим* уровнем доступа (изолированный прод → новый server-тег).
@@ -126,7 +126,7 @@ Ansible не спрашивал на каждое соединение). Люд�
 **В: Auth key для сервера — какие настройки?**
 О: Reusable off, **ephemeral off** (ephemeral-ноды удаляются при
 отключении — правильно для CI-раннеров, смертельно для сервера), тег
-`tag:platform-server`, минимальный срок. Он одноразовый и перезаписывается
+`tag:server-platform`, минимальный срок. Он одноразовый и перезаписывается
 перед каждым bootstrap, поэтому путь к нему общий в `group_vars/all`.
 
 **В: Ограничение тегов?**
@@ -474,9 +474,9 @@ journalctl --unit 'platform-backup@*' --since today
 
 ```yaml
 platform_cli_offsite_enabled: true
-platform_cli_offsite_endpoint: https://s3.eu-central-1.amazonaws.com
-platform_cli_offsite_region: eu-central-1
-platform_cli_offsite_bucket: aiworldhub-platform-backups
+platform_cli_offsite_endpoint: https://s3.example.com   # endpoint провайдера
+platform_cli_offsite_region: <регион>
+platform_cli_offsite_bucket: <бакет>
 ```
 
 Секрет — только пара ключей: путь в git-игнорируемом
