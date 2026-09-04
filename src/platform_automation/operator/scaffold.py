@@ -65,6 +65,7 @@ class AppAnswers:
     healthcheck_path: str = "/"
     healthcheck_timeout: int = 120
     database_mode: str = "docker"
+    backup_enabled: bool = True
     postgres_major: int = 18
     backup_interval: int = 15
     backup_retain: int = 3
@@ -180,6 +181,8 @@ def render_app(answers: AppAnswers) -> dict:
         if answers.database_mode == "docker"
         else "database_external.yml"
     )
+    if answers.database_mode == "docker" and not answers.backup_enabled:
+        database = without_schedule(database)
     secrets_plaintext = "".join(
         f"{name}: {PLACEHOLDER_VALUE}\n" for name in answers.secret_names
     )
@@ -195,6 +198,26 @@ def render_app(answers: AppAnswers) -> dict:
         files[f"deploy/secrets.{environment}.sops.yaml"] = secrets_plaintext
 
     return files
+
+
+def without_schedule(database_block: str) -> str:
+    """A platform-owned database with no timer.
+
+    The contract forbids the ``backup`` block once ``backup_enabled`` is
+    false, and the dump before each migration is taken regardless: the flag
+    governs the schedule, not the safety.
+    """
+    lines = []
+    skipping = False
+    for line in database_block.splitlines(keepends=True):
+        if line.startswith("    backup:"):
+            skipping = True
+            continue
+        if skipping and line.startswith("        "):
+            continue
+        skipping = False
+        lines.append(line.replace("backup_enabled: true", "backup_enabled: false"))
+    return "".join(lines)
 
 
 def existing_targets(root: Path, files: dict) -> list:

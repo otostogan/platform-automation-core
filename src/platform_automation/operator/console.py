@@ -759,6 +759,17 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
     def ask_major(state):
         return select("PostgreSQL major", [18, 17, 16], str)
 
+    def ask_schedule(state):
+        return select(
+            "Scheduled backups",
+            [True, False],
+            lambda on: (
+                "yes — a timer takes dumps"
+                if on
+                else "no — only the dump before each migration"
+            ),
+        )
+
     def ask_query(state):
         return text("Restore validation query", state.get("restore_query", "SELECT 1"))
 
@@ -824,15 +835,23 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         Step("database_mode", ask_database, label="Database"),
         Step("postgres_major", ask_major, label="PostgreSQL major"),
         Step(
+            "backup_enabled",
+            ask_schedule,
+            lambda st: st.get("database_mode") == "docker",
+            label="Scheduled backups",
+        ),
+        Step(
             "backup_interval",
             number("Backup every N minutes", "backup_interval", 15, 15, 1440),
-            lambda st: st.get("database_mode") == "docker",
+            lambda st: st.get("database_mode") == "docker"
+            and st.get("backup_enabled", True),
             label="Backup interval",
         ),
         Step(
             "backup_retain",
             number("Keep N dumps locally", "backup_retain", 3, 1, 100),
-            lambda st: st.get("database_mode") == "docker",
+            lambda st: st.get("database_mode") == "docker"
+            and st.get("backup_enabled", True),
             label="Dumps to keep",
         ),
         Step("restore_query", ask_query, label="Restore query"),
@@ -843,6 +862,8 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         value = state.get(step.key)
         if step.key == "infra":
             return f"{derived(state, 'target_host') or 'typed below'} · core {derived(state, 'core_pin') or '—'}"
+        if isinstance(value, bool):
+            return "yes" if value else "no"
         if isinstance(value, (tuple, list)):
             return ", ".join(str(v) for v in value)
         return "" if value is None else str(value)
@@ -888,6 +909,7 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         healthcheck_path=state["healthcheck_path"],
         healthcheck_timeout=state["healthcheck_timeout"],
         database_mode=state["database_mode"],
+        backup_enabled=state.get("backup_enabled", True),
         postgres_major=state["postgres_major"],
         backup_interval=state.get("backup_interval", 15),
         backup_retain=state.get("backup_retain", 3),

@@ -126,6 +126,16 @@ class RenderAppTest(unittest.TestCase):
             "API_TOKEN: замените-на-настоящее\nSESSION_SECRET: замените-на-настоящее\n",
         )
 
+    def test_platform_database_without_a_schedule_keeps_the_contract(self) -> None:
+        files = render_app(AppAnswers(**{**ANSWERS.__dict__, "backup_enabled": False}))
+        manifest = files["deploy/platform.lab.yml"]
+
+        self.assertIn("mode: docker", manifest)
+        self.assertIn("backup_enabled: false", manifest)
+        self.assertNotIn("backup:", manifest)
+        self.assertNotIn("interval_minutes", manifest)
+        self.assertIn("restore_validation:", manifest)
+
     def test_external_database_disables_backups(self) -> None:
         files = render_app(
             AppAnswers(**{**ANSWERS.__dict__, "database_mode": "external"})
@@ -168,6 +178,14 @@ class WriteAndValidateTest(unittest.TestCase):
         self.assertEqual(sorted(written), sorted(files))
         self.assertEqual({k: v for k, v in report.items() if v}, {}, report)
         self.assertTrue((self.root / ".githooks/pre-push").stat().st_mode & 0o100)
+
+    def test_unscheduled_database_also_passes_the_deployment_checks(self) -> None:
+        files = render_app(AppAnswers(**{**ANSWERS.__dict__, "backup_enabled": False}))
+
+        write_files(self.root, files)
+        report = validate_app(self.root, files)
+
+        self.assertEqual({k: v for k, v in report.items() if v}, {}, report)
 
     def test_existing_file_stops_the_whole_scaffold(self) -> None:
         files = render_app(ANSWERS)
