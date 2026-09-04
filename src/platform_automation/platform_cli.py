@@ -240,6 +240,19 @@ def parse_arguments(
         help="Check keys, versions and tailnet access from this workstation.",
     )
 
+    secrets_parser = subparsers.add_parser(
+        "secrets",
+        help="Encrypt .env.<environment> into the committed ciphertext, or decrypt it back.",
+    )
+    secrets_parser.add_argument("action", choices=("push", "pull"))
+    secrets_parser.add_argument("environment", nargs="?")
+    secrets_parser.add_argument(
+        "--stale", action="store_true", help="Only environments whose .env is newer."
+    )
+    secrets_parser.add_argument(
+        "--stage", action="store_true", help="git add the ciphertext afterwards."
+    )
+
     infra_parser = subparsers.add_parser(
         "infra",
         help="List, register or forget infrastructure repositories on this workstation.",
@@ -2447,7 +2460,7 @@ def main(
 
     arguments = parse_arguments(argv)
 
-    if arguments.command in (None, "new", "doctor", "infra"):
+    if arguments.command in (None, "new", "doctor", "infra", "secrets"):
         # The operator console is workstation-only and is not shipped to
         # hosts, so the refusal has to happen here, before it is imported.
         if is_platform_host(projects_root):
@@ -2467,6 +2480,14 @@ def main(
             console_argv.append(arguments.action)
             if arguments.path:
                 console_argv.append(arguments.path)
+        if arguments.command == "secrets":
+            console_argv.append(arguments.action)
+            if arguments.environment:
+                console_argv.append(arguments.environment)
+            if arguments.stale:
+                console_argv.append("--stale")
+            if arguments.stage:
+                console_argv.append("--stage")
         return run_console(console_argv)
 
     if arguments.command in ("deploy", "rollback") and nginx_manager is None:

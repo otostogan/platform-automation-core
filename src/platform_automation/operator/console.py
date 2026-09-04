@@ -947,6 +947,9 @@ def run_new_app(context: Context, questionary, style) -> int:
         written = write_files(root, files)
         encrypted = encrypt_secrets(root, files)
         report = validate_app(root, files)
+        from .secrets import enable_hooks
+
+        hooks = enable_hooks(root)
     except ScaffoldError as error:
         print(f"{RED}{error}{RESET}")
         return 1
@@ -965,6 +968,14 @@ def run_new_app(context: Context, questionary, style) -> int:
             print(f"{GREEN}valid application contract: {relative}{RESET}")
     for relative in encrypted:
         print(f"{GREEN}encrypted: {relative}{RESET}")
+    if hooks:
+        print(
+            f"{GREEN}hooks enabled: core.hooksPath=.githooks, push.followTags=true{RESET}"
+        )
+    else:
+        print(
+            f"{DIM}not a git repository yet — after git init: git config core.hooksPath .githooks{RESET}"
+        )
     print()
     print(next_steps(answers, written))
     print(f"{DIM}  handbook: {HANDBOOK}#/flow-new-app{RESET}")
@@ -994,6 +1005,73 @@ def run_new(context: Context, target: Optional[str]) -> int:
     print()
     print(f"{DIM}→ scaffold '{target}' is not wired yet.{RESET}")
     return 0
+
+
+def run_secrets(context: Context, argv: list) -> int:
+    """platform secrets push [env] [--stale] [--stage] | pull <env>."""
+    from .secrets import (
+        SecretsError,
+        enable_hooks,
+        pull_env,
+        stage,
+        staged_plaintext,
+        sync,
+    )
+
+    if context.kind != "app":
+        print(
+            "secrets needs an application repository (deploy/platform.<env>.yml)",
+            file=sys.stderr,
+        )
+        return 2
+    action = argv[0] if argv else "push"
+    flags = {a for a in argv[1:] if a.startswith("--")}
+    names = [a for a in argv[1:] if not a.startswith("--")]
+    root = context.root
+    try:
+        if action == "pull":
+            if not names:
+                print("platform secrets pull <environment>", file=sys.stderr)
+                return 2
+            path = pull_env(root, names[0])
+            print(
+                f"{GREEN}written: {path.relative_to(root)}{RESET}  (mode 0600, ignored by git)"
+            )
+            return 0
+        if action != "push":
+            print(f"unknown secrets action: {action}", file=sys.stderr)
+            return 2
+        leaked = staged_plaintext(root)
+        if leaked:
+            print(
+                f"{RED}refusing: staged plaintext {', '.join(leaked)} — .env.* never enters git{RESET}"
+            )
+            return 1
+        results = sync(
+            root, only=names[0] if names else None, stale_only="--stale" in flags
+        )
+        if not results:
+            print("no environments found under deploy/", file=sys.stderr)
+            return 1
+        to_stage = []
+        for result in results:
+            mark = GREEN + "✓" + RESET if result.written else DIM + "–" + RESET
+            note = (
+                f" (dropped {', '.join(result.dropped)}: the platform provides it)"
+                if result.dropped
+                else ""
+            )
+            print(f" {mark} {result.environment:<12} {result.reason}{note}")
+            if result.written:
+                to_stage.append(f"deploy/secrets.{result.environment}.sops.yaml")
+        if "--stage" in flags and to_stage:
+            stage(root, to_stage)
+            print(f"{DIM}  staged: {', '.join(to_stage)}{RESET}")
+        enable_hooks(root)
+        return 0
+    except SecretsError as error:
+        print(f"{RED}secrets error: {error}{RESET}", file=sys.stderr)
+        return 1
 
 
 def run_infra(argv: list) -> int:
@@ -1078,6 +1156,9 @@ def run(argv: list, start: Optional[Path] = None) -> int:
 
     if argv and argv[0] == "infra":
         return run_infra(argv[1:])
+
+    if argv and argv[0] == "secrets":
+        return run_secrets(context, argv[1:])
 
     if argv and argv[0] == "doctor":
         return run_doctor(context)

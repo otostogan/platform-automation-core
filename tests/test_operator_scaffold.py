@@ -43,6 +43,23 @@ def handbook_blocks() -> list:
     ]
 
 
+def handbook_folds() -> dict:
+    """Fold summary (a file name) → the code block it holds, on the new-application page."""
+    text = HANDBOOK.read_text(encoding="utf-8")
+    start = text.index('id="flow-new-app"')
+    end = text.index("<section", start + 10)
+    body = text[start:end]
+    found = {}
+    for m in re.finditer(
+        r'<details class="fold">\s*<summary>(.*?)</summary>.*?<pre[^>]*><code>(.*?)</code></pre>',
+        body,
+        re.S,
+    ):
+        name = html.unescape(re.sub(r"<[^>]+>", "", m.group(1))).strip()
+        found[name] = html.unescape(re.sub(r"<[^>]+>", "", m.group(2)))
+    return found
+
+
 class RenderTest(unittest.TestCase):
     def test_only_single_word_tokens_are_replaced(self) -> None:
         text = "{{project}} ${{ github.ref }} {{.Manifest.Digest}} {{unknown}}"
@@ -83,11 +100,20 @@ class TemplatesMatchHandbookTest(unittest.TestCase):
         self.assert_block(3, "database_docker.yml")
         self.assert_block(4, "database_external.yml")
         self.assert_block(5, "compose.yml")
-        self.assert_block(7, "workflow_build.yml")
-        self.assert_block(8, "workflow_release.yml")
-        self.assert_block(9, "workflow_deploy.yml")
-        self.assert_block(10, "hook_post-commit")
-        self.assert_block(11, "hook_pre-push")
+        folds = handbook_folds()
+        for name, template_name in (
+            (".github/workflows/build.yml", "workflow_build.yml"),
+            (".github/workflows/release.yml", "workflow_release.yml"),
+            (".github/workflows/deploy.yml", "workflow_deploy.yml"),
+            (".githooks/post-commit", "hook_post-commit"),
+            (".githooks/pre-push", "hook_pre-push"),
+            (".githooks/pre-commit", "hook_pre-commit"),
+            (".gitignore", "gitignore"),
+        ):
+            self.assertIn(name, folds, f"the handbook shows no fold named {name}")
+            self.assertEqual(
+                folds[name].rstrip("\n"), self.rendered(template_name), name
+            )
 
 
 class RenderAppTest(unittest.TestCase):
@@ -96,12 +122,14 @@ class RenderAppTest(unittest.TestCase):
 
         self.assertIn("deploy/platform.lab.yml", files)
         self.assertIn("deploy/platform.production.yml", files)
-        self.assertIn("deploy/secrets.lab.sops.yaml", files)
+        self.assertIn(".env.lab", files)
         self.assertIn("deploy/compose.yml", files)
         self.assertIn(".sops.yaml", files)
         self.assertIn(".github/workflows/deploy.yml", files)
         self.assertIn(".githooks/pre-push", files)
-        self.assertEqual(len(files), 7 + 2 * 2)
+        self.assertIn(".githooks/pre-commit", files)
+        self.assertIn(".gitignore", files)
+        self.assertEqual(len(files), 9 + 2 * 2)
 
     def test_manifests_carry_the_answers(self) -> None:
         files = render_app(ANSWERS)
@@ -122,8 +150,8 @@ class RenderAppTest(unittest.TestCase):
         )
         self.assertIn("- age1syntheticfixture", files[".sops.yaml"])
         self.assertEqual(
-            files["deploy/secrets.lab.sops.yaml"],
-            "API_TOKEN: замените-на-настоящее\nSESSION_SECRET: замените-на-настоящее\n",
+            files[".env.lab"],
+            "API_TOKEN=замените-на-настоящее\nSESSION_SECRET=замените-на-настоящее\n",
         )
 
     def test_platform_database_without_a_schedule_keeps_the_contract(self) -> None:
@@ -223,7 +251,7 @@ class WriteAndValidateTest(unittest.TestCase):
 
         def fake_sops(command, **kwargs):
             calls.append(command)
-            return subprocess.CompletedProcess(command, 0, b"", b"")
+            return subprocess.CompletedProcess(command, 0, b"ciphertext\n", b"")
 
         encrypted = encrypt_secrets(self.root, files, runner=fake_sops)
 
@@ -231,7 +259,12 @@ class WriteAndValidateTest(unittest.TestCase):
             sorted(encrypted),
             ["deploy/secrets.lab.sops.yaml", "deploy/secrets.production.sops.yaml"],
         )
-        self.assertTrue(all(c[:3] == ["sops", "encrypt", "--in-place"] for c in calls))
+        self.assertTrue(
+            all(
+                c[0] == "sops" and "--encrypt" in c and "--filename-override" in c
+                for c in calls
+            )
+        )
 
 
 if __name__ == "__main__":

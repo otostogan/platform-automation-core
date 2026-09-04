@@ -402,12 +402,64 @@ def manifest_findings(root: Path, manifest_path: Path, schema: dict) -> list:
     return findings
 
 
+def secrets_findings(context: Context) -> list:
+    """The hook only helps when it runs, and only if the plaintext never leaves."""
+    from .secrets import env_path, hooks_enabled, ignored, is_stale
+
+    findings = []
+    active = hooks_enabled(context.root)
+    if active is None:
+        findings.append(skip("Git hooks", "not a git repository", "#/flow-new-app"))
+    elif active:
+        findings.append(
+            ok(
+                "Git hooks",
+                "core.hooksPath=.githooks — secrets are encrypted on commit",
+            )
+        )
+    else:
+        findings.append(
+            fail(
+                "Git hooks",
+                "core.hooksPath is not .githooks; run: git config core.hooksPath .githooks",
+                "#/flow-new-app",
+            )
+        )
+
+    for environment in context.environments:
+        plain = env_path(context.root, environment.environment)
+        if not plain.is_file():
+            continue
+        if ignored(context.root, plain.name) is False:
+            findings.append(
+                fail(
+                    plain.name,
+                    "is not ignored by git — add .env.* to .gitignore",
+                    "#/flow-new-app",
+                )
+            )
+        stale = is_stale(context.root, environment.environment)
+        if stale:
+            findings.append(
+                fail(
+                    plain.name,
+                    "is newer than its ciphertext; run: platform secrets push",
+                    "#/flow-new-app",
+                )
+            )
+        elif stale is False:
+            findings.append(ok(plain.name, "ciphertext is up to date"))
+    return findings
+
+
 def diagnose_app(context: Context, tailnet: Tailnet, home: Path) -> list:
     findings = [tailnet_finding(tailnet)]
     schema = load_json(DEFAULT_SCHEMA)
 
     for environment in context.environments:
         findings += manifest_findings(context.root, environment.manifest, schema)
+
+    findings += secrets_findings(context)
 
     if context.tailscale_tag is None:
         findings.append(

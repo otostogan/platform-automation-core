@@ -7,6 +7,20 @@ release.
 
 ## [Unreleased]
 
+- Secrets are edited as plain `.env.<environment>` files and never as SOPS
+  documents. `new app` writes one per environment (ignored by git), a
+  `pre-commit` hook calls `platform secrets push`, which encrypts the file
+  into the committed `deploy/secrets.<environment>.sops.yaml` with the rules
+  the host applies — variable names checked, dotenv quotes stripped,
+  `DATABASE_URL` dropped when the platform runs the database and required
+  when it does not — and stages the ciphertext; staging a `.env.*` file is
+  refused. `platform secrets pull <environment>` decrypts the ciphertext back
+  for a key holder. `new app` enables the hooks itself (`core.hooksPath`,
+  `push.followTags`) and `doctor` checks that they are active, that `.env.*`
+  is ignored, and that no ciphertext is older than its `.env`. Nothing in the
+  runtime, the roles or the contracts changes: the committed artifact is the
+  same file the host has always decrypted.
+
 - The console keeps a registry of infrastructure repositories on the
   workstation (`~/.config/platform/config.yml`, paths only). It fills itself:
   running the console or `doctor` inside an infrastructure registers it, and

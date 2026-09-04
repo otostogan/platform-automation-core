@@ -44,8 +44,10 @@ DESTINATIONS = {
     "workflow_deploy.yml": ".github/workflows/deploy.yml",
     "hook_post-commit": ".githooks/post-commit",
     "hook_pre-push": ".githooks/pre-push",
+    "hook_pre-commit": ".githooks/pre-commit",
+    "gitignore": ".gitignore",
 }
-EXECUTABLE = {".githooks/post-commit", ".githooks/pre-push"}
+EXECUTABLE = {".githooks/post-commit", ".githooks/pre-push", ".githooks/pre-commit"}
 
 
 class ScaffoldError(RuntimeError):
@@ -183,9 +185,7 @@ def render_app(answers: AppAnswers) -> dict:
     )
     if answers.database_mode == "docker" and not answers.backup_enabled:
         database = without_schedule(database)
-    secrets_plaintext = "".join(
-        f"{name}: {PLACEHOLDER_VALUE}\n" for name in answers.secret_names
-    )
+    dotenv = "".join(f"{name}={PLACEHOLDER_VALUE}\n" for name in answers.secret_names)
 
     for environment in answers.environments:
         values = {**common, "env": environment, "domain": answers.domains[environment]}
@@ -195,7 +195,7 @@ def render_app(answers: AppAnswers) -> dict:
             + render(database, values)
         )
         files[f"deploy/platform.{environment}.yml"] = manifest
-        files[f"deploy/secrets.{environment}.sops.yaml"] = secrets_plaintext
+        files[f".env.{environment}"] = dotenv
 
     return files
 
@@ -220,8 +220,19 @@ def without_schedule(database_block: str) -> str:
     return "".join(lines)
 
 
+def produced_by(files: dict) -> list:
+    """Paths the scaffold creates besides the ones it writes directly."""
+    return [
+        f"deploy/secrets.{path[len('.env.'):]}.sops.yaml"
+        for path in files
+        if path.startswith(".env.")
+    ]
+
+
 def existing_targets(root: Path, files: dict) -> list:
-    return sorted(path for path in files if (root / path).exists())
+    return sorted(
+        path for path in [*files, *produced_by(files)] if (root / path).exists()
+    )
 
 
 def write_files(root: Path, files: dict) -> list:
@@ -245,37 +256,19 @@ def write_files(root: Path, files: dict) -> list:
 
 
 def encrypt_secrets(root: Path, files: dict, runner=subprocess.run) -> list:
-    """Encrypt every secrets file in place; a plaintext file must not survive."""
+    """Every ``.env.<environment>`` → its ciphertext, by the same path the hook uses."""
+    from .secrets import SecretsError, encrypt_env
+
     encrypted = []
     for relative in files:
-        if not relative.startswith("deploy/secrets."):
+        if not relative.startswith(".env."):
             continue
-        path = root / relative
+        environment = relative[len(".env.") :]
         try:
-            result = runner(
-                ["sops", "encrypt", "--in-place", str(path)],
-                cwd=str(root),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-                timeout=60,
-            )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            path.unlink(missing_ok=True)
-            raise ScaffoldError(
-                f"sops is not available ({error}); {relative} was not left in plaintext"
-            )
-        if result.returncode != 0:
-            path.unlink(missing_ok=True)
-            detail = (
-                (result.stderr or b"").decode("utf-8", "replace").strip().splitlines()
-            )
-            raise ScaffoldError(
-                f"sops could not encrypt {relative}: {detail[-1] if detail else 'no message'};"
-                " the plaintext file was removed"
-            )
-        encrypted.append(relative)
+            encrypt_env(root, environment, runner)
+        except SecretsError as error:
+            raise ScaffoldError(str(error))
+        encrypted.append(f"deploy/secrets.{environment}.sops.yaml")
     return encrypted
 
 
@@ -321,13 +314,12 @@ def next_steps(answers: AppAnswers, written: list) -> str:
         *[f"  {path}" for path in written],
         "",
         "Next:",
-        "  1. Real secret values: sops deploy/secrets.<env>.sops.yaml — the editor opens",
-        "     the file decrypted and saves it encrypted.",
-        "  2. Hooks: chmod +x .githooks/post-commit .githooks/pre-push &&",
-        "     git config core.hooksPath .githooks && git config push.followTags true",
-        f"  3. Tailnet policy: add tag:ci-{answers.project} to tagOwners, a grant to",
+        f"  1. Real secret values: edit .env.{answers.environments[0]} (and the others) — plain",
+        "     KEY=value. They stay on this machine; the pre-commit hook encrypts them",
+        "     into deploy/secrets.<env>.sops.yaml on every commit.",
+        f"  2. Tailnet policy: add tag:ci-{answers.project} to tagOwners, a grant to",
         "     tag:server-platform on tcp:22 and an ssh rule for user deploy — handbook #/flow-new-app.",
-        "  4. Repository settings: the Tailscale OAuth client id and audience as secrets.",
-        f"  5. Commit, tag v0.1.0, and deploy to {answers.environments[0]} — handbook #/flow-deploy.",
+        "  3. Repository settings: the Tailscale OAuth client id and audience as secrets.",
+        f"  4. Commit, tag v0.1.0, and deploy to {answers.environments[0]} — handbook #/flow-deploy.",
     ]
     return "\n".join(lines)

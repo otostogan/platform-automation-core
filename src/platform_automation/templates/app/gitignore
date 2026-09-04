@@ -1,0 +1,8 @@
+# Открытый текст секретов живёт только на машине оператора.
+.env
+.env.*
+!.env.example
+*.agekey
+keys.txt
+deploy/secrets.*.plaintext.yaml
+deploy/secrets.*.decrypted.yaml

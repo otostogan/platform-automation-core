@@ -5773,6 +5773,51 @@ done
 exit "${status}"</code></pre>
 										</div>
 									</details>
+									<p>Секреты никто не шифрует руками: этот хук при каждом коммите просит консоль перешифровать изменившиеся <code>.env.&lt;окружение&gt;</code> в <code>deploy/secrets.&lt;окружение&gt;.sops.yaml</code> и добавляет шифртекст в коммит. Сам <code>.env.*</code> он в коммит не пустит.</p>
+									<details class="fold">
+										<summary>
+											<code>.githooks/pre-commit</code>
+										</summary>
+										<div class="inner">
+<pre><code>#!/bin/sh
+# Секреты: .env.&lt;окружение&gt; редактируется как обычный файл, а в коммит
+# уходит только его шифртекст deploy/secrets.&lt;окружение&gt;.sops.yaml.
+# Шифрует консоль платформы теми же правилами, что проверяет хост.
+set -eu
+
+if git diff --cached --name-only | grep -q &#x27;^\.env\.&#x27;; then
+    echo &quot;pre-commit: .env.* никогда не коммитится — в git идёт только шифртекст&quot; &gt;&amp;2
+    exit 1
+fi
+
+if ! command -v platform &gt;/dev/null 2&gt;&amp;1; then
+    echo &quot;pre-commit: нужна консоль platform (pip install &#x27;platform-automation-runtime[operator]&#x27;)&quot; &gt;&amp;2
+    exit 1
+fi
+
+platform secrets push --stale --stage
+</code></pre>
+										</div>
+									</details>
+
+									<p>Открытый текст живёт только на машине оператора; <code>new app</code> пишет этот файл сам.</p>
+									<details class="fold">
+										<summary>
+											<code>.gitignore</code>
+										</summary>
+										<div class="inner">
+<pre><code># Открытый текст секретов живёт только на машине оператора.
+.env
+.env.*
+!.env.example
+*.agekey
+keys.txt
+deploy/secrets.*.plaintext.yaml
+deploy/secrets.*.decrypted.yaml
+</code></pre>
+										</div>
+									</details>
+
 
 									<div class="stop">
 										<span class="label"

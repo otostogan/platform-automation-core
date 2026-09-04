@@ -1,0 +1,17 @@
+#!/bin/sh
+# Секреты: .env.<окружение> редактируется как обычный файл, а в коммит
+# уходит только его шифртекст deploy/secrets.<окружение>.sops.yaml.
+# Шифрует консоль платформы теми же правилами, что проверяет хост.
+set -eu
+
+if git diff --cached --name-only | grep -q '^\.env\.'; then
+    echo "pre-commit: .env.* никогда не коммитится — в git идёт только шифртекст" >&2
+    exit 1
+fi
+
+if ! command -v platform >/dev/null 2>&1; then
+    echo "pre-commit: нужна консоль platform (pip install 'platform-automation-runtime[operator]')" >&2
+    exit 1
+fi
+
+platform secrets push --stale --stage
