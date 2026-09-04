@@ -575,9 +575,11 @@ NEW_TARGETS = [
 
 
 def ask_app(context: Context, questionary, style) -> "AppAnswers":
-    """Ask only what cannot be read; show what was."""
-    from .context import read_hosts
+    """Ask only what cannot be read; show what was; let every answer be revisited."""
+    from .config import infras as registered_infras
+    from .context import read_collection_pin, read_hosts
     from .doctor import age_recipient, host_secret_path
+    from .recipients import host_recipient, read_recipients, recovery_recipient
     from .scaffold import (
         AppAnswers,
         DOMAIN_PATTERN,
@@ -586,183 +588,317 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         SECRET_NAME_PATTERN,
         git_org,
     )
+    from .wizard import BACK, CANCEL, Step, is_back, run_wizard
 
     root = context.root
-    text = lambda message, default="", validate=None: questionary.text(
-        message, default=default, validate=validate, style=style
-    ).ask()
+    hint = "(< to go back)"
 
-    project = text(
-        "Project",
-        default=root.name if PROJECT_PATTERN.match(root.name) else "",
-        validate=lambda v: bool(PROJECT_PATTERN.match(v))
-        or "lowercase, digits and dashes, 2–63 chars",
-    )
-    org = text(
-        "ghcr.io owner (org)",
-        default=git_org(root) or "",
-        validate=lambda v: bool(v) or "required",
-    )
-    environments = questionary.checkbox(
-        "Environments",
-        choices=[
-            questionary.Choice(e, checked=e in ("lab", "production"))
-            for e in ENVIRONMENTS
-        ],
-        style=style,
-    ).ask()
-    if not environments:
-        raise KeyboardInterrupt
-    domains = {}
-    for environment in environments:
-        domains[environment] = text(
-            f"Domain for {environment}",
-            validate=lambda v: bool(DOMAIN_PATTERN.match(v))
-            or "lowercase, at least one dot",
+    def text(message, default="", validate=None):
+        # The previous value is shown, not pre-typed: a pre-filled buffer is
+        # how a new answer gets glued onto the old one. Empty Enter keeps it.
+        default = "" if default is None else str(default)
+        keeps = f"Enter keeps {default} · " if default else ""
+
+        def check(value):
+            if is_back(value) or (value == "" and default):
+                return True
+            return validate(value) if validate else True
+
+        answer = questionary.text(
+            message,
+            validate=check,
+            style=style,
+            instruction=f"({keeps}< to go back)",
+        ).ask()
+        if answer is None:
+            return CANCEL
+        if is_back(answer):
+            return BACK
+        return default if answer == "" and default else answer
+
+    def select(message, options, describe):
+        answer = questionary.select(
+            message,
+            choices=[questionary.Choice(title=describe(o), value=o) for o in options]
+            + [questionary.Choice(title="← Back", value=BACK)],
+            style=style,
+            pointer="»",
+            instruction="(↑↓ to move, enter to select)",
+        ).ask()
+        return CANCEL if answer is None else answer
+
+    def number(message, key, default, low, high):
+        def ask(state):
+            answer = text(
+                message,
+                state.get(key, default),
+                lambda v: (v.isdigit() and low <= int(v) <= high) or f"{low}–{high}",
+            )
+            return answer if answer in (BACK, CANCEL) else int(answer)
+
+        return ask
+
+    # -------------------------------------------------------------- steps
+    def ask_project(state):
+        return text(
+            "Project",
+            state.get("project")
+            or (root.name if PROJECT_PATTERN.match(root.name) else ""),
+            lambda v: bool(PROJECT_PATTERN.match(v))
+            or "lowercase, digits and dashes, 2–63 chars",
         )
 
-    # Infrastructure → host → target, both recipients and the core pin, so the
-    # application deploys with the version its hosts actually run.
-    from .config import infras as registered_infras
-    from .context import read_collection_pin
-    from .recipients import host_recipient, read_recipients, recovery_recipient
-
-    target_host = recipient_host = recipient_recovery = ""
-    core_pin = None
-    known = registered_infras()
-    if not known:
-        print(
-            f"{DIM}  no infrastructure registered (platform infra add <path>) — asking instead{RESET}"
+    def ask_owner(state):
+        return text(
+            "ghcr.io owner (org)",
+            state.get("owner") or git_org(root) or "",
+            lambda v: bool(v) or "required",
         )
-    else:
+
+    def ask_environments(state):
+        chosen = set(state.get("environments") or ("lab", "production"))
+        answer = questionary.checkbox(
+            "Environments",
+            choices=[questionary.Choice(e, checked=e in chosen) for e in ENVIRONMENTS],
+            style=style,
+            instruction="(space to toggle, enter to confirm)",
+        ).ask()
+        if answer is None:
+            return CANCEL
+        return tuple(answer) if answer else BACK
+
+    def ask_domain(environment):
+        def ask(state):
+            return text(
+                f"Domain for {environment}",
+                state.get(f"domain:{environment}", ""),
+                lambda v: bool(DOMAIN_PATTERN.match(v))
+                or "lowercase, at least one dot",
+            )
+
+        return ask
+
+    def env_applies(environment):
+        return lambda state: environment in (state.get("environments") or ())
+
+    def ask_host(state):
+        """Infrastructure → host → target, recipients and pin; or typed."""
+        known = registered_infras()
+        if not known:
+            print(
+                f"{DIM}  no infrastructure registered (platform infra add <path>) — asking instead{RESET}"
+            )
+            return {}
         infra = (
             known[0]
             if len(known) == 1
-            else choose(
-                questionary,
-                style,
-                "Infrastructure",
-                known,
-                lambda i: f"{i.name}  {i.path}",
-            )
+            else select("Infrastructure", known, lambda i: f"{i.name}  {i.path}")
         )
+        if infra in (BACK, CANCEL):
+            return infra
         hosts = read_hosts(infra.path)
         if not hosts:
             print(f"{DIM}  {infra.name} lists no hosts yet — asking instead{RESET}")
-        else:
-            host = choose(
-                questionary,
-                style,
-                "Target host",
-                list(hosts),
-                lambda h: f"{h.name}  {h.address or ''}",
-            )
-            target_host = host.address or host.name
-            published = read_recipients(infra.path)
-            recipient_host = host_recipient(published, host.name) or ""
-            recipient_recovery = recovery_recipient(published) or ""
-            if not recipient_host:
-                key_path = host_secret_path(infra.path, host, "secrets_age_key_source")
-                if key_path is not None and key_path.is_file():
-                    recipient_host = age_recipient(key_path, subprocess.run) or ""
-            core_pin = read_collection_pin(infra.path)
-            print(
-                f"{DIM}  {infra.name}: host {target_host} · recipients "
-                f"{'host ✓' if recipient_host else 'host ?'} {'recovery ✓' if recipient_recovery else 'recovery ?'}"
-                f" · core {core_pin or '?'}{RESET}"
-            )
-    if not target_host:
-        target_host = text(
-            "Target host (MagicDNS name)", validate=lambda v: bool(v) or "required"
+            return {}
+        host = select(
+            "Target host", list(hosts), lambda h: f"{h.name}  {h.address or ''}"
         )
-    if not recipient_host:
-        recipient_host = text(
-            "Host age recipient (age1…)",
-            validate=lambda v: v.startswith("age1") or "age1…",
+        if host in (BACK, CANCEL):
+            return host
+        published = read_recipients(infra.path)
+        recipient_host = host_recipient(published, host.name) or ""
+        if not recipient_host:
+            key_path = host_secret_path(infra.path, host, "secrets_age_key_source")
+            if key_path is not None and key_path.is_file():
+                recipient_host = age_recipient(key_path, subprocess.run) or ""
+        derived = {
+            "target_host": host.address or host.name,
+            "recipient_host": recipient_host,
+            "recipient_recovery": recovery_recipient(published) or "",
+            "core_pin": read_collection_pin(infra.path),
+        }
+        print(
+            f"{DIM}  {infra.name}: host {derived['target_host']} · recipients "
+            f"{'host ✓' if derived['recipient_host'] else 'host ?'} "
+            f"{'recovery ✓' if derived['recipient_recovery'] else 'recovery ?'}"
+            f" · core {derived['core_pin'] or '?'}{RESET}"
         )
-    if not recipient_recovery:
-        recipient_recovery = text(
-            "Recovery age recipient (age1…)",
-            validate=lambda v: v.startswith("age1") or "age1…",
+        return derived
+
+    def derived(state, key):
+        return (state.get("infra") or {}).get(key) or ""
+
+    def ask_target(state):
+        return text(
+            "Target host (MagicDNS name)",
+            state.get("target_host", ""),
+            lambda v: bool(v) or "required",
         )
 
-    port = int(
-        text(
-            "Internal port", default="3000", validate=lambda v: v.isdigit() or "number"
+    def ask_recipient(label, key):
+        def ask(state):
+            return text(
+                f"{label} age recipient (age1…)",
+                state.get(key, ""),
+                lambda v: v.startswith("age1") or "age1…",
+            )
+
+        return ask
+
+    def ask_database(state):
+        return select(
+            "Database",
+            ["docker", "external"],
+            lambda m: (
+                "platform-owned (docker)"
+                if m == "docker"
+                else "external — the platform will not back it up"
+            ),
         )
-    )
-    path = text(
-        "Healthcheck path",
-        default="/",
-        validate=lambda v: v.startswith("/") or "starts with /",
-    )
-    timeout = int(
-        text(
-            "Healthcheck timeout, seconds",
-            default="120",
-            validate=lambda v: v.isdigit() or "number",
+
+    def ask_major(state):
+        return select("PostgreSQL major", [18, 17, 16], str)
+
+    def ask_query(state):
+        return text("Restore validation query", state.get("restore_query", "SELECT 1"))
+
+    def ask_secret_names(state):
+        answer = text(
+            "Secret names, comma-separated (values come later via sops)",
+            ", ".join(state.get("secret_names") or ("API_TOKEN", "SESSION_SECRET")),
+            lambda v: all(
+                SECRET_NAME_PATTERN.match(n.strip()) for n in v.split(",") if n.strip()
+            )
+            or "environment variable names",
         )
-    )
-    mode = choose(
-        questionary,
-        style,
-        "Database",
-        ["docker", "external"],
-        lambda m: (
-            "platform-owned (docker)"
-            if m == "docker"
-            else "external — the platform will not back it up"
+        if answer in (BACK, CANCEL):
+            return answer
+        return tuple(n.strip() for n in answer.split(",") if n.strip())
+
+    steps = [
+        Step("project", ask_project, label="Project"),
+        Step("owner", ask_owner, label="ghcr.io owner"),
+        Step("environments", ask_environments, label="Environments"),
+        *[
+            Step(f"domain:{e}", ask_domain(e), env_applies(e), label=f"Domain for {e}")
+            for e in ENVIRONMENTS
+        ],
+        Step("infra", ask_host, label="Infrastructure and host"),
+        Step(
+            "target_host",
+            ask_target,
+            lambda st: not derived(st, "target_host"),
+            label="Target host",
         ),
-    )
-    major = int(choose(questionary, style, "PostgreSQL major", [18, 17, 16], str))
-    interval, retain = 15, 3
-    if mode == "docker":
-        interval = int(
-            text(
-                "Backup every N minutes",
-                default="15",
-                validate=lambda v: v.isdigit() and 15 <= int(v) <= 1440 or "15–1440",
-            )
-        )
-        retain = int(
-            text(
-                "Keep N dumps locally",
-                default="3",
-                validate=lambda v: v.isdigit() and 1 <= int(v) <= 100 or "1–100",
-            )
-        )
-    query = text("Restore validation query", default="SELECT 1")
-    names = text(
-        "Secret names, comma-separated (values come later via sops)",
-        default="API_TOKEN, SESSION_SECRET",
-        validate=lambda v: all(
-            SECRET_NAME_PATTERN.match(n.strip()) for n in v.split(",") if n.strip()
-        )
-        or "environment variable names",
-    )
+        Step(
+            "recipient_host",
+            ask_recipient("Host", "recipient_host"),
+            lambda st: not derived(st, "recipient_host"),
+            label="Host recipient",
+        ),
+        Step(
+            "recipient_recovery",
+            ask_recipient("Recovery", "recipient_recovery"),
+            lambda st: not derived(st, "recipient_recovery"),
+            label="Recovery recipient",
+        ),
+        Step(
+            "internal_port",
+            number("Internal port", "internal_port", 3000, 1, 65535),
+            label="Internal port",
+        ),
+        Step(
+            "healthcheck_path",
+            lambda st: text(
+                "Healthcheck path",
+                st.get("healthcheck_path", "/"),
+                lambda v: v.startswith("/") or "starts with /",
+            ),
+            label="Healthcheck path",
+        ),
+        Step(
+            "healthcheck_timeout",
+            number("Healthcheck timeout, seconds", "healthcheck_timeout", 120, 1, 3600),
+            label="Healthcheck timeout",
+        ),
+        Step("database_mode", ask_database, label="Database"),
+        Step("postgres_major", ask_major, label="PostgreSQL major"),
+        Step(
+            "backup_interval",
+            number("Backup every N minutes", "backup_interval", 15, 15, 1440),
+            lambda st: st.get("database_mode") == "docker",
+            label="Backup interval",
+        ),
+        Step(
+            "backup_retain",
+            number("Keep N dumps locally", "backup_retain", 3, 1, 100),
+            lambda st: st.get("database_mode") == "docker",
+            label="Dumps to keep",
+        ),
+        Step("restore_query", ask_query, label="Restore query"),
+        Step("secret_names", ask_secret_names, label="Secret names"),
+    ]
 
+    def shown(state, step):
+        value = state.get(step.key)
+        if step.key == "infra":
+            return f"{derived(state, 'target_host') or 'typed below'} · core {derived(state, 'core_pin') or '—'}"
+        if isinstance(value, (tuple, list)):
+            return ", ".join(str(v) for v in value)
+        return "" if value is None else str(value)
+
+    def review(state):
+        print()
+        print(f"{BOLD}Review{RESET}")
+        for step in steps:
+            if step.applies(state) and step.key in state:
+                print(f"  {step.label:<22} {shown(state, step)}")
+        options = [None] + [s for s in steps if s.applies(state) and s.key in state]
+        # A choice whose value is None would be indistinguishable from Ctrl-C
+        # (ask() returns None for both), so "write" is a sentinel of its own.
+        answer = questionary.select(
+            "Write these files?",
+            choices=[questionary.Choice(title="Yes, write", value=WRITE)]
+            + [
+                questionary.Choice(title=f"Change: {s.label}", value=s.key)
+                for s in options[1:]
+            ]
+            + [questionary.Choice(title="Cancel", value=CANCEL)],
+            style=style,
+            pointer="»",
+        ).ask()
+        if answer is None:
+            return CANCEL
+        return None if answer is WRITE else answer
+
+    WRITE = object()
+    state = run_wizard(steps, review=review)
+    infra = state.get("infra") or {}
+    environments = state["environments"]
     return AppAnswers(
-        project=project,
-        owner=org,
-        environments=tuple(environments),
-        domains=domains,
-        target_host=target_host,
-        recipient_host=recipient_host,
-        recipient_recovery=recipient_recovery,
-        internal_port=port,
-        healthcheck_path=path,
-        healthcheck_timeout=timeout,
-        database_mode=mode,
-        postgres_major=major,
-        backup_interval=interval,
-        backup_retain=retain,
-        restore_query=query,
-        secret_names=tuple(n.strip() for n in names.split(",") if n.strip()),
-        **({"core_pin": core_pin} if core_pin else {}),
+        project=state["project"],
+        owner=state["owner"],
+        environments=environments,
+        domains={e: state[f"domain:{e}"] for e in environments},
+        target_host=infra.get("target_host") or state.get("target_host", ""),
+        recipient_host=infra.get("recipient_host") or state.get("recipient_host", ""),
+        recipient_recovery=infra.get("recipient_recovery")
+        or state.get("recipient_recovery", ""),
+        internal_port=state["internal_port"],
+        healthcheck_path=state["healthcheck_path"],
+        healthcheck_timeout=state["healthcheck_timeout"],
+        database_mode=state["database_mode"],
+        postgres_major=state["postgres_major"],
+        backup_interval=state.get("backup_interval", 15),
+        backup_retain=state.get("backup_retain", 3),
+        restore_query=state["restore_query"],
+        secret_names=state["secret_names"],
+        **({"core_pin": infra["core_pin"]} if infra.get("core_pin") else {}),
     )
 
 
 def run_new_app(context: Context, questionary, style) -> int:
+    from .wizard import Cancelled
     from .scaffold import (
         ScaffoldError,
         encrypt_secrets,
@@ -792,6 +928,9 @@ def run_new_app(context: Context, questionary, style) -> int:
     except ScaffoldError as error:
         print(f"{RED}{error}{RESET}")
         return 1
+    except Cancelled:
+        print("cancelled — nothing written")
+        return 130
 
     failed = 0
     for relative, errors in report.items():
