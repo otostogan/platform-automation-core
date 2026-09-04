@@ -204,9 +204,19 @@ def read_deploy_workflow(root: Path) -> dict[str, Any]:
     }
 
 
+def marker_present(host_marker: Path) -> bool:
+    """A root-only directory answers "permission denied", which is still a yes."""
+    try:
+        return host_marker.is_dir()
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
 def detect(start: Optional[Path] = None, host_marker: Path = HOST_MARKER) -> Context:
     """Answer "where am I" from the filesystem alone."""
-    if host_marker.is_dir():
+    if marker_present(host_marker):
         return Context(kind="host", root=host_marker)
 
     start = Path.cwd() if start is None else start

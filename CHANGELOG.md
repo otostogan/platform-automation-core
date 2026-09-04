@@ -14,8 +14,9 @@ release.
   console is deliberately not part of it, so `0.15.0` imported a module that
   does not exist on the host and fell over with a traceback instead of the
   intended refusal. The refusal now happens in the CLI itself, before the
-  console is imported: on a host, bare `platform` says it is a host and points
-  at the subcommands. `projects`, `status` and every other server command were
+  console is imported, and without privilege: `ops` cannot look inside the
+  root-owned `/var/lib/platform`, and a denied look counts as a host. On a
+  host, bare `platform` says it is a host and points at the subcommands. `projects`, `status` and every other server command were
   unaffected.
 
 
