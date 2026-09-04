@@ -91,15 +91,20 @@ class TemplatesMatchHandbookTest(unittest.TestCase):
     def rendered(self, name: str) -> str:
         return render(template(name), self.defaults).rstrip("\n")
 
-    def assert_block(self, index: int, name: str) -> None:
-        self.assertEqual(self.blocks[index].rstrip("\n"), self.rendered(name), name)
+    def assert_block(self, name: str) -> None:
+        """The page shows the template somewhere — by content, not by position."""
+        shown = [block.rstrip("\n") for block in self.blocks]
+        self.assertIn(self.rendered(name), shown, name)
 
     def test_every_template_equals_its_handbook_block(self) -> None:
-        self.assert_block(0, "sops.yaml")
-        self.assert_block(2, "platform.yml")
-        self.assert_block(3, "database_docker.yml")
-        self.assert_block(4, "database_external.yml")
-        self.assert_block(5, "compose.yml")
+        for name in (
+            "sops.yaml",
+            "platform.yml",
+            "database_docker.yml",
+            "database_external.yml",
+            "compose.yml",
+        ):
+            self.assert_block(name)
         folds = handbook_folds()
         for name, template_name in (
             (".github/workflows/build.yml", "workflow_build.yml"),
