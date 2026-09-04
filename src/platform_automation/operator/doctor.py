@@ -483,6 +483,8 @@ def diagnose_app(context: Context, tailnet: Tailnet, home: Path) -> list:
     else:
         findings.append(peer_finding(tailnet, context.target_host, "Target host"))
 
+    findings.append(templates_finding(context, home))
+
     infra = infra_for_host(context.target_host, home) if context.target_host else None
     if infra is None:
         known = len(infras(home))
@@ -519,6 +521,34 @@ def diagnose_app(context: Context, tailnet: Tailnet, home: Path) -> list:
 
     findings.append(recipients_finding(context, infra))
     return findings
+
+
+def templates_finding(context: Context, home: Path) -> Finding:
+    """Workflows and hooks are the core's files; they age with it."""
+    from .. import __version__
+    from .update import UpdateError, behind, gather_facts, owned_by_app, render_managed
+
+    try:
+        facts = gather_facts(context, home)
+    except UpdateError as error:
+        return skip("Templates", str(error), "#/flow-core-update")
+    files = render_managed(facts)
+    stale = behind(context.root, files)
+    owned = owned_by_app(context.root, files)
+    note = (
+        f" · {len(owned)} owned by the application: {', '.join(owned)}" if owned else ""
+    )
+    if not stale:
+        return ok(
+            "Templates", f"workflows, hooks and .sops.yaml match v{__version__}{note}"
+        )
+    return fail(
+        "Templates",
+        f"{len(stale)} file(s) behind v{__version__} ({', '.join(stale[:3])}"
+        + (" …" if len(stale) > 3 else "")
+        + "); run: platform update",
+        "#/flow-core-update",
+    )
 
 
 def recipients_finding(context: Context, infra) -> Finding:

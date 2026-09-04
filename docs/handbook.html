@@ -5801,6 +5801,10 @@ platform secrets push --stale --stage
 									</details>
 
 									<p>Открытый текст живёт только на машине оператора. <code>new app</code> пишет этот файл сам, а если <code>.gitignore</code> в репозитории уже есть — дописывает в него недостающие строки, ничего не удаляя.</p>
+									<p>Рабочие процессы, хуки и <code>.sops.yaml</code> консоль пишет с первой строкой
+									<code># platform-managed v…</code>: по ней <code>platform update</code> узнаёт свои
+									файлы и переписывает их при обновлении ядра — см. шаг «Подтянуть приложения» в
+									<a href="#/flow-core-update">Обновлении ядра</a>. Уберите строку — файл ваш.</p>
 									<details class="fold">
 										<summary>
 											<code>.gitignore</code>
@@ -14489,7 +14493,7 @@ users_ops_ssh_keys:
   одной ловушкой, из-за которой можно решить, что обновился, не обновившись.</p>
 
   <dl class="flow-meta">
-    <div><dt>Шагов</dt><dd><span data-step-count>4</span></dd></div>
+    <div><dt>Шагов</dt><dd><span data-step-count>5</span></dd></div>
     <div><dt>Времени</dt><dd>10–20 минут на сервер</dd></div>
     <div><dt>Где</dt><dd>репозиторий инфраструктуры, с рабочей станции</dd></div>
   </dl>
@@ -14612,13 +14616,10 @@ users_ops_ssh_keys:
 <pre><code>.venv/bin/ansible-playbook otostogan.platform.readiness \
     --inventory inventory/hosts.yml</code></pre>
           <div class="note">
-            <span class="label">Не забудьте приложения</span>
-            <p>Вы обновили ядро <em>на серверах</em>. Но процесс выкатки закреплён
-            отдельной строкой в репозитории <strong>каждого приложения</strong>, и
-            обновляется он отдельно. Проверьте, не отстали ли они:</p>
-<pre><code>grep -n 'reusable-deploy.yml@' .github/workflows/deploy.yml</code></pre>
-            <p style="margin-bottom:0">Подробно про это расхождение —
-            <a href="#/ref-versioning">Версионирование</a>, раздел про дрейф.</p>
+            <span class="label">Это ещё не всё</span>
+            <p style="margin-bottom:0">Вы обновили ядро <em>на серверах</em>. Процесс выкатки
+            закреплён отдельной строкой в репозитории <strong>каждого приложения</strong> —
+            это следующий шаг.</p>
           </div>
           <details class="trouble">
           	<summary>Если пойдёт не так</summary>
@@ -14635,6 +14636,52 @@ users_ops_ssh_keys:
           		</dl>
           	</div>
           </details>
+          <div class="step-actions"><button class="btn primary next">Готово, дальше</button></div>
+        </div>
+      </article>
+
+      <article class="step" data-step="apps" data-title="Подтянуть приложения">
+        <button class="step-head"><span class="n">5</span><span class="ttl">Подтянуть приложения</span></button>
+        <div class="step-body">
+          <p>У каждого приложения есть файлы, которые ему не принадлежат: три рабочих
+          процесса, три git-хука и <code>.sops.yaml</code>. Их положил туда
+          <code>platform new app</code> из шаблонов ядра, и с новым ядром они
+          устаревают. Пин ядра в <code>deploy.yml</code> — тоже один из них. В каждом
+          репозитории приложения, на этой же машине:</p>
+<pre><code>platform update</code></pre>
+          <p>Консоль перечитает из репозитория то, что о нём уже известно
+          (проект, владелец образа, целевой сервер, окружения), возьмёт пин и
+          получателей из инфраструктуры, в которой этот сервер описан, и покажет
+          построчный diff по каждому файлу. Пишет только после подтверждения и
+          <strong>ничего не коммитит</strong>: изменение версии остаётся
+          ревьюируемым.</p>
+          <p>Файл считается платформенным по первой строке
+          <code># platform-managed v…</code>. Уберите её — и файл ваш: консоль
+          покажет, что изменила бы, но не тронет. Манифесты, <code>compose.yml</code>
+          и <code>.env.*</code> не трогаются никогда.</p>
+          <div class="expect">
+            <span class="label">Как понять, что получилось</span>
+            <p>В списке напротив каждого файла <code>=  up to date</code> или
+            <code>written: …</code>, затем <code>git diff</code> показывает новую
+            версию в строке <code>reusable-deploy.yml@</code>. Закоммитьте и
+            выкатите. <code>platform doctor</code> в этом репозитории отвечает
+            <code>Templates … match v…</code>.</p>
+          </div>
+          <details class="trouble">
+          	<summary>Если пойдёт не так</summary>
+          	<div class="inner">
+          		<dl>
+          			<dt><code>this console is v… but infra:… pins v…</code></dt>
+          			<dd>Консоль на вашей машине новее, чем ядро на серверах. Рабочий процесс новой версии может попросить у хоста то, чего там ещё нет, поэтому отказ. Порядок один: сначала серверы (шаги 2–4), потом приложения.</dd>
+          			<dt><code>owned by the application (no marker) — differs, left alone</code></dt>
+          			<dd>Файл без первой строки <code>platform-managed</code> и отличается от шаблона: кто-то забрал его себе. Diff показан — примените руками, либо верните строку, и следующий <code>update</code> перепишет файл целиком.</dd>
+          			<dt><code>no registered infrastructure lists this host</code> в <code>doctor</code>, а <code>update</code> берёт пин из <code>deploy.yml</code></dt>
+          			<dd>Инфраструктура, где описан сервер, не зарегистрирована на этой машине. Запустите <code>platform doctor</code> в её репозитории один раз — она попадёт в реестр, и <code>update</code> станет брать пин и получателей оттуда.</dd>
+          			<dt>Сменились получатели, а шифртекст остался старым</dt>
+          			<dd><code>update</code> перешифровывает <code>deploy/secrets.&lt;окружение&gt;.sops.yaml</code> только там, где на машине есть <code>.env.&lt;окружение&gt;</code>. Для остальных: <code>platform secrets pull &lt;окружение&gt;</code> с ключом, затем <code>platform secrets push</code>.</dd>
+          		</dl>
+          	</div>
+          </details>
           <div class="step-actions"><button class="btn primary next">Завершить</button></div>
         </div>
       </article>
@@ -14646,9 +14693,9 @@ users_ops_ssh_keys:
           <a class="ref" data-ref="gl-readiness">readiness</a> зелёный.</li>
           <li>Изменение версии лежит в git отдельным коммитом — видно, кто и когда
           обновил.</li>
-          <li>Если приложения отстали по строке вызова процесса выкатки, поднимите
-          и её; расхождение обычно безвредно, но исправления сборщика мимо них
-          проходят.</li>
+          <li>Рабочие процессы и хуки каждого приложения совпадают с шаблонами
+          этой версии, пин в <code>deploy.yml</code> — с пином инфраструктуры;
+          <code>platform doctor</code> в приложении это подтверждает.</li>
         </ul>
       </div>
 

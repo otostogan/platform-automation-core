@@ -7,6 +7,22 @@ release.
 
 ## [Unreleased]
 
+- Add `platform update`: inside an application it renders the platform-owned
+  files — the three workflows, the three hooks, `.sops.yaml` — again from the
+  console's templates and from what the repository already says about itself,
+  takes the core pin and the recipients from the registered infrastructure
+  that lists the target host, shows a diff per file and rewrites after a
+  confirmation (`--yes`, or `--check` to only report). Nothing is committed.
+  The files `new app` writes now carry a first-line `# platform-managed`
+  marker; a file without it belongs to the application and is left alone, a
+  file that still equals the template is adopted. Manifests, the Compose file
+  and `.env.*` are never touched. `update` refuses when the console is newer
+  than the infrastructure pin, so hosts move first. When the recipients
+  changed it re-encrypts every environment whose `.env` is present. `doctor`
+  reports files that are behind. The deploy workflow now offers exactly the
+  environments the application was created with instead of always `lab` and
+  `production`.
+
 - Secrets are edited as plain `.env.<environment>` files and never as SOPS
   documents. `new app` writes one per environment (ignored by git), a
   `pre-commit` hook calls `platform secrets push`, which encrypts the file

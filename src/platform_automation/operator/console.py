@@ -1108,6 +1108,129 @@ def run_infra(argv: list) -> int:
     return 0
 
 
+def run_update(context: Context, argv: list) -> int:
+    """Rewrite the platform-owned files from the console's templates, after a look."""
+    from .update import (
+        UpdateError,
+        apply,
+        console_ahead_of_hosts,
+        gather_facts,
+        plan,
+        recipients_changed,
+        render_managed,
+    )
+
+    assume_yes = "--yes" in argv
+    check_only = "--check" in argv
+
+    if context.kind != "app":
+        print(
+            "platform update works inside an application repository"
+            " (one with deploy/platform.<environment>.yml)",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        facts = gather_facts(context, Path.home())
+    except UpdateError as error:
+        print(f"{RED}{error}{RESET}")
+        return 1
+
+    if console_ahead_of_hosts(facts.core_pin):
+        print(
+            f"{RED}this console is v{__version__} but {facts.pin_source} pins {facts.core_pin}:"
+            f" a workflow from a newer core may ask the host for what it lacks{RESET}"
+        )
+        print("update the hosts first — handbook #/flow-core-update")
+        return 1
+
+    changes = plan(context.root, render_managed(facts))
+    print(
+        f"{DIM}templates v{__version__} · core pin {facts.core_pin} from {facts.pin_source}"
+        f" · recipients from {facts.recipients_source}{RESET}"
+    )
+    print()
+
+    labels = {
+        "same": f"{DIM}=  up to date{RESET}",
+        "create": f"{GREEN}+  missing, will be created{RESET}",
+        "update": f"{CYAN}~  will be rewritten{RESET}",
+        "adopt": f"{CYAN}~  identical; will gain the platform-managed marker{RESET}",
+        "merge": f"{CYAN}~  missing lines will be appended{RESET}",
+        "owned": f"{RED}!  owned by the application (no marker) — differs, left alone{RESET}",
+    }
+    for change in changes:
+        print(f"  {change.path:<36} {labels[change.kind]}")
+    pending = [change for change in changes if change.writes]
+    owned = [change for change in changes if change.kind == "owned"]
+    print()
+
+    for change in pending + owned:
+        if change.kind in {"adopt"}:
+            continue
+        for line in change.diff().splitlines():
+            colour = (
+                GREEN if line.startswith("+") else RED if line.startswith("-") else DIM
+            )
+            print(f"{colour}{line}{RESET}")
+        print()
+
+    if owned:
+        print(
+            f"{DIM}owned files are yours: apply the diff by hand, or restore the"
+            f" '# platform-managed' first line to hand them back{RESET}"
+        )
+    if not pending:
+        print(f"{GREEN}nothing to update{RESET}")
+        return 0
+    if check_only:
+        print(f"{len(pending)} file(s) behind the templates")
+        return 1
+
+    if not assume_yes:
+        questionary, style = load_prompts()
+        answer = questionary.confirm(
+            f"Rewrite {len(pending)} file(s)? (nothing is committed)",
+            default=True,
+            style=style,
+        ).ask()
+        if not answer:
+            print("cancelled — nothing written")
+            return 130
+
+    written = apply(context.root, changes)
+    for relative in written:
+        print(f"{GREEN}written: {relative}{RESET}")
+
+    if recipients_changed(changes):
+        from .secrets import SecretsError, encrypt_env, env_path
+
+        for environment in facts.environments:
+            if not env_path(context.root, environment).is_file():
+                print(
+                    f"{DIM}deploy/secrets.{environment}.sops.yaml still carries the old"
+                    f" recipients: no .env.{environment} here — platform secrets pull"
+                    f" {environment} with a key, then platform secrets push{RESET}"
+                )
+                continue
+            try:
+                result = encrypt_env(context.root, environment)
+            except SecretsError as error:
+                print(f"{RED}{error}{RESET}")
+                return 1
+            print(
+                f"{GREEN}re-encrypted for the new recipients: {result.written}{RESET}"
+            )
+
+    print()
+    print(
+        "Review with git diff, then commit — the pin and the templates move as one reviewed change."
+    )
+    print(f"{DIM}  handbook: {HANDBOOK}#/flow-core-update{RESET}")
+    return 0
+
+
 def run_doctor(context: Context) -> int:
     """Non-interactive on purpose: it has to work from a script and over a pipe."""
     findings = diagnose(context, read_tailnet())
@@ -1162,6 +1285,17 @@ def run(argv: list, start: Optional[Path] = None) -> int:
 
     if argv and argv[0] == "doctor":
         return run_doctor(context)
+
+    if argv and argv[0] == "update":
+        if ("--yes" in argv or "--check" in argv) or (
+            sys.stdin.isatty() and sys.stdout.isatty()
+        ):
+            return run_update(context, argv[1:])
+        print(
+            "platform update asks before writing; pass --yes or --check without a terminal",
+            file=sys.stderr,
+        )
+        return 2
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         print("The console is interactive and needs a terminal.", file=sys.stderr)

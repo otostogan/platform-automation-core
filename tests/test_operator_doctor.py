@@ -236,6 +236,60 @@ class AppDoctorTest(unittest.TestCase):
         )
         return infra
 
+    def test_templates_are_checked_without_a_registered_infrastructure(self) -> None:
+        write(
+            self.root / ".sops.yaml",
+            "creation_rules:\n  - key_groups:\n      - age:\n"
+            "          - age1syntheticfixture\n          - age1recoveryfixture\n",
+        )
+        write(
+            self.root / ".github/workflows/build.yml",
+            "jobs:\n  build:\n    env:\n      REPOSITORY: ghcr.io/example/example\n",
+        )
+        findings = self.diagnose()
+        self.assertEqual(by_title(findings, "Core pin")[0].status, "skip")
+        finding = by_title(findings, "Templates")[0]
+        self.assertTrue(finding.failed, finding.detail)
+        self.assertIn("platform update", finding.detail)
+
+    def test_templates_behind_the_console_are_reported(self) -> None:
+        from platform_automation.operator.scaffold import strip_marker
+
+        self.register_infra(
+            pin="v0.14.0",
+            recipients="host age1syntheticfixture\nrecovery age1recoveryfixture\n",
+        )
+        write(
+            self.root / ".github/workflows/build.yml",
+            "jobs:\n  build:\n    env:\n      REPOSITORY: ghcr.io/example/example\n",
+        )
+        finding = by_title(self.diagnose(), "Templates")[0]
+        self.assertTrue(finding.failed, finding.detail)
+        self.assertIn("platform update", finding.detail)
+
+        from platform_automation.operator.update import (
+            apply,
+            gather_facts,
+            plan,
+            render_managed,
+        )
+
+        context = detect(self.root, host_marker=self.marker)
+        apply(
+            self.root, plan(self.root, render_managed(gather_facts(context, self.home)))
+        )
+        finding = by_title(self.diagnose(), "Templates")[0]
+        self.assertEqual(finding.status, "ok", finding.detail)
+
+        hook = self.root / ".githooks/pre-push"
+        hook.write_text(
+            strip_marker(hook.read_text()) + "echo mine\n", encoding="utf-8"
+        )
+        finding = by_title(self.diagnose(), "Templates")[0]
+        self.assertEqual(finding.status, "ok")
+        self.assertIn("owned by the application", finding.detail)
+        self.assertIn(".githooks/pre-push", finding.detail)
+
     def test_registered_infrastructure_is_found_by_the_target_host(self) -> None:
         self.register_infra(pin="v0.13.3")
 
