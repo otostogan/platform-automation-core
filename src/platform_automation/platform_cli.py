@@ -240,6 +240,21 @@ def parse_arguments(
         help="Check keys, versions and tailnet access from this workstation.",
     )
 
+    update_parser = subparsers.add_parser(
+        "update",
+        help="Rewrite the platform-owned workflows, hooks and .sops.yaml from the current templates.",
+    )
+    update_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Write without asking (still nothing is committed).",
+    )
+    update_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Only report; exit 1 when something is behind.",
+    )
+
     secrets_parser = subparsers.add_parser(
         "secrets",
         help="Encrypt .env.<environment> into the committed ciphertext, or decrypt it back.",
@@ -2460,7 +2475,7 @@ def main(
 
     arguments = parse_arguments(argv)
 
-    if arguments.command in (None, "new", "doctor", "infra", "secrets"):
+    if arguments.command in (None, "new", "doctor", "infra", "secrets", "update"):
         # The operator console is workstation-only and is not shipped to
         # hosts, so the refusal has to happen here, before it is imported.
         if is_platform_host(projects_root):
@@ -2480,6 +2495,11 @@ def main(
             console_argv.append(arguments.action)
             if arguments.path:
                 console_argv.append(arguments.path)
+        if arguments.command == "update":
+            if arguments.yes:
+                console_argv.append("--yes")
+            if arguments.check:
+                console_argv.append("--check")
         if arguments.command == "secrets":
             console_argv.append(arguments.action)
             if arguments.environment:

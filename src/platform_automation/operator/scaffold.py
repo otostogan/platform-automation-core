@@ -50,6 +50,65 @@ DESTINATIONS = {
 EXECUTABLE = {".githooks/post-commit", ".githooks/pre-push", ".githooks/pre-commit"}
 
 
+MARKER = "# platform-managed"
+MARKER_PATTERN = re.compile(r"^# platform-managed v(\d+\.\d+\.\d+)")
+MANAGED = {
+    ".sops.yaml",
+    ".github/workflows/build.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/deploy.yml",
+    ".githooks/post-commit",
+    ".githooks/pre-push",
+    ".githooks/pre-commit",
+}
+DEPLOY_WORKFLOW = ".github/workflows/deploy.yml"
+# what the handbook shows; replaced by the environments actually chosen
+ENVIRONMENT_OPTIONS = "                    - lab\n                    - production\n"
+
+
+def marker_line(version: str = __version__) -> str:
+    return (
+        f"{MARKER} v{version} · «platform update» перезапишет этот файл;"
+        " уберите эту строку, чтобы забрать его себе."
+    )
+
+
+def with_marker(text: str, version: str = __version__) -> str:
+    """The marker goes first — after the shebang when there is one."""
+    line = marker_line(version)
+    if text.startswith("#!"):
+        first, _, rest = text.partition("\n")
+        return f"{first}\n{line}\n{rest}"
+    return f"{line}\n{text}"
+
+
+def strip_marker(text: str) -> str:
+    lines = text.split("\n")
+    for index in range(min(2, len(lines))):
+        if lines[index].startswith(MARKER):
+            del lines[index]
+            break
+    return "\n".join(lines)
+
+
+def marker_version(text: str) -> Optional[str]:
+    for line in text.split("\n")[:2]:
+        match = MARKER_PATTERN.match(line)
+        if match:
+            return match.group(1)
+    return None
+
+
+def is_managed(text: str) -> bool:
+    return marker_version(text) is not None
+
+
+def environment_options(workflow: str, environments: tuple) -> str:
+    """The dispatch offers exactly the environments the application has."""
+    wanted = "".join(f"                    - {name}\n" for name in environments)
+    return workflow.replace(ENVIRONMENT_OPTIONS, wanted, 1)
+
+
 class ScaffoldError(RuntimeError):
     pass
 
@@ -176,7 +235,10 @@ def render_app(answers: AppAnswers) -> dict:
     files = {}
 
     for name, destination in DESTINATIONS.items():
-        files[destination] = render(template(name), common)
+        text = render(template(name), common)
+        if destination == DEPLOY_WORKFLOW:
+            text = environment_options(text, tuple(answers.environments))
+        files[destination] = with_marker(text) if destination in MANAGED else text
 
     database = template(
         "database_docker.yml"
