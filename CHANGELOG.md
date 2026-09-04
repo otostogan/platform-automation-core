@@ -7,6 +7,18 @@ release.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-09-04
+
+- Fix bare `platform` (and `platform doctor` / `platform new`) on a host.
+  Convergence ships the runtime as an explicit file list and the operator
+  console is deliberately not part of it, so `0.15.0` imported a module that
+  does not exist on the host and fell over with a traceback instead of the
+  intended refusal. The refusal now happens in the CLI itself, before the
+  console is imported: on a host, bare `platform` says it is a host and points
+  at the subcommands. `projects`, `status` and every other server command were
+  unaffected.
+
+
 ## [0.15.0] - 2026-09-04
 
 - Add `platform projects`: one line per project and environment that has a

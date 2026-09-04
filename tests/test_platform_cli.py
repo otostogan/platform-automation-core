@@ -671,6 +671,17 @@ class PlatformCliTest(unittest.TestCase):
 
         return record
 
+    def test_bare_platform_on_a_host_refuses_without_the_console(self) -> None:
+        # An existing projects root is what makes this "a host".
+        self.projects_root.mkdir(parents=True, exist_ok=True)
+
+        for arguments in ((), ("doctor",), ("new",)):
+            code, _, stderr = self.run_cli(*arguments)
+
+            self.assertEqual(code, 2, arguments)
+            self.assertIn("This is a platform host", stderr)
+            self.assertNotIn("Traceback", stderr)
+
     def test_projects_lists_every_scope_with_its_current_release(self) -> None:
         self.write_record("1" * 32, "2026-08-25T12:00:00Z", "v1", "deployed")
         empty_ledger = self.projects_root / "example" / "production" / "ledger"

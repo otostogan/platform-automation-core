@@ -2423,6 +2423,16 @@ def main(
     arguments = parse_arguments(argv)
 
     if arguments.command in (None, "new", "doctor"):
+        # The operator console is workstation-only and is not shipped to
+        # hosts, so the refusal has to happen here, before it is imported.
+        if projects_root.is_dir():
+            print(
+                "This is a platform host. The operator console runs on your "
+                "workstation; here, use: sudo -n platform <command>",
+                file=sys.stderr,
+            )
+            return 2
+
         from .operator.console import run as run_console
 
         console_argv = [] if arguments.command is None else [arguments.command]
