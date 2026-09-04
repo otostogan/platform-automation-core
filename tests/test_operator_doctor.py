@@ -238,6 +238,11 @@ class AppDoctorTest(unittest.TestCase):
 
     def test_templates_are_checked_without_a_registered_infrastructure(self) -> None:
         write(
+            self.root / ".sops.yaml",
+            "creation_rules:\n  - key_groups:\n      - age:\n"
+            "          - age1syntheticfixture\n          - age1recoveryfixture\n",
+        )
+        write(
             self.root / ".github/workflows/build.yml",
             "jobs:\n  build:\n    env:\n      REPOSITORY: ghcr.io/example/example\n",
         )
