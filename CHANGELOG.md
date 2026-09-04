@@ -39,7 +39,9 @@ release.
   from the infrastructure when `~/.config/platform/config.yml` names it, and
   only the rest is asked. Secrets are created by name with placeholder values
   and encrypted at once; real values go in through `sops`. Existing files are
-  never overwritten, and the result is validated the way a deployment would.
+  never overwritten — except `.gitignore`, which every real repository already
+  has: the missing ignore lines are appended to it — and the result is
+  validated the way a deployment would.
 
 - The operator console stays open after an action: it returns to the first
   question — host or environment — instead of exiting, so several actions in a

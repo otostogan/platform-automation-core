@@ -939,7 +939,7 @@ def run_new_app(context: Context, questionary, style) -> int:
         if clashes:
             print(f"{RED}refusing to overwrite: {', '.join(clashes)}{RESET}")
             print(
-                "new app is for a new application; for an existing one use: platform doctor"
+                "new app never edits what is already there; remove or rename these first"
             )
             return 1
         print()

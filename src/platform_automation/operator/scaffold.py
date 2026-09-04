@@ -229,25 +229,54 @@ def produced_by(files: dict) -> list:
     ]
 
 
+MERGED = {".gitignore"}  # every real project has one: ours is appended, never a clash
+
+
 def existing_targets(root: Path, files: dict) -> list:
     return sorted(
-        path for path in [*files, *produced_by(files)] if (root / path).exists()
+        path
+        for path in [*files, *produced_by(files)]
+        if path not in MERGED and (root / path).exists()
     )
 
 
+def merge_lines(existing: str, wanted: str) -> tuple:
+    """Append the lines of ``wanted`` that ``existing`` lacks; nothing is removed."""
+    present = {line.strip() for line in existing.splitlines()}
+    missing = [
+        line
+        for line in wanted.splitlines()
+        if line.strip() and line.strip() not in present
+    ]
+    if not missing:
+        return existing, 0
+    joined = existing if not existing or existing.endswith("\n") else existing + "\n"
+    return joined + "\n".join(missing) + "\n", len(missing)
+
+
 def write_files(root: Path, files: dict) -> list:
-    """Write everything, or nothing: an existing file stops the whole scaffold."""
+    """Write everything, or nothing: an existing file stops the whole scaffold.
+
+    ``.gitignore`` is the one exception — it is merged, because every real
+    repository already has one.
+    """
     clashes = existing_targets(root, files)
     if clashes:
         raise ScaffoldError(
             "refusing to overwrite existing files: "
             + ", ".join(clashes)
-            + " — new app is for a new application; for an existing one use platform doctor"
+            + " — new app never edits what is already there; remove or rename them first"
         )
     written = []
     for relative, text in files.items():
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
+        if relative in MERGED and path.exists():
+            merged, added = merge_lines(path.read_text(encoding="utf-8"), text)
+            if added:
+                path.write_text(merged, encoding="utf-8")
+                written.append(f"{relative} (+{added} lines)")
+            continue
         path.write_text(text, encoding="utf-8")
         if relative in EXECUTABLE:
             path.chmod(0o755)

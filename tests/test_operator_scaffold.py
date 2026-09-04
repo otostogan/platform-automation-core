@@ -215,6 +215,24 @@ class WriteAndValidateTest(unittest.TestCase):
 
         self.assertEqual({k: v for k, v in report.items() if v}, {}, report)
 
+    def test_an_existing_gitignore_is_appended_not_refused(self) -> None:
+        files = render_app(ANSWERS)
+        (self.root / ".gitignore").write_text("node_modules\n.env\n", encoding="utf-8")
+
+        written = write_files(self.root, files)
+
+        text = (self.root / ".gitignore").read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("node_modules\n.env\n"))
+        self.assertEqual(
+            text.count("\n.env\n"), 1, "a line already there is not repeated"
+        )
+        self.assertIn(".env.*\n", text)
+        self.assertIn("*.agekey\n", text)
+        self.assertTrue(any(item.startswith(".gitignore (+") for item in written))
+
+        again = write_files(self.root, {".gitignore": files[".gitignore"]})
+        self.assertEqual(again, [], "a second run adds nothing")
+
     def test_existing_file_stops_the_whole_scaffold(self) -> None:
         files = render_app(ANSWERS)
         (self.root / "deploy").mkdir()
