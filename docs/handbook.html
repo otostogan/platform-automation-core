@@ -3750,29 +3750,40 @@ tailscale_auth_key_source: {{keydir}}/tailscale-auth.key</code></pre>
 										<li>
 											допишите получателя новой машины в
 											<code>docs/RECIPIENTS.md</code>
-											инфраструктуры — оттуда его берут
-											консоль и все приложения;
+											инфраструктуры, чтобы список публичных
+											ключей оставался полным;
 										</li>
 										<li>
-											в репозитории приложения
-											<code>platform update</code> перепишет
-											<code>.sops.yaml</code> и перешифрует
-											каждое окружение, у которого на этой
-											машине есть <code>.env</code>;
+											добавьте его в <code>.sops.yaml</code>
+											приложения <strong>рядом</strong> с уже
+											имеющимися — пока приложение выкатывается
+											на старый хост, читать должны оба;
 										</li>
 										<li>
+											перешифруйте каждое окружение и
 											закоммитьте — это шифротекст,
 											коммитить его безопасно и намеренно.
 										</li>
 									</ol>
-									<pre><code>platform update</code></pre>
+									<pre><code>platform secrets push</code></pre>
 									<p>
-										Окружения без локального <code>.env</code>
-										перешифровывает владелец ключа:
-										<code>sops updatekeys deploy/secrets.{{env}}.sops.yaml</code>
-										— или <code>platform secrets pull {{env}}</code>,
-										затем <code>platform secrets push</code>.
+										Так перешифровываются окружения, чьи
+										<code>.env</code> есть на этой машине.
+										Остальные — владелец ключа:
+										<code>sops updatekeys deploy/secrets.{{env}}.sops.yaml</code>.
 									</p>
+									<div class="note">
+										<span class="label">Почему здесь руками, а не <code>platform update</code></span>
+										<p><code>update</code> пишет <code>.sops.yaml</code>
+										ровно на пару «хост из <code>deploy.yml</code> +
+										recovery». Третьего получателя он не добавит,
+										а старого уберёт. Он пригодится на следующем
+										шаге: когда <code>target_host</code> в
+										<code>deploy.yml</code> переключён на новую
+										машину, <code>platform update</code> приведёт
+										<code>.sops.yaml</code> к её паре и перешифрует
+										окружения с локальным <code>.env</code>.</p>
+									</div>
 									<div class="note">
 										<span class="label"
 											>Политику получателей это не
@@ -4284,8 +4295,15 @@ tailscale_auth_key_source: {{keydir}}/tailscale-auth.key</code></pre>
 										что применяет хост: латиница, цифры,
 										подчёркивание, не с цифры.
 									</p>
-									<pre><code>git add deploy/ .sops.yaml .githooks .github
+									<pre><code>git add .gitignore .sops.yaml deploy/ .githooks .github
 git commit -m "chore: platform deployment"</code></pre>
+									<p>
+										<code>.gitignore</code> в этом коммите не
+										формальность: у клона без него нет правила
+										для <code>.env.*</code>, а хуки в клон не
+										переезжают — их включают заново
+										(<code>platform doctor</code> напомнит).
+									</p>
 									<p>
 										То же самое без коммита — если хочется
 										увидеть результат сразу:
@@ -4332,8 +4350,11 @@ git commit -m "chore: platform deployment"</code></pre>
 									<pre><code>SOPS_AGE_KEY_FILE={{keydir}}/{{host}}.agekey platform secrets pull {{env}}</code></pre>
 									<p>
 										Хост секреты никогда не пишет на диск: только в
-										<a class="ref" data-ref="gl-tmpfs">tmpfs</a>,
-										и только при выкатке.
+										<a class="ref" data-ref="gl-tmpfs">tmpfs</a>.
+										Туда они попадают при выкатке и заново при
+										каждой загрузке — служба восстановления
+										расшифровывает их до старта Docker
+										(<a href="#/flow-reboot">Ребут и приёмка</a>).
 									</p>
 
 									<div class="expect">
