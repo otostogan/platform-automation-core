@@ -671,6 +671,55 @@ class PlatformCliTest(unittest.TestCase):
 
         return record
 
+    def test_projects_lists_every_scope_with_its_current_release(self) -> None:
+        self.write_record("1" * 32, "2026-08-25T12:00:00Z", "v1", "deployed")
+        empty_ledger = self.projects_root / "example" / "production" / "ledger"
+        empty_ledger.mkdir(parents=True, mode=0o700)
+
+        code, stdout, stderr = self.run_cli("projects", "--json")
+
+        self.assertEqual(code, 0, stderr)
+        document = json.loads(stdout)
+        self.assertEqual(document["count"], 2)
+        lab, production = document["projects"]
+        self.assertEqual((lab["project"], lab["environment"]), ("example", "lab"))
+        self.assertEqual(lab["current"]["release_tag"], "v1")
+        self.assertEqual(lab["current"]["healthcheck"], "succeeded")
+        self.assertEqual(lab["release_count"], 1)
+        self.assertEqual(production["environment"], "production")
+        self.assertIsNone(production["current"])
+        self.assertEqual(production["release_count"], 0)
+
+    def test_projects_prints_one_line_per_scope(self) -> None:
+        self.write_record("1" * 32, "2026-08-25T12:00:00Z", "v1", "deployed")
+
+        code, stdout, _ = self.run_cli("projects")
+
+        self.assertEqual(code, 0)
+        lines = stdout.splitlines()
+        self.assertTrue(lines[0].startswith("PROJECT"))
+        self.assertIn("example", lines[1])
+        self.assertIn("lab", lines[1])
+        self.assertIn("v1", lines[1])
+        self.assertIn("deployed", lines[1])
+
+    def test_projects_without_any_ledger_says_so(self) -> None:
+        code, stdout, _ = self.run_cli("projects")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout.strip(), "No projects on this host")
+
+    def test_projects_names_a_stray_entry_instead_of_skipping_it(self) -> None:
+        self.write_record("1" * 32, "2026-08-25T12:00:00Z", "v1", "deployed")
+        (self.projects_root / "notes.txt").write_text("x", encoding="utf-8")
+
+        code, _, stderr = self.run_cli("projects")
+
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "projects error: unexpected entry in projects root: notes.txt", stderr
+        )
+
     def test_status_without_releases(self) -> None:
         code, stdout, stderr = self.run_cli(
             "status",

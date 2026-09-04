@@ -23,6 +23,7 @@ from .release_ledger import (
     ReleaseLedgerError,
     build_prepared_release,
     find_latest_deployed_release,
+    list_project_scopes,
     list_release_records,
     replace_release_record,
     utc_timestamp,
@@ -216,9 +217,27 @@ def parse_arguments(
             "Repeating the option can only raise the policy, never lower it."
         ),
     )
+    # No subcommand means the operator console on a workstation; on a host
+    # the console refuses and points at the subcommands below.
     subparsers = parser.add_subparsers(
         dest="command",
-        required=True,
+        required=False,
+    )
+
+    new_parser = subparsers.add_parser(
+        "new",
+        help="Scaffold a company infrastructure repository, a host, or an application.",
+    )
+    new_parser.add_argument(
+        "target",
+        nargs="?",
+        choices=("company-infra", "host", "app"),
+        help="What to create; omit to choose interactively.",
+    )
+
+    subparsers.add_parser(
+        "doctor",
+        help="Check keys, versions and tailnet access from this workstation.",
     )
 
     deploy_parser = subparsers.add_parser(
@@ -266,6 +285,16 @@ def parse_arguments(
         "--json",
         action="store_true",
         help="Print machine-readable JSON.",
+    )
+
+    projects_parser = subparsers.add_parser(
+        "projects",
+        help="List every project and environment with a ledger on this host.",
+    )
+    projects_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of a table.",
     )
 
     backup_parser = subparsers.add_parser(
@@ -611,6 +640,80 @@ def print_human_status(document: dict[str, Any]) -> None:
         document["latest"],
     )
     print_backup_status(document["backups"])
+
+
+def summarize_release(record: dict[str, Any]) -> dict[str, Any]:
+    if record is None:
+        return None
+
+    return {
+        "release_id": record["release_id"],
+        "release_tag": record["release_tag"],
+        "status": record["status"],
+        "healthcheck": record["healthcheck"]["status"],
+        "migration": record["migration"]["status"],
+        "updated_at": record["updated_at"],
+    }
+
+
+def build_projects_document(projects_root: Path) -> dict[str, Any]:
+    """One line per project and environment: what is deployed, and how it ended."""
+    entries = []
+
+    for project, environment in list_project_scopes(projects_root):
+        records = list_release_records(projects_root, project, environment)
+        entries.append(
+            {
+                "project": project,
+                "environment": environment,
+                "release_count": len(records),
+                "current": summarize_release(find_latest_deployed_release(records)),
+                "latest": summarize_release(records[-1] if records else None),
+            }
+        )
+
+    return {"count": len(entries), "projects": entries}
+
+
+def print_projects(document: dict[str, Any]) -> None:
+    if not document["projects"]:
+        print("No projects on this host")
+        return
+
+    print(
+        f"{'PROJECT':<24} {'ENV':<11} {'RELEASE':<22} {'STATUS':<11} "
+        f"{'HEALTH':<10} RECORDS"
+    )
+
+    for entry in document["projects"]:
+        current = entry["current"]
+        latest = entry["latest"]
+        shown = current or latest
+        release = shown["release_tag"] if shown else "-"
+        status = shown["status"] if shown else "none"
+        health = shown["healthcheck"] if shown else "-"
+        print(
+            f"{entry['project']:<24} {entry['environment']:<11} {release:<22} "
+            f"{status:<11} {health:<10} {entry['release_count']}"
+        )
+
+
+def run_projects(
+    arguments: argparse.Namespace,
+    projects_root: Path,
+) -> int:
+    try:
+        document = build_projects_document(projects_root)
+    except (ReleaseLedgerError, OSError) as error:
+        print(f"projects error: {error}", file=sys.stderr)
+        return 1
+
+    if arguments.json:
+        print(json.dumps(document, indent=2, sort_keys=True))
+    else:
+        print_projects(document)
+
+    return 0
 
 
 def run_status(
@@ -2319,6 +2422,14 @@ def main(
 
     arguments = parse_arguments(argv)
 
+    if arguments.command in (None, "new", "doctor"):
+        from .operator.console import run as run_console
+
+        console_argv = [] if arguments.command is None else [arguments.command]
+        if arguments.command == "new" and arguments.target:
+            console_argv.append(arguments.target)
+        return run_console(console_argv)
+
     if arguments.command in ("deploy", "rollback") and nginx_manager is None:
         nginx_manager = NginxTransactionManager(
             vhost_root=nginx_vhost_root,
@@ -2422,6 +2533,9 @@ def main(
             offsite_credentials,
             uploader,
         )
+
+    if arguments.command == "projects":
+        return run_projects(arguments, projects_root)
 
     if arguments.command == "status":
         return run_status(

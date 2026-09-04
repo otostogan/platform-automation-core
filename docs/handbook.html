@@ -1625,7 +1625,7 @@
 								<tr>
 									<td>2 команды на каждый день</td>
 									<td>
-										8 команд с гарантиями и отказами на
+										9 команд с гарантиями и отказами на
 										каждый опасный случай
 									</td>
 								</tr>
@@ -5608,7 +5608,7 @@ jobs:
             contents: read
             id-token: write
             packages: read
-        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.14.0
+        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.15.0
         with:
             manifest_path: deploy/platform.${{ inputs.environment }}.yml
             image_reference: ${{ needs.resolve.outputs.image }}
@@ -10399,7 +10399,7 @@ collections:
       version: "8.6.0"
 
     - name: &gt;-
-          https://github.com/otostogan/platform-automation-core/releases/download/v0.14.0/otostogan-platform-0.14.0.tar.gz
+          https://github.com/otostogan/platform-automation-core/releases/download/v0.15.0/otostogan-platform-0.15.0.tar.gz
       type: url</code></pre>
         <p>Версия стоит в двух местах одной строки — в теге и в имени файла.</p>
       </div></details>
@@ -11832,8 +11832,7 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
   <a class="ref" data-ref="gl-recipient">получателей</a>, принятую на сервере,
   поэтому её нельзя ослабить из вызова: повторное указание опции способно только
   поднять требование, но не понизить.</p>
-  <p><code>--project</code> и <code>--environment</code> требуются всем восьми
-  командам. Окружение — только <code>lab</code>, <code>staging</code> или
+  <p><code>--project</code> и <code>--environment</code> требуются всем командам, кроме <code>projects</code>, которая существует ровно для того, чтобы их узнать. Окружение — только <code>lab</code>, <code>staging</code> или
   <code>production</code>. <code>--json</code> есть везде и нужен, когда ответ
   читает не человек.</p>
 
@@ -11859,7 +11858,7 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
       <tr>
         <td><code>deploy</code>, <code>rollback</code>, <code>restore</code>,
         <code>backup</code>, <code>rotate-database-password</code></td>
-        <td><code>status</code>, <code>backups</code>, <code>verify-backup</code></td>
+        <td><code>projects</code>, <code>status</code>, <code>backups</code>, <code>verify-backup</code></td>
       </tr>
     </tbody>
   </table>
@@ -11876,6 +11875,7 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
 
   <h2>Команды</h2>
   <p class="jumplist">
+    <a data-goto="ref-cli-projects">projects</a>
     <a data-goto="ref-cli-status">status</a>
     <a data-goto="ref-cli-backups">backups</a>
     <a data-goto="ref-cli-deploy">deploy</a>
@@ -11894,6 +11894,19 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
     </div>
 
     <div class="tabpanel" data-tab="read" role="tabpanel">
+      <article class="card" id="ref-cli-projects">
+        <h3><code>platform projects</code></h3>
+        <p>Первый вопрос к незнакомому серверу: что здесь вообще есть. Читает, ничего не меняет, замок не берёт.</p>
+        <dl>
+          <dt>Что отвечает</dt>
+          <dd>По одной строке на каждую пару «проект + окружение», у которой на хосте есть <a class="ref" data-ref="gl-ledger">реестр релизов</a>: текущий развёрнутый релиз, его статус и результат <a class="ref" data-ref="gl-healthcheck">проверки живости</a>, число записей. Окружение без единой выкатки показывается с прочерком, а не пропускается.</dd>
+          <dt>Зачем</dt>
+          <dd>Остальные команды требуют <code>--project</code> и <code>--environment</code>. Эта — единственный способ узнать их, не заглядывая в <code>/var/lib/platform/projects</code> руками. Операторская консоль строит на ней выбор проекта.</dd>
+          <dt>Отказ</dt>
+          <dd><code>projects error: unexpected entry in projects root: …</code> — под <code>/var/lib/platform/projects</code> лежит что-то, кроме каталогов проектов. Это не пропускается намеренно: то же дерево обходит восстановление после ребута, и лишний файл там — дефект, а не мусор.</dd>
+        </dl>
+      </article>
+
       <article class="card" id="ref-cli-status">
         <h3><code>platform status</code></h3>
         <p>Главный вопрос к серверу. Читает, ничего не меняет, замок не берёт.</p>
@@ -13642,7 +13655,7 @@ users_ops_ssh_keys:
         <span class="label">Зачем сверять три числа</span>
         <p>Артефактов у выпуска два — колесо Python и архив коллекции, — и
         потребители ставят их по отдельности. Разъехавшиеся номера означали бы,
-        что «версия v0.14.0» у двух людей это разные наборы кода, причём молча.</p>
+        что «версия v0.15.0» у двух людей это разные наборы кода, причём молча.</p>
       </div>
       <p>Дальше повторяется вся приёмка (форматирование, тесты, линтер ролей,
       интеграционная проверка), собираются артефакты, они сканируются на утечки
@@ -13722,7 +13735,7 @@ users_ops_ssh_keys:
       version: "8.6.0"
 
     - name: >-
-          https://github.com/otostogan/platform-automation-core/releases/download/v0.14.0/otostogan-platform-0.14.0.tar.gz
+          https://github.com/otostogan/platform-automation-core/releases/download/v0.15.0/otostogan-platform-0.15.0.tar.gz
       type: url</code></pre>
       <p>Обновление платформы — это правка одной строки, коммит и переустановка.
       Никакого «обновись до последней» не существует, и это осознанно: сервер не
@@ -14478,7 +14491,7 @@ users_ops_ssh_keys:
           стоит <strong>в двух местах одной строки</strong> — в теге и в имени
           файла. Поменять надо оба.</p>
 <pre><code>    - name: &gt;-
-          https://github.com/otostogan/platform-automation-core/releases/download/v0.14.0/otostogan-platform-0.14.0.tar.gz
+          https://github.com/otostogan/platform-automation-core/releases/download/v0.15.0/otostogan-platform-0.15.0.tar.gz
       type: url</code></pre>
           <p>Закоммитьте отдельно. Обновление платформы — ревьюируемое изменение,
           а не команда, которую кто-то помнит.</p>

@@ -7,6 +7,27 @@ release.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-04
+
+- Add `platform projects`: one line per project and environment that has a
+  release ledger on the host — the current deployed release, its status and
+  health, and the record count. Every other command needs `--project` and
+  `--environment`; this is the first way to learn them without reading
+  `/var/lib/platform/projects` by hand. A stray entry under the projects root
+  is reported, not skipped: reboot recovery walks the same tree.
+- Add the operator console: `platform` with no arguments on a workstation
+  detects whether it stands in an infrastructure or an application repository
+  and offers the matching actions with arrow-key selection; `platform doctor`
+  checks tailnet access, key files and their modes, the installed collection
+  against `requirements.yml`, `ansible-core` against the collection's
+  requirement, and — in an application — the manifest, the Compose contract,
+  the encrypted secrets and the core pin. Prompts come from the optional
+  `[operator]` extra; hosts install the wheel without it. The console holds no
+  credentials and adds no server capability beyond `projects`: every action
+  runs `platform … --json` over the operator's own SSH and prints the command
+  before running it.
+
+
 ## [0.14.0] - 2026-09-02
 
 - Add `docs/handbook.html`: an interactive operator handbook in Russian, in a
