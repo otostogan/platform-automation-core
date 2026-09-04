@@ -7,6 +7,18 @@ release.
 
 ## [Unreleased]
 
+- Handbook: the «Шифрование секретов» step of «Новое приложение» now describes
+  the path the console implements — edit `.env.<environment>`, commit, the
+  `pre-commit` hook writes the ciphertext — with `platform secrets pull` as
+  the way to read a file back, the `DATABASE_URL` rule for both database
+  modes, and the refusals the hook and `doctor` print. Recipient rotation in
+  «Новый хост», «Операторы» and the inventory card goes through
+  `platform update`; `sops updatekeys` stays for a key holder without the
+  `.env`. The application layout shows `.env.*`, `.gitignore` and
+  `pre-commit`, and the SOPS glossary card says when an operator still calls
+  `sops` directly. The template test matches handbook blocks by content, not
+  by position.
+
 - Add `platform update`: inside an application it renders the platform-owned
   files — the three workflows, the three hooks, `.sops.yaml` — again from the
   console's templates and from what the repository already says about itself,

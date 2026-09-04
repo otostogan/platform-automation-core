@@ -3748,26 +3748,42 @@ tailscale_auth_key_source: {{keydir}}/tailscale-auth.key</code></pre>
 									</p>
 									<ol>
 										<li>
-											добавьте публичного получателя новой
-											машины в <code>.sops.yaml</code>,
-											рядом с уже имеющимися;
+											допишите получателя новой машины в
+											<code>docs/RECIPIENTS.md</code>
+											инфраструктуры, чтобы список публичных
+											ключей оставался полным;
 										</li>
 										<li>
-											перешифруйте каждый зашифрованный
-											файл;
+											добавьте его в <code>.sops.yaml</code>
+											приложения <strong>рядом</strong> с уже
+											имеющимися — пока приложение выкатывается
+											на старый хост, читать должны оба;
 										</li>
 										<li>
+											перешифруйте каждое окружение и
 											закоммитьте — это шифротекст,
 											коммитить его безопасно и намеренно.
 										</li>
 									</ol>
-									<pre><code>sops updatekeys deploy/secrets.{{env}}.sops.yaml</code></pre>
+									<pre><code>platform secrets push</code></pre>
 									<p>
-										И допишите получателя в
-										<code>docs/RECIPIENTS.md</code>
-										инфраструктуры, чтобы список публичных
-										ключей оставался полным.
+										Так перешифровываются окружения, чьи
+										<code>.env</code> есть на этой машине.
+										Остальные — владелец ключа:
+										<code>sops updatekeys deploy/secrets.{{env}}.sops.yaml</code>.
 									</p>
+									<div class="note">
+										<span class="label">Почему здесь руками, а не <code>platform update</code></span>
+										<p><code>update</code> пишет <code>.sops.yaml</code>
+										ровно на пару «хост из <code>deploy.yml</code> +
+										recovery». Третьего получателя он не добавит,
+										а старого уберёт. Он пригодится на следующем
+										шаге: когда <code>target_host</code> в
+										<code>deploy.yml</code> переключён на новую
+										машину, <code>platform update</code> приведёт
+										<code>.sops.yaml</code> к её паре и перешифрует
+										окружения с локальным <code>.env</code>.</p>
+									</div>
 									<div class="note">
 										<span class="label"
 											>Политику получателей это не
@@ -4207,17 +4223,23 @@ tailscale_auth_key_source: {{keydir}}/tailscale-auth.key</code></pre>
 								<div class="step-body">
 									<p>
 										Секреты приложения лежат в его же
-										репозитории — в зашифрованном виде. Это
-										не компромисс: расшифровать их может
-										только тот хост, на который они
-										зашифрованы, и владелец recovery-ключа.
+										репозитории — в зашифрованном виде.
+										Расшифровать их может только хост, на
+										который они зашифрованы, и владелец
+										recovery-ключа. Но <strong>шифровать
+										руками не нужно</strong>: вы правите
+										обычный файл, а шифртекст в коммит
+										кладёт git-хук.
 									</p>
 
 									<h3>Правила шифрования</h3>
 									<p>
 										Файл <a class="ref mono" data-ref="gl-sops">.sops.yaml</a> в корне
 										репозитория говорит, какие файлы
-										шифровать и на кого:
+										шифровать и на кого. <code>new app</code>
+										берёт обоих получателей из
+										<code>docs/RECIPIENTS.md</code>
+										инфраструктуры:
 									</p>
 									<pre><code>creation_rules:
     - path_regex: deploy/secrets\..*\.sops\.ya?ml$
@@ -4242,49 +4264,114 @@ tailscale_auth_key_source: {{keydir}}/tailscale-auth.key</code></pre>
 										>.
 									</p>
 
-									<h3>Сам файл секретов</h3>
+									<h3>Два файла на окружение</h3>
 									<p>
-										Обычный YAML вида «ключ: значение».
-										Имена ключей должны выглядеть как
-										переменные окружения — латиница, цифры и
-										подчёркивание, не начинаться с цифры.
+										<code>.env.{{env}}</code> — открытый текст,
+										<code>ИМЯ=значение</code>. Живёт только на
+										вашей машине: стоит в
+										<code>.gitignore</code>, и хук не пустит его
+										в коммит. Это единственный файл, который
+										вы редактируете.
 									</p>
-									<pre><code>cat &gt; deploy/secrets.{{env}}.sops.yaml &lt;&lt;'YAML'
-API_TOKEN: замените-на-настоящее
-SESSION_SECRET: замените-на-настоящее
-YAML
-
-sops encrypt --in-place deploy/secrets.{{env}}.sops.yaml
-git add deploy/secrets.{{env}}.sops.yaml</code></pre>
+									<p>
+										<code>deploy/secrets.{{env}}.sops.yaml</code> —
+										его шифртекст. Коммитится, его читает хост.
+										Вы к нему не прикасаетесь.
+									</p>
+									<p>
+										<code>new app</code> уже написал
+										<code>.env.{{env}}</code> с именами, которые
+										вы перечислили, и значениями-заглушками.
+										Впишите настоящие:
+									</p>
+									<pre><code>$EDITOR .env.{{env}}</code></pre>
+									<p>
+										Дальше — обычный коммит. Хук
+										<code>pre-commit</code> увидит, что
+										<code>.env.{{env}}</code> новее своего
+										шифртекста, перешифрует его и добавит
+										шифртекст в тот же коммит. Имена
+										переменных проверяются теми же правилами,
+										что применяет хост: латиница, цифры,
+										подчёркивание, не с цифры.
+									</p>
+									<pre><code>git add .gitignore .sops.yaml deploy/ .githooks .github
+git commit -m "chore: platform deployment"</code></pre>
+									<p>
+										<code>.gitignore</code> в этом коммите не
+										формальность: у клона без него нет правила
+										для <code>.env.*</code>, а хуки в клон не
+										переезжают — их включают заново
+										(<code>platform doctor</code> напомнит).
+									</p>
+									<p>
+										То же самое без коммита — если хочется
+										увидеть результат сразу:
+									</p>
+									<pre><code>platform secrets push</code></pre>
 
 									<div class="note" data-when="db=platform">
 										<span class="label"
-											>DATABASE_URL сюда не пишут</span
+											>DATABASE_URL можно оставить</span
 										>
 										<p>
 											Раз базу держит платформа, она сама
 											подставит
 											<code>DATABASE_URL</code> в
-											окружение приложения. Приложение,
-											принесшее свой, получает отказ —
-											иначе было бы два разных мнения о
-											том, куда подключаться, и одно из
-											них молча победило бы.
+											окружение приложения. В
+											<code>.env.{{env}}</code> держите его
+											для локальной работы: при шифровании
+											консоль его <em>выбросит</em>, и в
+											шифртекст он не попадёт — иначе было
+											бы два разных мнения о том, куда
+											подключаться.
 										</p>
 									</div>
+									<div class="note" data-when="db=external">
+										<span class="label"
+											>DATABASE_URL обязателен</span
+										>
+										<p>
+											База внешняя, платформа о ней ничего
+											не знает. Без <code>DATABASE_URL</code>
+											в <code>.env.{{env}}</code> шифрование
+											откажет.
+										</p>
+									</div>
+
+									<h3>Прочитать обратно</h3>
+									<p>
+										Файл <code>.env.{{env}}</code> живёт на
+										одной машине. Новый ноутбук, другой
+										оператор, снесённая виртуалка — и его
+										нет. Вернуть его может владелец любого из
+										двух ключей:
+									</p>
+									<pre><code>SOPS_AGE_KEY_FILE={{keydir}}/{{host}}.agekey platform secrets pull {{env}}</code></pre>
+									<p>
+										Хост секреты никогда не пишет на диск: только в
+										<a class="ref" data-ref="gl-tmpfs">tmpfs</a>.
+										Туда они попадают при выкатке и заново при
+										каждой загрузке — служба восстановления
+										расшифровывает их до старта Docker
+										(<a href="#/flow-reboot">Ребут и приёмка</a>).
+									</p>
 
 									<div class="expect">
 										<span class="label"
 											>Как понять, что получилось</span
 										>
 										<p>
-											В закоммиченном файле вместо
-											значений — шифротекст и блок
+											После коммита <code>git show --stat</code>
+											показывает
+											<code>deploy/secrets.{{env}}.sops.yaml</code>
+											и не показывает <code>.env.{{env}}</code>.
+											В шифртексте вместо значений
+											<code>ENC[AES256_GCM,…]</code> и блок
 											<code>sops:</code> с двумя
-											получателями. Коммитить его
-											безопасно и намеренно.
-											<code>sops decrypt</code> вашим
-											ключом проходит.
+											получателями. <code>platform doctor</code>
+											в этом репозитории:
+											<code>.env.{{env}} ciphertext is up to date</code>.
 										</p>
 									</div>
 									<div class="stop">
@@ -4298,23 +4385,32 @@ git add deploy/secrets.{{env}}.sops.yaml</code></pre>
 										</p>
 										<label class="confirm"
 											><input type="checkbox" data-stop />
-											У каждого окружения свой файл
-											секретов, оба зашифрованы на двух
-											разных получателей</label
+											У каждого окружения свой
+											<code>.env</code> и свой шифртекст,
+											оба зашифрованы на двух разных
+											получателей</label
 										>
 									</div>
 									<details class="trouble">
 										<summary>Если пойдёт не так</summary>
 										<div class="inner">
 											<dl>
-												<dt><code>sops</code> не находит правило для файла</dt>
-												<dd>Имя не подошло под <code>path_regex</code> в <code>.sops.yaml</code>. Образец ждёт <code>deploy/secrets.&lt;окружение&gt;.sops.yaml</code> — проверьте расширение и точки.</dd>
+												<dt><code>pre-commit: .env.* никогда не коммитится</code></dt>
+												<dd>Файл с открытым текстом попал в индекс — обычно через <code>git add -A</code> при отсутствующем <code>.gitignore</code>. Уберите его: <code>git reset .env.{{env}}</code>, проверьте, что <code>.env.*</code> стоит в <code>.gitignore</code>. Ничего не утекло: коммит не состоялся.</dd>
+												<dt><code>pre-commit: нужна консоль platform</code></dt>
+												<dd>Хук зовёт консоль, а её нет в <code>PATH</code> этой оболочки. Поставьте <code>pip install 'platform-automation-runtime[operator]'</code> в тот же venv, из которого коммитите, или активируйте его.</dd>
+												<dt>Хук не сработал, шифртекст не изменился</dt>
+												<dd>Хуки не включены: <code>git config core.hooksPath</code> должен печатать <code>.githooks</code>. <code>new app</code> включает их сам, но только в уже инициализированном репозитории. Включите и повторите коммит — либо <code>platform secrets push</code> руками.</dd>
+												<dt><code>doctor</code>: <code>.env.{{env}} is newer than its ciphertext</code></dt>
+												<dd>Файл правили, а коммита ещё не было. Это нормально до коммита; если сохраняется после — см. пункт выше.</dd>
+												<dt><code>DATABASE_URL is required when the database is external</code></dt>
+												<dd>В манифесте <code>mode: external</code>, а в <code>.env.{{env}}</code> адреса нет. Платформа сама его не соберёт.</dd>
 												<dt>Позже, при сборке: <code>SOPS metadata requires at least N unique age recipients; found M</code></dt>
-												<dd>Получателей меньше, чем требует политика. Считаются <em>уникальные</em>: один и тот же ключ, вписанный дважды, засчитается за один.</dd>
+												<dd>Получателей меньше, чем требует политика. Считаются <em>уникальные</em>: один и тот же ключ, вписанный дважды, засчитается за один. Проверьте <code>.sops.yaml</code> и перешифруйте: <code>platform secrets push</code>.</dd>
 												<dt><code>secrets file is not SOPS-encrypted</code></dt>
-												<dd>Файл лежит открытым текстом. Скорее всего <code>sops encrypt --in-place</code> не выполнялся или выполнился не над тем файлом — сравните: у зашифрованного значения выглядят как <code>ENC[AES256_GCM,…]</code>.</dd>
-												<dt><code>application secrets must not define DATABASE_URL when the platform runs the database</code></dt>
-												<dd>При <code>mode: docker</code> адрес подключения собирает платформа и вписывает сама. Свой <code>DATABASE_URL</code> в секретах запрещён именно поэтому.</dd>
+												<dd>В <code>deploy/secrets.{{env}}.sops.yaml</code> лежит открытый текст: кто-то писал в него руками. Удалите файл и выполните <code>platform secrets push</code> — он будет создан заново из <code>.env.{{env}}</code>.</dd>
+												<dt><code>secrets pull</code>: <code>no key</code> или <code>could not decrypt</code></dt>
+												<dd>Расшифровать может только владелец приватной половины одного из получателей. Укажите её через <code>SOPS_AGE_KEY_FILE</code>; ключ хоста лежит у оператора, recovery — в хранилище компании (<a href="#/ref-keys">Ключи и доверие</a>).</dd>
 											</dl>
 										</div>
 									</details>
@@ -9716,10 +9812,14 @@ chmod 600 {{keydir}}/{{host}}.agekey</code></pre>
 age-keygen --output {{keydir}}/recovery-new.agekey
 age-keygen -y {{keydir}}/recovery-new.agekey</code></pre>
 									<p>
-										Дальше в каждом приложении: заменить
-										получателя в <a class="ref mono" data-ref="gl-sops">.sops.yaml</a> и
-										прогнать <code>sops updatekeys</code> по
-										каждому зашифрованному файлу. Пока это
+										Дальше — заменить получателя в
+										<code>docs/RECIPIENTS.md</code> инфраструктуры
+										и в каждом приложении выполнить
+										<code>platform update</code>: он перепишет
+										<a class="ref mono" data-ref="gl-sops">.sops.yaml</a> и перешифрует
+										окружения, чьи <code>.env</code> есть на этой
+										машине; остальные — <code>sops updatekeys</code>
+										с ключом. Пока это
 										не сделано, старый получатель остаётся в
 										файлах и политика двух получателей
 										формально выполняется — а фактически
@@ -10537,13 +10637,17 @@ inventory/**/*.decrypted.yml</code></pre>
 ├── Dockerfile                          чем собирается образ
 ├── package.json                        номер версии — источник тега выпуска
 ├── .sops.yaml                          на кого шифровать секреты
+├── .gitignore                          .env.* и ключи — никогда в git
+├── .env.lab                            секреты открытым текстом; ТОЛЬКО на этой машине
+├── .env.production                     то же для production
 ├── deploy/
 │   ├── compose.yml                     как запускать; ОДИН на все окружения
 │   ├── platform.lab.yml                манифест окружения
 │   ├── platform.production.yml         манифест окружения
-│   ├── secrets.lab.sops.yaml           шифротекст, коммитится
-│   └── secrets.production.sops.yaml    шифротекст, коммитится
+│   ├── secrets.lab.sops.yaml           шифротекст .env.lab, коммитится
+│   └── secrets.production.sops.yaml    шифротекст .env.production, коммитится
 ├── .githooks/
+│   ├── pre-commit                      шифрует .env.* в deploy/secrets.*, .env.* не пускает
 │   ├── post-commit                     ставит тег при смене версии
 │   └── pre-push                        не даёт отправить рассогласованный тег
 ├── .github/workflows/
@@ -10558,8 +10662,10 @@ inventory/**/*.decrypted.yml</code></pre>
         нём не знает, пока не сказано:
         <code>git config core.hooksPath .githooks</code>. Рядом полезен
         <code>git config push.followTags true</code>, чтобы созданный тег уезжал
-        вместе с коммитом. В проектах на npm обе строки обычно ставит
-        <code>postinstall</code>, и тогда достаточно установить зависимости.</p>
+        вместе с коммитом. <code>platform new app</code> ставит обе строки сам;
+        <code>platform doctor</code> проверяет, что они на месте. Сами файлы
+        хуков и рабочих процессов принадлежат ядру и обновляются командой
+        <code>platform update</code> — см. <a href="#/flow-core-update">Обновление ядра</a>.</p>
       </div>
 
       <h3>Что здесь заводит человек</h3>
@@ -10568,7 +10674,8 @@ inventory/**/*.decrypted.yml</code></pre>
         <thead><tr><th>Файл</th><th>Что задаёт</th><th>Где разобран</th></tr></thead>
         <tbody>
           <tr><td><a class="ref mono" data-ref="gl-sops">.sops.yaml</a></td><td>Каких <a class="ref" data-ref="gl-recipient">получателей</a> использовать при шифровании</td><td><a href="#/flow-new-app">шаг 2</a></td></tr>
-          <tr><td><code>deploy/secrets.&lt;окружение&gt;.sops.yaml</code></td><td>Секреты приложения. По файлу на окружение</td><td><a href="#/flow-new-app">шаг 2</a></td></tr>
+          <tr><td><code>.env.&lt;окружение&gt;</code></td><td>Секреты приложения открытым текстом, по файлу на окружение. Не коммитится; единственное, что правит человек</td><td><a href="#/flow-new-app">шаг 2</a></td></tr>
+          <tr><td><code>deploy/secrets.&lt;окружение&gt;.sops.yaml</code></td><td>Шифртекст соответствующего <code>.env</code>. Пишет хук <code>pre-commit</code>, руками не правится</td><td><a href="#/flow-new-app">шаг 2</a></td></tr>
           <tr><td><code>deploy/platform.&lt;окружение&gt;.yml</code></td><td>Домены, порт, база, бэкапы, глубина отката</td><td><a href="#/ref-manifest">Манифест platform/v1</a></td></tr>
           <tr><td><code>deploy/compose.yml</code></td><td>Как запускать контейнеры. Один на все окружения</td><td><a href="#/ref-compose">Контракт compose</a></td></tr>
           <tr><td><code>.github/workflows/build.yml</code></td><td>Сборку образа на теге версии</td><td><a href="#/flow-new-app">шаг 8</a></td></tr>
@@ -12421,6 +12528,13 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
             конвергенцией в <code>/usr/local/bin/sops</code>.
             </p>
             <p>
+            Оператор вызывает его редко: значения правятся в <code>.env.&lt;окружение&gt;</code>,
+            а шифртекст <code>deploy/secrets.&lt;окружение&gt;.sops.yaml</code> при коммите
+            пишет хук через <code>platform secrets push</code>. Прямой вызов нужен владельцу
+            ключа для чтения (<code>platform secrets pull</code>) и для перешифрования там,
+            где <code>.env</code> под рукой нет (<code>sops updatekeys</code>).
+            </p>
+            <p>
             Дампы базы через SOPS не идут: дамп — непрозрачный поток, его шифрует
             <code>age</code> напрямую, чтобы не заворачивать гигабайты в JSON.
             </p>
@@ -12769,8 +12883,9 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
 							<dd>
 								Поднятая политика <em>до</em> перешифрования
 								файлов остановит деплои: сначала
-								<a class="ref mono" data-ref="gl-sops">sops updatekeys</a> на всех
-								зашифрованных файлах и проверка восстановления с
+								перешифрование всех
+								файлов секретов (<code>platform update</code>
+								в каждом приложении) и проверка восстановления с
 								чистой машины, только потом двойка. Дубликат
 								одного и того же получателя не считается за
 								двух.
@@ -13542,12 +13657,12 @@ users_ops_ssh_keys:
             <p>Убрать его из <code>.sops.yaml</code> достаточно, чтобы <em>новые</em>
             файлы шифровались без него. Уже зашифрованные файлы остаются
             зашифрованными и на него, и он продолжает их читать.</p>
-            <label class="confirm"><input type="checkbox" data-stop> Понимаю: нужен <code>sops updatekeys</code>, а не только правка списка</label>
+            <label class="confirm"><input type="checkbox" data-stop> Понимаю: нужно перешифрование, а не только правка списка</label>
           </div>
 
-          <p>В каждом приложении, чьи секреты были зашифрованы на него:</p>
-<pre><code>sops updatekeys deploy/secrets.{{env}}.sops.yaml</code></pre>
-          <p>Затем закоммитить и <a href="#/flow-deploy">выкатить</a>.</p>
+          <p>Сначала <code>docs/RECIPIENTS.md</code> инфраструктуры: новый recovery-получатель вместо ушедшего. Затем в каждом приложении, чьи секреты были зашифрованы на него:</p>
+<pre><code>platform update</code></pre>
+          <p>Консоль перепишет <code>.sops.yaml</code> и перешифрует окружения, у которых на этой машине есть <code>.env</code>. Для остальных — владелец ключа: <code>sops updatekeys deploy/secrets.{{env}}.sops.yaml</code>. Затем закоммитить и <a href="#/flow-deploy">выкатить</a>.</p>
 
           <div class="expect">
             <span class="label">Что починится само, а что нет</span>
