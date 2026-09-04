@@ -1,0 +1,84 @@
+---
+name: Build image
+
+on:
+    # Только теги. Работа в процессе не нуждается в образе.
+    push:
+        tags:
+            - "v*.*.*"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+    packages: write
+
+concurrency:
+    group: build-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    build:
+        name: Build and push
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        env:
+            REPOSITORY: ghcr.io/{{org}}/{{project}}
+        steps:
+            - uses: actions/checkout@v5
+            - uses: docker/setup-buildx-action@v3
+            - uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            # Тег версии обычно указывает на коммит, который уже собирали.
+            # Содержимое то же, поэтому пересборка потратила бы минуту
+            # на те же слои под другим именем.
+            - name: Reuse the image already built for this commit
+              id: existing
+              run: |
+                  if digest="$(
+                      docker buildx imagetools inspect \
+                          "${REPOSITORY}:${GITHUB_SHA}" \
+                          --format '{{.Manifest.Digest}}' 2>/dev/null
+                  )"; then
+                      echo "found=true" >> "${GITHUB_OUTPUT}"
+                      echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+                  else
+                      echo "found=false" >> "${GITHUB_OUTPUT}"
+                  fi
+
+            - name: Add the version to the existing image
+              if: steps.existing.outputs.found == 'true' && startsWith(github.ref, 'refs/tags/v')
+              env:
+                  DIGEST: ${{ steps.existing.outputs.digest }}
+                  VERSION: ${{ github.ref_name }}
+              run: |
+                  docker buildx imagetools create \
+                      --tag "${REPOSITORY}:${VERSION}" \
+                      "${REPOSITORY}@${DIGEST}"
+
+            - name: Build and push
+              id: push
+              if: steps.existing.outputs.found != 'true'
+              uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  push: true
+                  # Всегда по коммиту, чтобы любой коммит был выкатываемым.
+                  # Тег версии дополнительно даёт читаемое имя.
+                  tags: |
+                      ghcr.io/{{org}}/{{project}}:${{ github.sha }}
+                      ${{ startsWith(github.ref, 'refs/tags/v') && format('ghcr.io/{{org}}/{{project}}:{0}', github.ref_name) || '' }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+            - name: Report the immutable reference
+              env:
+                  DIGEST: ${{ steps.existing.outputs.digest || steps.push.outputs.digest }}
+              run: |
+                  {
+                      echo "Deploy with:"
+                      echo "ghcr.io/{{org}}/{{project}}@${DIGEST}"
+                  } >> "${GITHUB_STEP_SUMMARY}"

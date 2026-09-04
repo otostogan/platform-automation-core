@@ -1,0 +1,12 @@
+database:
+    mode: external
+    postgres_major: {{postgres_major}}
+    backup_enabled: false
+
+secrets:
+    source: deploy/secrets.{{env}}.sops.yaml
+    delivery: env
+
+# Требуется контрактом; без базы платформы не используется.
+restore_validation:
+    query: {{restore_query}}

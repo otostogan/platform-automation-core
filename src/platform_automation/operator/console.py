@@ -6,6 +6,7 @@ before it runs; a choice that is not wired yet prints only the command, so
 what the console *would* do is never a guess.
 """
 
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -573,6 +574,222 @@ NEW_TARGETS = [
 ]
 
 
+def ask_app(context: Context, questionary, style) -> "AppAnswers":
+    """Ask only what cannot be read; show what was."""
+    from .config import infra_root, load_config
+    from .context import read_hosts
+    from .doctor import age_recipient, host_secret_path
+    from .scaffold import (
+        AppAnswers,
+        DOMAIN_PATTERN,
+        ENVIRONMENTS,
+        PROJECT_PATTERN,
+        SECRET_NAME_PATTERN,
+        git_org,
+    )
+
+    root = context.root
+    text = lambda message, default="", validate=None: questionary.text(
+        message, default=default, validate=validate, style=style
+    ).ask()
+
+    project = text(
+        "Project",
+        default=root.name if PROJECT_PATTERN.match(root.name) else "",
+        validate=lambda v: bool(PROJECT_PATTERN.match(v))
+        or "lowercase, digits and dashes, 2–63 chars",
+    )
+    org = text(
+        "ghcr.io owner (org)",
+        default=git_org(root) or "",
+        validate=lambda v: bool(v) or "required",
+    )
+    environments = questionary.checkbox(
+        "Environments",
+        choices=[
+            questionary.Choice(e, checked=e in ("lab", "production"))
+            for e in ENVIRONMENTS
+        ],
+        style=style,
+    ).ask()
+    if not environments:
+        raise KeyboardInterrupt
+    domains = {}
+    for environment in environments:
+        domains[environment] = text(
+            f"Domain for {environment}",
+            validate=lambda v: bool(DOMAIN_PATTERN.match(v))
+            or "lowercase, at least one dot",
+        )
+
+    # Host and recipients: from the infrastructure when it is known, else typed.
+    target_host = recipient_host = recipient_recovery = ""
+    infra = infra_root()
+    if infra is not None:
+        hosts = read_hosts(infra)
+        if hosts:
+            host = choose(
+                questionary,
+                style,
+                "Target host (from the infrastructure)",
+                list(hosts),
+                lambda h: h.name,
+            )
+            target_host = host.address or ""
+            key_path = host_secret_path(infra, host, "secrets_age_key_source")
+            if key_path is not None and key_path.is_file():
+                recipient_host = age_recipient(key_path, subprocess.run) or ""
+            keys = load_config().get("keys")
+            if keys:
+                recovery = Path(str(keys)).expanduser() / f"{host.name}-recovery.agekey"
+                if recovery.is_file():
+                    recipient_recovery = age_recipient(recovery, subprocess.run) or ""
+            print(
+                f"{DIM}  host {target_host or '?'} · host recipient {recipient_host[:12] + '…' if recipient_host else '?'}"
+                f" · recovery {recipient_recovery[:12] + '…' if recipient_recovery else '?'}{RESET}"
+            )
+    else:
+        print(
+            f"{DIM}  infrastructure not configured (~/.config/platform/config.yml) — asking instead{RESET}"
+        )
+    if not target_host:
+        target_host = text(
+            "Target host (MagicDNS name)", validate=lambda v: bool(v) or "required"
+        )
+    if not recipient_host:
+        recipient_host = text(
+            "Host age recipient (age1…)",
+            validate=lambda v: v.startswith("age1") or "age1…",
+        )
+    if not recipient_recovery:
+        recipient_recovery = text(
+            "Recovery age recipient (age1…)",
+            validate=lambda v: v.startswith("age1") or "age1…",
+        )
+
+    port = int(
+        text(
+            "Internal port", default="3000", validate=lambda v: v.isdigit() or "number"
+        )
+    )
+    path = text(
+        "Healthcheck path",
+        default="/",
+        validate=lambda v: v.startswith("/") or "starts with /",
+    )
+    timeout = int(
+        text(
+            "Healthcheck timeout, seconds",
+            default="120",
+            validate=lambda v: v.isdigit() or "number",
+        )
+    )
+    mode = choose(
+        questionary,
+        style,
+        "Database",
+        ["docker", "external"],
+        lambda m: (
+            "platform-owned (docker)"
+            if m == "docker"
+            else "external — the platform will not back it up"
+        ),
+    )
+    major = int(choose(questionary, style, "PostgreSQL major", [18, 17, 16], str))
+    interval, retain = 15, 3
+    if mode == "docker":
+        interval = int(
+            text(
+                "Backup every N minutes",
+                default="15",
+                validate=lambda v: v.isdigit() and 15 <= int(v) <= 1440 or "15–1440",
+            )
+        )
+        retain = int(
+            text(
+                "Keep N dumps locally",
+                default="3",
+                validate=lambda v: v.isdigit() and 1 <= int(v) <= 100 or "1–100",
+            )
+        )
+    query = text("Restore validation query", default="SELECT 1")
+    names = text(
+        "Secret names, comma-separated (values come later via sops)",
+        default="API_TOKEN, SESSION_SECRET",
+        validate=lambda v: all(
+            SECRET_NAME_PATTERN.match(n.strip()) for n in v.split(",") if n.strip()
+        )
+        or "environment variable names",
+    )
+
+    return AppAnswers(
+        project=project,
+        owner=org,
+        environments=tuple(environments),
+        domains=domains,
+        target_host=target_host,
+        recipient_host=recipient_host,
+        recipient_recovery=recipient_recovery,
+        internal_port=port,
+        healthcheck_path=path,
+        healthcheck_timeout=timeout,
+        database_mode=mode,
+        postgres_major=major,
+        backup_interval=interval,
+        backup_retain=retain,
+        restore_query=query,
+        secret_names=tuple(n.strip() for n in names.split(",") if n.strip()),
+    )
+
+
+def run_new_app(context: Context, questionary, style) -> int:
+    from .scaffold import (
+        ScaffoldError,
+        encrypt_secrets,
+        existing_targets,
+        next_steps,
+        render_app,
+        validate_app,
+        write_files,
+    )
+
+    root = context.root if context.kind != "nowhere" else Path.cwd()
+    try:
+        answers = ask_app(context, questionary, style)
+        files = render_app(answers)
+        clashes = existing_targets(root, files)
+        if clashes:
+            print(f"{RED}refusing to overwrite: {', '.join(clashes)}{RESET}")
+            print(
+                "new app is for a new application; for an existing one use: platform doctor"
+            )
+            return 1
+        print()
+        print(f"{DIM}→ writing {len(files)} files under {root}{RESET}")
+        written = write_files(root, files)
+        encrypted = encrypt_secrets(root, files)
+        report = validate_app(root, files)
+    except ScaffoldError as error:
+        print(f"{RED}{error}{RESET}")
+        return 1
+
+    failed = 0
+    for relative, errors in report.items():
+        if errors:
+            failed += 1
+            print(f"{RED}invalid application contract: {relative}{RESET}")
+            for error in errors:
+                print(f"  - {error}")
+        else:
+            print(f"{GREEN}valid application contract: {relative}{RESET}")
+    for relative in encrypted:
+        print(f"{GREEN}encrypted: {relative}{RESET}")
+    print()
+    print(next_steps(answers, written))
+    print(f"{DIM}  handbook: {HANDBOOK}#/flow-new-app{RESET}")
+    return 1 if failed else 0
+
+
 def run_new(context: Context, target: Optional[str]) -> int:
     questionary, style = load_prompts()
 
@@ -589,6 +806,9 @@ def run_new(context: Context, target: Optional[str]) -> int:
                 ("class:instruction", dict(NEW_TARGETS)[name]),
             ],
         )
+
+    if target == "app":
+        return run_new_app(context, questionary, style)
 
     print()
     print(f"{DIM}→ scaffold '{target}' is not wired yet.{RESET}")

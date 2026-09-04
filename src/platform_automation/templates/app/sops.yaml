@@ -1,0 +1,6 @@
+creation_rules:
+    - path_regex: deploy/secrets\..*\.sops\.ya?ml$
+      key_groups:
+          - age:
+                - {{recipient_host}}
+                - {{recipient_recovery}}

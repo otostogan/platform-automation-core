@@ -7,6 +7,15 @@ release.
 
 ## [Unreleased]
 
+- Add `platform new app`: writes the manifest per environment, the Compose
+  file, `.sops.yaml`, the encrypted secrets file, the three workflows and the
+  two hooks from the handbook's own templates — a test keeps the two identical.
+  Project and organisation are read from the repository, host and recipients
+  from the infrastructure when `~/.config/platform/config.yml` names it, and
+  only the rest is asked. Secrets are created by name with placeholder values
+  and encrypted at once; real values go in through `sops`. Existing files are
+  never overwritten, and the result is validated the way a deployment would.
+
 - The operator console stays open after an action: it returns to the first
   question — host or environment — instead of exiting, so several actions in a
   row do not mean re-entering the context each time. `Exit` on the first menu

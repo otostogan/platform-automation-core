@@ -1,0 +1,63 @@
+---
+name: Release
+
+on:
+    push:
+        tags:
+            - 'v*.*.*'
+
+permissions:
+    contents: write
+
+jobs:
+    release:
+        name: Publish release
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  fetch-depth: 0
+
+            # Тег, расходящийся с номером версии в проекте, делает версию
+            # в приложении и версию, которую выкатывают, разными вещами.
+            - name: Check the tag against the project version
+              env:
+                  TAG: ${{ github.ref_name }}
+              run: |
+                  # ЕДИНСТВЕННАЯ строка, зависящая от языка проекта:
+                  version="$(node -p "require('./package.json').version")"
+
+                  if [[ "${TAG}" != "v${version}" ]]; then
+                      echo "Tag ${TAG} does not match ${version}." >&2
+                      exit 1
+                  fi
+
+            - name: Publish
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  TAG: ${{ github.ref_name }}
+              run: |
+                  # Аннотацию читаем через API: checkout не оставляет объект
+                  # тега доступным локально, и выпуск публикуется пустым.
+                  object="$(
+                      gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" \
+                          --jq '.object | select(.type == "tag") | .sha'
+                  )"
+
+                  if [[ -z "${object}" ]]; then
+                      echo "${TAG} is a lightweight tag and carries no notes." >&2
+                      exit 1
+                  fi
+
+                  notes="$(
+                      gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object}" \
+                          --jq .message | tail -n +2
+                  )"
+
+                  gh release create "${TAG}" \
+                      --title "{{project}} ${TAG}" \
+                      --notes "${notes}" \
+                      --generate-notes \
+                      --verify-tag \
+                      --latest
