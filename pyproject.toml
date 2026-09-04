@@ -17,6 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+operator = [
+    "questionary>=2,<3",
+]
 dev = [
     "black==24.8.0",
     "build>=1.2,<2",

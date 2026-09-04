@@ -583,6 +583,55 @@ def list_release_records(
     )
 
 
+def list_project_scopes(
+    projects_root: Path,
+) -> list[tuple[str, str]]:
+    """Every project and environment that has a ledger on this host.
+
+    The layout is ``<root>/<project>/<environment>/ledger``; anything else
+    under the root is a problem worth naming rather than skipping, because
+    the same tree is what reboot recovery walks before Docker may start.
+    """
+    if projects_root.is_symlink():
+        raise ReleaseLedgerError(
+            f"projects root cannot be a symbolic link: {projects_root}"
+        )
+
+    if not projects_root.is_dir():
+        return []
+
+    scopes: list[tuple[str, str]] = []
+
+    for project_path in sorted(projects_root.iterdir(), key=lambda item: item.name):
+        if project_path.is_symlink() or not project_path.is_dir():
+            raise ReleaseLedgerError(
+                f"unexpected entry in projects root: {project_path.name}"
+            )
+
+        for environment_path in sorted(
+            project_path.iterdir(), key=lambda item: item.name
+        ):
+            if environment_path.is_symlink() or not environment_path.is_dir():
+                raise ReleaseLedgerError(
+                    "unexpected entry in project directory: "
+                    f"{project_path.name}/{environment_path.name}"
+                )
+
+            validate_ledger_identity(project_path.name, environment_path.name)
+
+            ledger = environment_path / "ledger"
+
+            if ledger.is_symlink() or not ledger.is_dir():
+                raise ReleaseLedgerError(
+                    "ledger directory is missing: "
+                    f"{project_path.name}/{environment_path.name}"
+                )
+
+            scopes.append((project_path.name, environment_path.name))
+
+    return scopes
+
+
 def find_latest_deployed_release(
     records: list[dict[str, Any]],
 ) -> dict[str, Any]:

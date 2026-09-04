@@ -9,7 +9,7 @@ inputs:
     core-version:
         description: Private platform core release tag
         required: false
-        default: v0.14.0
+        default: v0.15.0
     github-token:
         description: >-
             Optional token for reading core releases. The core repository is
