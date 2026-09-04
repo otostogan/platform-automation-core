@@ -7,6 +7,17 @@ release.
 
 ## [Unreleased]
 
+- The console keeps a registry of infrastructure repositories on the
+  workstation (`~/.config/platform/config.yml`, paths only). It fills itself:
+  running the console or `doctor` inside an infrastructure registers it, and
+  `platform infra list|add|forget` manages it by hand. `new app` then offers
+  the infrastructure and its hosts, and takes the target host from the
+  inventory, both age recipients from the infrastructure's
+  `docs/RECIPIENTS.md`, and the core pin from its `requirements.yml` — so a
+  new application deploys with the version its hosts actually run. `doctor`
+  in an application finds its infrastructure by the host it deploys to and
+  compares both the pin and the recipients.
+
 - Add `platform new app`: writes the manifest per environment, the Compose
   file, `.sops.yaml`, the encrypted secrets file, the three workflows and the
   two hooks from the handbook's own templates — a test keeps the two identical.

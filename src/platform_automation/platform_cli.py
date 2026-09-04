@@ -240,6 +240,15 @@ def parse_arguments(
         help="Check keys, versions and tailnet access from this workstation.",
     )
 
+    infra_parser = subparsers.add_parser(
+        "infra",
+        help="List, register or forget infrastructure repositories on this workstation.",
+    )
+    infra_parser.add_argument("action", choices=("list", "add", "forget"))
+    infra_parser.add_argument(
+        "path", nargs="?", help="Repository path for add and forget."
+    )
+
     deploy_parser = subparsers.add_parser(
         "deploy",
         help="Deploy an immutable application release.",
@@ -2438,7 +2447,7 @@ def main(
 
     arguments = parse_arguments(argv)
 
-    if arguments.command in (None, "new", "doctor"):
+    if arguments.command in (None, "new", "doctor", "infra"):
         # The operator console is workstation-only and is not shipped to
         # hosts, so the refusal has to happen here, before it is imported.
         if is_platform_host(projects_root):
@@ -2454,6 +2463,10 @@ def main(
         console_argv = [] if arguments.command is None else [arguments.command]
         if arguments.command == "new" and arguments.target:
             console_argv.append(arguments.target)
+        if arguments.command == "infra":
+            console_argv.append(arguments.action)
+            if arguments.path:
+                console_argv.append(arguments.path)
         return run_console(console_argv)
 
     if arguments.command in ("deploy", "rollback") and nginx_manager is None:

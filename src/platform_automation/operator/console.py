@@ -576,7 +576,6 @@ NEW_TARGETS = [
 
 def ask_app(context: Context, questionary, style) -> "AppAnswers":
     """Ask only what cannot be read; show what was."""
-    from .config import infra_root, load_config
     from .context import read_hosts
     from .doctor import age_recipient, host_secret_path
     from .scaffold import (
@@ -622,36 +621,56 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
             or "lowercase, at least one dot",
         )
 
-    # Host and recipients: from the infrastructure when it is known, else typed.
+    # Infrastructure → host → target, both recipients and the core pin, so the
+    # application deploys with the version its hosts actually run.
+    from .config import infras as registered_infras
+    from .context import read_collection_pin
+    from .recipients import host_recipient, read_recipients, recovery_recipient
+
     target_host = recipient_host = recipient_recovery = ""
-    infra = infra_root()
-    if infra is not None:
-        hosts = read_hosts(infra)
-        if hosts:
+    core_pin = None
+    known = registered_infras()
+    if not known:
+        print(
+            f"{DIM}  no infrastructure registered (platform infra add <path>) — asking instead{RESET}"
+        )
+    else:
+        infra = (
+            known[0]
+            if len(known) == 1
+            else choose(
+                questionary,
+                style,
+                "Infrastructure",
+                known,
+                lambda i: f"{i.name}  {i.path}",
+            )
+        )
+        hosts = read_hosts(infra.path)
+        if not hosts:
+            print(f"{DIM}  {infra.name} lists no hosts yet — asking instead{RESET}")
+        else:
             host = choose(
                 questionary,
                 style,
-                "Target host (from the infrastructure)",
+                "Target host",
                 list(hosts),
-                lambda h: h.name,
+                lambda h: f"{h.name}  {h.address or ''}",
             )
-            target_host = host.address or ""
-            key_path = host_secret_path(infra, host, "secrets_age_key_source")
-            if key_path is not None and key_path.is_file():
-                recipient_host = age_recipient(key_path, subprocess.run) or ""
-            keys = load_config().get("keys")
-            if keys:
-                recovery = Path(str(keys)).expanduser() / f"{host.name}-recovery.agekey"
-                if recovery.is_file():
-                    recipient_recovery = age_recipient(recovery, subprocess.run) or ""
+            target_host = host.address or host.name
+            published = read_recipients(infra.path)
+            recipient_host = host_recipient(published, host.name) or ""
+            recipient_recovery = recovery_recipient(published) or ""
+            if not recipient_host:
+                key_path = host_secret_path(infra.path, host, "secrets_age_key_source")
+                if key_path is not None and key_path.is_file():
+                    recipient_host = age_recipient(key_path, subprocess.run) or ""
+            core_pin = read_collection_pin(infra.path)
             print(
-                f"{DIM}  host {target_host or '?'} · host recipient {recipient_host[:12] + '…' if recipient_host else '?'}"
-                f" · recovery {recipient_recovery[:12] + '…' if recipient_recovery else '?'}{RESET}"
+                f"{DIM}  {infra.name}: host {target_host} · recipients "
+                f"{'host ✓' if recipient_host else 'host ?'} {'recovery ✓' if recipient_recovery else 'recovery ?'}"
+                f" · core {core_pin or '?'}{RESET}"
             )
-    else:
-        print(
-            f"{DIM}  infrastructure not configured (~/.config/platform/config.yml) — asking instead{RESET}"
-        )
     if not target_host:
         target_host = text(
             "Target host (MagicDNS name)", validate=lambda v: bool(v) or "required"
@@ -739,6 +758,7 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         backup_retain=retain,
         restore_query=query,
         secret_names=tuple(n.strip() for n in names.split(",") if n.strip()),
+        **({"core_pin": core_pin} if core_pin else {}),
     )
 
 
@@ -815,6 +835,40 @@ def run_new(context: Context, target: Optional[str]) -> int:
     return 0
 
 
+def run_infra(argv: list) -> int:
+    """platform infra list|add <path>|forget <path> — paths only, no secrets."""
+    from .config import config_path, forget_infra, infras, register_infra
+
+    action = argv[0] if argv else "list"
+    if action == "list":
+        known = infras()
+        if not known:
+            print(
+                "No infrastructure registered yet. Run platform doctor inside one, or: platform infra add <path>"
+            )
+            return 0
+        for infra in known:
+            keys = f"  keys {infra.keys}" if infra.keys else ""
+            print(f"{infra.name:<20} {infra.path}{keys}")
+        print(f"{DIM}  {config_path()}{RESET}")
+        return 0
+    if len(argv) < 2:
+        print(f"platform infra {action} needs a path", file=sys.stderr)
+        return 2
+    path = Path(argv[1]).expanduser()
+    if action == "add":
+        if not (path / "inventory/hosts.yml").is_file():
+            print(
+                f"{path} has no inventory/hosts.yml — not an infrastructure repository",
+                file=sys.stderr,
+            )
+            return 1
+        print("registered" if register_infra(path) else "already registered")
+        return 0
+    print("forgotten" if forget_infra(path) else "was not registered")
+    return 0
+
+
 def run_doctor(context: Context) -> int:
     """Non-interactive on purpose: it has to work from a script and over a pipe."""
     findings = diagnose(context, read_tailnet())
@@ -852,6 +906,17 @@ def run(argv: list, start: Optional[Path] = None) -> int:
         return 2
 
     banner(context, stream=sys.stdout if sys.stdout.isatty() else sys.stderr)
+
+    if context.kind == "infra":
+        from .config import register_infra
+
+        if register_infra(context.root):
+            print(
+                f"{DIM}registered this infrastructure for new app and doctor: {context.root}{RESET}\n"
+            )
+
+    if argv and argv[0] == "infra":
+        return run_infra(argv[1:])
 
     if argv and argv[0] == "doctor":
         return run_doctor(context)

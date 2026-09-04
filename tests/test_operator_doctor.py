@@ -215,23 +215,70 @@ class AppDoctorTest(unittest.TestCase):
             by_title(findings, "deploy/platform.yml: secrets")[0].detail,
         )
         self.assertEqual(by_title(findings, "Core pin")[0].status, "skip")
-        self.assertIn("config.yml", by_title(findings, "Core pin")[0].detail)
+        self.assertIn("platform infra add", by_title(findings, "Core pin")[0].detail)
 
-    def test_configured_infrastructure_reveals_pin_drift(self) -> None:
-        infra = self.home / "infra"
+    def register_infra(self, pin="v0.13.3", recipients=None) -> Path:
+        infra = self.home / "platform-infra"
         write(
             infra / "requirements.yml",
             "collections:\n  - name: https://github.com/otostogan/platform-automation-core/"
-            "releases/download/v0.13.3/otostogan-platform-0.13.3.tar.gz\n    type: url\n",
+            f"releases/download/{pin}/otostogan-platform-{pin[1:]}.tar.gz\n    type: url\n",
         )
-        write(self.home / ".config/platform/config.yml", f"infra: {infra}\n")
+        write(
+            infra / "inventory/hosts.yml",
+            "all:\n  children:\n    platform_hosts:\n      hosts:\n        platform-host-1:\n"
+            "          ansible_host: platform-host-1.tailnet.example.net\n          ansible_user: ops\n",
+        )
+        if recipients is not None:
+            write(infra / "docs/RECIPIENTS.md", "```\n" + recipients + "```\n")
+        write(
+            self.home / ".config/platform/config.yml", f"infras:\n  - path: {infra}\n"
+        )
+        return infra
+
+    def test_registered_infrastructure_is_found_by_the_target_host(self) -> None:
+        self.register_infra(pin="v0.13.3")
 
         finding = by_title(self.diagnose(), "Core pin")[0]
 
         self.assertTrue(finding.failed)
         self.assertIn(
-            "application uses v0.14.0, infrastructure pins v0.13.3", finding.detail
+            "application uses v0.14.0, platform-infra pins v0.13.3", finding.detail
         )
+
+    def declare_recipients(self, *recipients) -> None:
+        lines = "".join(f"                - {r}\n" for r in recipients)
+        write(
+            self.root / ".sops.yaml",
+            "creation_rules:\n    - path_regex: deploy/secrets\\..*\\.sops\\.ya?ml$\n"
+            "      key_groups:\n          - age:\n" + lines,
+        )
+
+    def test_recipients_are_compared_with_what_the_infrastructure_publishes(
+        self,
+    ) -> None:
+        self.declare_recipients("age1syntheticfixture", "age1recoveryfixture")
+        self.register_infra(
+            pin="v0.14.0",
+            recipients="host      age1syntheticfixture\nrecovery  age1recoveryfixture\n",
+        )
+
+        findings = self.diagnose()
+
+        self.assertEqual(by_title(findings, "Core pin")[0].status, "ok")
+        self.assertEqual(by_title(findings, "Recipients")[0].status, "ok")
+
+    def test_a_missing_published_recipient_is_a_failure(self) -> None:
+        self.declare_recipients("age1syntheticfixture", "age1recoveryfixture")
+        self.register_infra(
+            pin="v0.14.0",
+            recipients="host      age1syntheticfixture\nrecovery  age1othersynthetic\n",
+        )
+
+        finding = by_title(self.diagnose(), "Recipients")[0]
+
+        self.assertTrue(finding.failed)
+        self.assertIn("lacks 1 recipient", finding.detail)
 
     def test_broken_compose_contract_is_reported_with_the_field(self) -> None:
         compose = self.root / "deploy/compose.yml"

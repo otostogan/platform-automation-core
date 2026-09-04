@@ -24,7 +24,8 @@ from ..validate_manifest import (
     validate_compose,
     validate_manifest,
 )
-from .config import infra_root
+from .config import infra_for_host, infras
+from .recipients import host_recipient, read_recipients, recovery_recipient
 from .context import Context, Host, read_collection_pin
 from .tailnet import Tailnet, find_peer
 
@@ -33,7 +34,7 @@ TAG_PATTERN = re.compile(r"^tag:[A-Za-z0-9][A-Za-z0-9_-]{0,62}$")
 ANSIBLE_VERSION_PATTERN = re.compile(r"core\s+(\d+\.\d+\.\d+)")
 REQUIREMENT_PATTERN = re.compile(r"^\s*(>=|<=|==|!=|>|<)\s*(\d+(?:\.\d+)*)\s*$")
 COLLECTION_RELATIVE = Path("ansible_collections/otostogan/platform")
-CONFIG_HINT = "set `infra:` in ~/.config/platform/config.yml"
+CONFIG_HINT = "register it with: platform infra add <path> (or run platform doctor inside it once)"
 
 
 @dataclass(frozen=True)
@@ -430,39 +431,86 @@ def diagnose_app(context: Context, tailnet: Tailnet, home: Path) -> list:
     else:
         findings.append(peer_finding(tailnet, context.target_host, "Target host"))
 
-    infra = infra_root(home)
+    infra = infra_for_host(context.target_host, home) if context.target_host else None
     if infra is None:
+        known = len(infras(home))
+        why = (
+            "no registered infrastructure lists this host"
+            if known
+            else "no infrastructure is registered"
+        )
+        findings.append(
+            skip("Core pin", f"{why} — {CONFIG_HINT}", "#/flow-core-update")
+        )
+        findings.append(skip("Recipients", f"{why}", "#/ref-keys"))
+        return findings
+
+    infra_pin = read_collection_pin(infra.path)
+    if infra_pin is None:
         findings.append(
             skip(
                 "Core pin",
-                f"cannot compare with the infrastructure pin — {CONFIG_HINT}",
+                f"{infra.path} has no readable requirements.yml pin",
                 "#/flow-core-update",
             )
         )
+    elif context.core_pin == infra_pin:
+        findings.append(ok("Core pin", f"{context.core_pin} matches {infra.name}"))
     else:
-        infra_pin = read_collection_pin(infra)
-        if infra_pin is None:
-            findings.append(
-                skip(
-                    "Core pin",
-                    f"{infra} has no readable requirements.yml pin",
-                    "#/flow-core-update",
-                )
+        findings.append(
+            fail(
+                "Core pin",
+                f"application uses {context.core_pin or 'no pin'}, {infra.name} pins {infra_pin}",
+                "#/flow-core-update",
             )
-        elif context.core_pin == infra_pin:
-            findings.append(
-                ok("Core pin", f"{context.core_pin} matches the infrastructure")
-            )
-        else:
-            findings.append(
-                fail(
-                    "Core pin",
-                    f"application uses {context.core_pin or 'no pin'}, infrastructure pins {infra_pin}",
-                    "#/flow-core-update",
-                )
-            )
+        )
 
+    findings.append(recipients_finding(context, infra))
     return findings
+
+
+def recipients_finding(context: Context, infra) -> Finding:
+    """Every application encrypts to the recipients the infrastructure publishes."""
+    published = read_recipients(infra.path)
+    if not published:
+        return skip(
+            "Recipients",
+            f"{infra.name} has no docs/RECIPIENTS.md to compare with",
+            "#/ref-keys",
+        )
+    sops_path = context.root / ".sops.yaml"
+    if not sops_path.is_file():
+        return fail(
+            "Recipients",
+            ".sops.yaml is missing; secrets cannot be encrypted for any host",
+            "#/flow-new-app",
+        )
+    document = load_yaml(sops_path)
+    declared = set()
+    try:
+        for rule in document.get("creation_rules") or []:
+            for group in rule.get("key_groups") or []:
+                declared.update(str(item) for item in group.get("age") or [])
+    except AttributeError:
+        pass
+    if not declared:
+        return fail(
+            "Recipients", ".sops.yaml declares no age recipients", "#/flow-new-app"
+        )
+    host_name = (context.target_host or "").split(".")[0]
+    expected = {host_recipient(published, host_name), recovery_recipient(published)} - {
+        None
+    }
+    missing = expected - declared
+    if missing:
+        return fail(
+            "Recipients",
+            f".sops.yaml lacks {len(missing)} recipient(s) that {infra.name} publishes in RECIPIENTS.md",
+            "#/ref-keys",
+        )
+    return ok(
+        "Recipients", f".sops.yaml carries both recipients {infra.name} publishes"
+    )
 
 
 # ---------------------------------------------------------------- entrypoint
