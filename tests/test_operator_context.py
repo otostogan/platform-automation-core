@@ -38,12 +38,23 @@ compose_file: deploy/compose.yml
 """
 
 DEPLOY_WORKFLOW = """\
+name: Deploy
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [lab, production]
+      ref:
+        type: string
+      label:
+        type: string
 jobs:
   deploy:
     uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.14.0
     with:
-      target_host: platform-host-1.tailnet.example.net
-      tailscale_tag: tag:ci-my-app
+      target_host: "platform-host-1.tailnet.example.net"
+      tailscale_tag: 'tag:ci-my-app'
 """
 
 
@@ -90,6 +101,21 @@ class DetectContextTest(unittest.TestCase):
         self.assertEqual(context.target_host, "platform-host-1.tailnet.example.net")
         self.assertEqual(context.tailscale_tag, "tag:ci-my-app")
         self.assertEqual(context.core_pin, "v0.14.0")
+        self.assertEqual(context.dispatch_inputs, ("environment", "ref", "label"))
+
+    def test_workflow_without_dispatch_inputs_or_reusable_job(self) -> None:
+        write(self.root / "deploy/platform.lab.yml", MANIFEST.format(environment="lab"))
+        write(
+            self.root / ".github/workflows/deploy.yml",
+            "on: push\njobs:\n  build:\n    runs-on: ubuntu-24.04\n    steps: []\n",
+        )
+
+        context = detect(self.root / "deploy", host_marker=self.no_host)
+
+        self.assertEqual(context.kind, "app")
+        self.assertIsNone(context.target_host)
+        self.assertIsNone(context.core_pin)
+        self.assertEqual(context.dispatch_inputs, ())
 
     def test_manifest_without_contract_is_not_an_application(self) -> None:
         write(self.root / "deploy/platform.lab.yml", "project: something\n")

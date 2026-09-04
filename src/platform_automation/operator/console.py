@@ -388,13 +388,29 @@ def host_actions(context: Context, host, prompts=None) -> list:
     return actions
 
 
+def deploy_command(dispatch_inputs: tuple, environment: str) -> str:
+    """The dispatch the application's own workflow declares, input by input.
+
+    Workflows differ — one takes ``environment`` and ``ref``, another takes an
+    image reference and a release tag — so the names come from the file, and
+    only the environment is filled in when the workflow asks for one.
+    """
+    if not dispatch_inputs:
+        return "gh workflow run deploy.yml  (deploy.yml declares no workflow_dispatch inputs)"
+    parts = ["gh", "workflow", "run", "deploy.yml"]
+    for name in dispatch_inputs:
+        value = environment if name == "environment" else f"<{name}>"
+        parts += ["-f", f"{name}={value}"]
+    return " ".join(parts)
+
+
 def app_actions(context: Context, scope) -> list:
     target = context.target_host or "<target host>"
     ident = ["--project", scope.project, "--environment", scope.environment]
     actions = [
         Action(
             "Deploy",
-            f"gh workflow run deploy.yml -f environment={scope.environment} -f ref=<ref>",
+            deploy_command(context.dispatch_inputs, scope.environment),
             None,
             "#/flow-deploy",
         ),

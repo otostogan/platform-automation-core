@@ -4,10 +4,30 @@ from platform_automation.operator.console import (
     render_backups,
     render_projects,
     render_status,
+    deploy_command,
     explain_host_error,
     tailnet_gate,
 )
 from platform_automation.operator.tailnet import parse_status
+
+
+class DeployCommandTest(unittest.TestCase):
+    def test_inputs_come_from_the_workflow_and_environment_is_filled_in(self) -> None:
+        self.assertEqual(
+            deploy_command(("environment", "ref", "label"), "production"),
+            "gh workflow run deploy.yml -f environment=production -f ref=<ref> -f label=<label>",
+        )
+
+    def test_a_workflow_with_other_inputs_gets_its_own_names(self) -> None:
+        command = deploy_command(
+            ("image_reference", "release_tag", "application_commit"), "lab"
+        )
+
+        self.assertIn("-f image_reference=<image_reference>", command)
+        self.assertNotIn("environment", command)
+
+    def test_no_declared_inputs_is_said_not_guessed(self) -> None:
+        self.assertIn("declares no workflow_dispatch inputs", deploy_command((), "lab"))
 
 
 class ExplainHostErrorTest(unittest.TestCase):
