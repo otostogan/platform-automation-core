@@ -1,0 +1,45 @@
+#!/bin/sh
+# Ставит тег в тот момент, когда изменение версии закоммичено.
+set -eu
+
+version_at() {
+    # ЕДИНСТВЕННАЯ функция, зависящая от языка проекта.
+    git show "$1:package.json" 2>/dev/null \
+        | node -p 'try{JSON.parse(require("fs").readFileSync(0,"utf8")).version||""}catch(e){""}' \
+        2>/dev/null || printf ''
+}
+
+current="$(version_at HEAD)"
+[ -n "${current}" ] || exit 0
+
+# На первом коммите сравнивать не с чем.
+if previous="$(git rev-parse --verify --quiet HEAD^ 2>/dev/null)"; then
+    [ "$(version_at "${previous}")" != "${current}" ] || exit 0
+fi
+
+tag="v${current}"
+
+if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+    printf 'post-commit: %s already exists, not tagging.\n' "${tag}"
+    exit 0
+fi
+
+# В аннотацию попадает то, что содержит выпуск: текст коммита с бампом,
+# затем заголовки всех коммитов с прошлой версии.
+previous_tag="$(git describe --tags --abbrev=0 "HEAD^" 2>/dev/null || printf '')"
+
+{
+    printf '%s\n\n' "${tag}"
+    printf '%s\n' "$(git log -1 --format='%B' HEAD)"
+
+    if [ -n "${previous_tag}" ]; then
+        changes="$(git log "${previous_tag}..HEAD^" --no-merges --format='- %s' 2>/dev/null || printf '')"
+        if [ -n "${changes}" ]; then
+            printf '\nSince %s:\n%s\n' "${previous_tag}" "${changes}"
+        fi
+    fi
+} | git tag -a "${tag}" -F -
+
+printf 'post-commit: tagged %s\n' "${tag}"
+printf '  git push        отправит коммит и тег вместе\n'
+printf '  git tag -d %s   если это было не то\n' "${tag}"

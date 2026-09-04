@@ -1,0 +1,40 @@
+#!/bin/sh
+# Не даёт отправить тег версии, расходящийся с номером в проекте.
+# Процесс выпуска проверяет то же самое, но уже после того, как тег стал
+# публичным, а публичный тег неудобно забирать назад.
+set -eu
+
+status=0
+
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    case "${_local_ref}" in
+        refs/tags/v*) ;;
+        *) continue ;;
+    esac
+
+    tag="${_local_ref#refs/tags/}"
+    expected="${tag#v}"
+
+    # Удаление тега отправляет нулевой sha.
+    case "${local_sha}" in
+        *[!0]*) ;;
+        *) continue ;;
+    esac
+
+    if ! manifest="$(git show "${local_sha}:package.json" 2>/dev/null)"; then
+        printf 'pre-push: %s has no package.json.\n' "${tag}" >&2
+        status=1
+        continue
+    fi
+
+    actual="$(printf '%s' "${manifest}" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).version || ""')"
+
+    if [ "${actual}" != "${expected}" ]; then
+        printf 'pre-push: refusing to push %s\n' "${tag}" >&2
+        printf '  package.json says: %s\n' "${actual:-<none>}" >&2
+        printf '  the tag says:      %s\n' "${expected}" >&2
+        status=1
+    fi
+done
+
+exit "${status}"

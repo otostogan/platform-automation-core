@@ -1,0 +1,14 @@
+database:
+    mode: docker
+    postgres_major: {{postgres_major}}
+    backup_enabled: true
+    backup:
+        interval_minutes: {{backup_interval}}
+        retain: {{backup_retain}}
+
+secrets:
+    source: deploy/secrets.{{env}}.sops.yaml
+    delivery: env
+
+restore_validation:
+    query: {{restore_query}}

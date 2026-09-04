@@ -6,6 +6,7 @@ before it runs; a choice that is not wired yet prints only the command, so
 what the console *would* do is never a guess.
 """
 
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -573,6 +574,414 @@ NEW_TARGETS = [
 ]
 
 
+def ask_app(context: Context, questionary, style) -> "AppAnswers":
+    """Ask only what cannot be read; show what was; let every answer be revisited."""
+    from .config import infras as registered_infras
+    from .context import read_collection_pin, read_hosts
+    from .doctor import age_recipient, host_secret_path
+    from .recipients import host_recipient, read_recipients, recovery_recipient
+    from .scaffold import (
+        AppAnswers,
+        DOMAIN_PATTERN,
+        ENVIRONMENTS,
+        PROJECT_PATTERN,
+        SECRET_NAME_PATTERN,
+        git_org,
+    )
+    from .wizard import BACK, CANCEL, Step, is_back, run_wizard
+
+    root = context.root
+    hint = "(< to go back)"
+
+    def text(message, default="", validate=None):
+        # The previous value is shown, not pre-typed: a pre-filled buffer is
+        # how a new answer gets glued onto the old one. Empty Enter keeps it.
+        default = "" if default is None else str(default)
+        keeps = f"Enter keeps {default} · " if default else ""
+
+        def check(value):
+            if is_back(value) or (value == "" and default):
+                return True
+            return validate(value) if validate else True
+
+        answer = questionary.text(
+            message,
+            validate=check,
+            style=style,
+            instruction=f"({keeps}< to go back)",
+        ).ask()
+        if answer is None:
+            return CANCEL
+        if is_back(answer):
+            return BACK
+        return default if answer == "" and default else answer
+
+    def select(message, options, describe):
+        answer = questionary.select(
+            message,
+            choices=[questionary.Choice(title=describe(o), value=o) for o in options]
+            + [questionary.Choice(title="← Back", value=BACK)],
+            style=style,
+            pointer="»",
+            instruction="(↑↓ to move, enter to select)",
+        ).ask()
+        return CANCEL if answer is None else answer
+
+    def number(message, key, default, low, high):
+        def ask(state):
+            answer = text(
+                message,
+                state.get(key, default),
+                lambda v: (v.isdigit() and low <= int(v) <= high) or f"{low}–{high}",
+            )
+            return answer if answer in (BACK, CANCEL) else int(answer)
+
+        return ask
+
+    # -------------------------------------------------------------- steps
+    def ask_project(state):
+        return text(
+            "Project",
+            state.get("project")
+            or (root.name if PROJECT_PATTERN.match(root.name) else ""),
+            lambda v: bool(PROJECT_PATTERN.match(v))
+            or "lowercase, digits and dashes, 2–63 chars",
+        )
+
+    def ask_owner(state):
+        return text(
+            "ghcr.io owner (org)",
+            state.get("owner") or git_org(root) or "",
+            lambda v: bool(v) or "required",
+        )
+
+    def ask_environments(state):
+        chosen = set(state.get("environments") or ("lab", "production"))
+        answer = questionary.checkbox(
+            "Environments",
+            choices=[questionary.Choice(e, checked=e in chosen) for e in ENVIRONMENTS],
+            style=style,
+            instruction="(space to toggle, enter to confirm)",
+        ).ask()
+        if answer is None:
+            return CANCEL
+        return tuple(answer) if answer else BACK
+
+    def ask_domain(environment):
+        def ask(state):
+            return text(
+                f"Domain for {environment}",
+                state.get(f"domain:{environment}", ""),
+                lambda v: bool(DOMAIN_PATTERN.match(v))
+                or "lowercase, at least one dot",
+            )
+
+        return ask
+
+    def env_applies(environment):
+        return lambda state: environment in (state.get("environments") or ())
+
+    def ask_host(state):
+        """Infrastructure → host → target, recipients and pin; or typed."""
+        known = registered_infras()
+        if not known:
+            print(
+                f"{DIM}  no infrastructure registered (platform infra add <path>) — asking instead{RESET}"
+            )
+            return {}
+        infra = (
+            known[0]
+            if len(known) == 1
+            else select("Infrastructure", known, lambda i: f"{i.name}  {i.path}")
+        )
+        if infra in (BACK, CANCEL):
+            return infra
+        hosts = read_hosts(infra.path)
+        if not hosts:
+            print(f"{DIM}  {infra.name} lists no hosts yet — asking instead{RESET}")
+            return {}
+        host = select(
+            "Target host", list(hosts), lambda h: f"{h.name}  {h.address or ''}"
+        )
+        if host in (BACK, CANCEL):
+            return host
+        published = read_recipients(infra.path)
+        recipient_host = host_recipient(published, host.name) or ""
+        if not recipient_host:
+            key_path = host_secret_path(infra.path, host, "secrets_age_key_source")
+            if key_path is not None and key_path.is_file():
+                recipient_host = age_recipient(key_path, subprocess.run) or ""
+        derived = {
+            "target_host": host.address or host.name,
+            "recipient_host": recipient_host,
+            "recipient_recovery": recovery_recipient(published) or "",
+            "core_pin": read_collection_pin(infra.path),
+        }
+        print(
+            f"{DIM}  {infra.name}: host {derived['target_host']} · recipients "
+            f"{'host ✓' if derived['recipient_host'] else 'host ?'} "
+            f"{'recovery ✓' if derived['recipient_recovery'] else 'recovery ?'}"
+            f" · core {derived['core_pin'] or '?'}{RESET}"
+        )
+        return derived
+
+    def derived(state, key):
+        return (state.get("infra") or {}).get(key) or ""
+
+    def ask_target(state):
+        return text(
+            "Target host (MagicDNS name)",
+            state.get("target_host", ""),
+            lambda v: bool(v) or "required",
+        )
+
+    def ask_recipient(label, key):
+        def ask(state):
+            return text(
+                f"{label} age recipient (age1…)",
+                state.get(key, ""),
+                lambda v: v.startswith("age1") or "age1…",
+            )
+
+        return ask
+
+    def ask_database(state):
+        return select(
+            "Database",
+            ["docker", "external"],
+            lambda m: (
+                "platform-owned (docker)"
+                if m == "docker"
+                else "external — the platform will not back it up"
+            ),
+        )
+
+    def ask_major(state):
+        return select("PostgreSQL major", [18, 17, 16], str)
+
+    def ask_schedule(state):
+        return select(
+            "Scheduled backups",
+            [True, False],
+            lambda on: (
+                "yes — a timer takes dumps"
+                if on
+                else "no — only the dump before each migration"
+            ),
+        )
+
+    def ask_query(state):
+        return text("Restore validation query", state.get("restore_query", "SELECT 1"))
+
+    def ask_secret_names(state):
+        answer = text(
+            "Secret names, comma-separated (values come later via sops)",
+            ", ".join(state.get("secret_names") or ("API_TOKEN", "SESSION_SECRET")),
+            lambda v: all(
+                SECRET_NAME_PATTERN.match(n.strip()) for n in v.split(",") if n.strip()
+            )
+            or "environment variable names",
+        )
+        if answer in (BACK, CANCEL):
+            return answer
+        return tuple(n.strip() for n in answer.split(",") if n.strip())
+
+    steps = [
+        Step("project", ask_project, label="Project"),
+        Step("owner", ask_owner, label="ghcr.io owner"),
+        Step("environments", ask_environments, label="Environments"),
+        *[
+            Step(f"domain:{e}", ask_domain(e), env_applies(e), label=f"Domain for {e}")
+            for e in ENVIRONMENTS
+        ],
+        Step("infra", ask_host, label="Infrastructure and host"),
+        Step(
+            "target_host",
+            ask_target,
+            lambda st: not derived(st, "target_host"),
+            label="Target host",
+        ),
+        Step(
+            "recipient_host",
+            ask_recipient("Host", "recipient_host"),
+            lambda st: not derived(st, "recipient_host"),
+            label="Host recipient",
+        ),
+        Step(
+            "recipient_recovery",
+            ask_recipient("Recovery", "recipient_recovery"),
+            lambda st: not derived(st, "recipient_recovery"),
+            label="Recovery recipient",
+        ),
+        Step(
+            "internal_port",
+            number("Internal port", "internal_port", 3000, 1, 65535),
+            label="Internal port",
+        ),
+        Step(
+            "healthcheck_path",
+            lambda st: text(
+                "Healthcheck path",
+                st.get("healthcheck_path", "/"),
+                lambda v: v.startswith("/") or "starts with /",
+            ),
+            label="Healthcheck path",
+        ),
+        Step(
+            "healthcheck_timeout",
+            number("Healthcheck timeout, seconds", "healthcheck_timeout", 120, 1, 3600),
+            label="Healthcheck timeout",
+        ),
+        Step("database_mode", ask_database, label="Database"),
+        Step("postgres_major", ask_major, label="PostgreSQL major"),
+        Step(
+            "backup_enabled",
+            ask_schedule,
+            lambda st: st.get("database_mode") == "docker",
+            label="Scheduled backups",
+        ),
+        Step(
+            "backup_interval",
+            number("Backup every N minutes", "backup_interval", 15, 15, 1440),
+            lambda st: st.get("database_mode") == "docker"
+            and st.get("backup_enabled", True),
+            label="Backup interval",
+        ),
+        Step(
+            "backup_retain",
+            number("Keep N dumps locally", "backup_retain", 3, 1, 100),
+            lambda st: st.get("database_mode") == "docker"
+            and st.get("backup_enabled", True),
+            label="Dumps to keep",
+        ),
+        Step("restore_query", ask_query, label="Restore query"),
+        Step("secret_names", ask_secret_names, label="Secret names"),
+    ]
+
+    def shown(state, step):
+        value = state.get(step.key)
+        if step.key == "infra":
+            return f"{derived(state, 'target_host') or 'typed below'} · core {derived(state, 'core_pin') or '—'}"
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        if isinstance(value, (tuple, list)):
+            return ", ".join(str(v) for v in value)
+        return "" if value is None else str(value)
+
+    def review(state):
+        print()
+        print(f"{BOLD}Review{RESET}")
+        for step in steps:
+            if step.applies(state) and step.key in state:
+                print(f"  {step.label:<22} {shown(state, step)}")
+        options = [None] + [s for s in steps if s.applies(state) and s.key in state]
+        # A choice whose value is None would be indistinguishable from Ctrl-C
+        # (ask() returns None for both), so "write" is a sentinel of its own.
+        answer = questionary.select(
+            "Write these files?",
+            choices=[questionary.Choice(title="Yes, write", value=WRITE)]
+            + [
+                questionary.Choice(title=f"Change: {s.label}", value=s.key)
+                for s in options[1:]
+            ]
+            + [questionary.Choice(title="Cancel", value=CANCEL)],
+            style=style,
+            pointer="»",
+        ).ask()
+        if answer is None:
+            return CANCEL
+        return None if answer is WRITE else answer
+
+    WRITE = object()
+    state = run_wizard(steps, review=review)
+    infra = state.get("infra") or {}
+    environments = state["environments"]
+    return AppAnswers(
+        project=state["project"],
+        owner=state["owner"],
+        environments=environments,
+        domains={e: state[f"domain:{e}"] for e in environments},
+        target_host=infra.get("target_host") or state.get("target_host", ""),
+        recipient_host=infra.get("recipient_host") or state.get("recipient_host", ""),
+        recipient_recovery=infra.get("recipient_recovery")
+        or state.get("recipient_recovery", ""),
+        internal_port=state["internal_port"],
+        healthcheck_path=state["healthcheck_path"],
+        healthcheck_timeout=state["healthcheck_timeout"],
+        database_mode=state["database_mode"],
+        backup_enabled=state.get("backup_enabled", True),
+        postgres_major=state["postgres_major"],
+        backup_interval=state.get("backup_interval", 15),
+        backup_retain=state.get("backup_retain", 3),
+        restore_query=state["restore_query"],
+        secret_names=state["secret_names"],
+        **({"core_pin": infra["core_pin"]} if infra.get("core_pin") else {}),
+    )
+
+
+def run_new_app(context: Context, questionary, style) -> int:
+    from .wizard import Cancelled
+    from .scaffold import (
+        ScaffoldError,
+        encrypt_secrets,
+        existing_targets,
+        next_steps,
+        render_app,
+        validate_app,
+        write_files,
+    )
+
+    root = context.root if context.kind != "nowhere" else Path.cwd()
+    try:
+        answers = ask_app(context, questionary, style)
+        files = render_app(answers)
+        clashes = existing_targets(root, files)
+        if clashes:
+            print(f"{RED}refusing to overwrite: {', '.join(clashes)}{RESET}")
+            print(
+                "new app never edits what is already there; remove or rename these first"
+            )
+            return 1
+        print()
+        print(f"{DIM}→ writing {len(files)} files under {root}{RESET}")
+        written = write_files(root, files)
+        encrypted = encrypt_secrets(root, files)
+        report = validate_app(root, files)
+        from .secrets import enable_hooks
+
+        hooks = enable_hooks(root)
+    except ScaffoldError as error:
+        print(f"{RED}{error}{RESET}")
+        return 1
+    except Cancelled:
+        print("cancelled — nothing written")
+        return 130
+
+    failed = 0
+    for relative, errors in report.items():
+        if errors:
+            failed += 1
+            print(f"{RED}invalid application contract: {relative}{RESET}")
+            for error in errors:
+                print(f"  - {error}")
+        else:
+            print(f"{GREEN}valid application contract: {relative}{RESET}")
+    for relative in encrypted:
+        print(f"{GREEN}encrypted: {relative}{RESET}")
+    if hooks:
+        print(
+            f"{GREEN}hooks enabled: core.hooksPath=.githooks, push.followTags=true{RESET}"
+        )
+    else:
+        print(
+            f"{DIM}not a git repository yet — after git init: git config core.hooksPath .githooks{RESET}"
+        )
+    print()
+    print(next_steps(answers, written))
+    print(f"{DIM}  handbook: {HANDBOOK}#/flow-new-app{RESET}")
+    return 1 if failed else 0
+
+
 def run_new(context: Context, target: Optional[str]) -> int:
     questionary, style = load_prompts()
 
@@ -590,8 +999,112 @@ def run_new(context: Context, target: Optional[str]) -> int:
             ],
         )
 
+    if target == "app":
+        return run_new_app(context, questionary, style)
+
     print()
     print(f"{DIM}→ scaffold '{target}' is not wired yet.{RESET}")
+    return 0
+
+
+def run_secrets(context: Context, argv: list) -> int:
+    """platform secrets push [env] [--stale] [--stage] | pull <env>."""
+    from .secrets import (
+        SecretsError,
+        enable_hooks,
+        pull_env,
+        stage,
+        staged_plaintext,
+        sync,
+    )
+
+    if context.kind != "app":
+        print(
+            "secrets needs an application repository (deploy/platform.<env>.yml)",
+            file=sys.stderr,
+        )
+        return 2
+    action = argv[0] if argv else "push"
+    flags = {a for a in argv[1:] if a.startswith("--")}
+    names = [a for a in argv[1:] if not a.startswith("--")]
+    root = context.root
+    try:
+        if action == "pull":
+            if not names:
+                print("platform secrets pull <environment>", file=sys.stderr)
+                return 2
+            path = pull_env(root, names[0])
+            print(
+                f"{GREEN}written: {path.relative_to(root)}{RESET}  (mode 0600, ignored by git)"
+            )
+            return 0
+        if action != "push":
+            print(f"unknown secrets action: {action}", file=sys.stderr)
+            return 2
+        leaked = staged_plaintext(root)
+        if leaked:
+            print(
+                f"{RED}refusing: staged plaintext {', '.join(leaked)} — .env.* never enters git{RESET}"
+            )
+            return 1
+        results = sync(
+            root, only=names[0] if names else None, stale_only="--stale" in flags
+        )
+        if not results:
+            print("no environments found under deploy/", file=sys.stderr)
+            return 1
+        to_stage = []
+        for result in results:
+            mark = GREEN + "✓" + RESET if result.written else DIM + "–" + RESET
+            note = (
+                f" (dropped {', '.join(result.dropped)}: the platform provides it)"
+                if result.dropped
+                else ""
+            )
+            print(f" {mark} {result.environment:<12} {result.reason}{note}")
+            if result.written:
+                to_stage.append(f"deploy/secrets.{result.environment}.sops.yaml")
+        if "--stage" in flags and to_stage:
+            stage(root, to_stage)
+            print(f"{DIM}  staged: {', '.join(to_stage)}{RESET}")
+        enable_hooks(root)
+        return 0
+    except SecretsError as error:
+        print(f"{RED}secrets error: {error}{RESET}", file=sys.stderr)
+        return 1
+
+
+def run_infra(argv: list) -> int:
+    """platform infra list|add <path>|forget <path> — paths only, no secrets."""
+    from .config import config_path, forget_infra, infras, register_infra
+
+    action = argv[0] if argv else "list"
+    if action == "list":
+        known = infras()
+        if not known:
+            print(
+                "No infrastructure registered yet. Run platform doctor inside one, or: platform infra add <path>"
+            )
+            return 0
+        for infra in known:
+            keys = f"  keys {infra.keys}" if infra.keys else ""
+            print(f"{infra.name:<20} {infra.path}{keys}")
+        print(f"{DIM}  {config_path()}{RESET}")
+        return 0
+    if len(argv) < 2:
+        print(f"platform infra {action} needs a path", file=sys.stderr)
+        return 2
+    path = Path(argv[1]).expanduser()
+    if action == "add":
+        if not (path / "inventory/hosts.yml").is_file():
+            print(
+                f"{path} has no inventory/hosts.yml — not an infrastructure repository",
+                file=sys.stderr,
+            )
+            return 1
+        print("registered" if register_infra(path) else "already registered")
+        return 0
+    print("forgotten" if forget_infra(path) else "was not registered")
     return 0
 
 
@@ -632,6 +1145,20 @@ def run(argv: list, start: Optional[Path] = None) -> int:
         return 2
 
     banner(context, stream=sys.stdout if sys.stdout.isatty() else sys.stderr)
+
+    if context.kind == "infra":
+        from .config import register_infra
+
+        if register_infra(context.root):
+            print(
+                f"{DIM}registered this infrastructure for new app and doctor: {context.root}{RESET}\n"
+            )
+
+    if argv and argv[0] == "infra":
+        return run_infra(argv[1:])
+
+    if argv and argv[0] == "secrets":
+        return run_secrets(context, argv[1:])
 
     if argv and argv[0] == "doctor":
         return run_doctor(context)

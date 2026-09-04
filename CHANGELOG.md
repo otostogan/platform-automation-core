@@ -7,6 +7,42 @@ release.
 
 ## [Unreleased]
 
+- Secrets are edited as plain `.env.<environment>` files and never as SOPS
+  documents. `new app` writes one per environment (ignored by git), a
+  `pre-commit` hook calls `platform secrets push`, which encrypts the file
+  into the committed `deploy/secrets.<environment>.sops.yaml` with the rules
+  the host applies — variable names checked, dotenv quotes stripped,
+  `DATABASE_URL` dropped when the platform runs the database and required
+  when it does not — and stages the ciphertext; staging a `.env.*` file is
+  refused. `platform secrets pull <environment>` decrypts the ciphertext back
+  for a key holder. `new app` enables the hooks itself (`core.hooksPath`,
+  `push.followTags`) and `doctor` checks that they are active, that `.env.*`
+  is ignored, and that no ciphertext is older than its `.env`. Nothing in the
+  runtime, the roles or the contracts changes: the committed artifact is the
+  same file the host has always decrypted.
+
+- The console keeps a registry of infrastructure repositories on the
+  workstation (`~/.config/platform/config.yml`, paths only). It fills itself:
+  running the console or `doctor` inside an infrastructure registers it, and
+  `platform infra list|add|forget` manages it by hand. `new app` then offers
+  the infrastructure and its hosts, and takes the target host from the
+  inventory, both age recipients from the infrastructure's
+  `docs/RECIPIENTS.md`, and the core pin from its `requirements.yml` — so a
+  new application deploys with the version its hosts actually run. `doctor`
+  in an application finds its infrastructure by the host it deploys to and
+  compares both the pin and the recipients.
+
+- Add `platform new app`: writes the manifest per environment, the Compose
+  file, `.sops.yaml`, the encrypted secrets file, the three workflows and the
+  two hooks from the handbook's own templates — a test keeps the two identical.
+  Project and organisation are read from the repository, host and recipients
+  from the infrastructure when `~/.config/platform/config.yml` names it, and
+  only the rest is asked. Secrets are created by name with placeholder values
+  and encrypted at once; real values go in through `sops`. Existing files are
+  never overwritten — except `.gitignore`, which every real repository already
+  has: the missing ignore lines are appended to it — and the result is
+  validated the way a deployment would.
+
 - The operator console stays open after an action: it returns to the first
   question — host or environment — instead of exiting, so several actions in a
   row do not mean re-entering the context each time. `Exit` on the first menu

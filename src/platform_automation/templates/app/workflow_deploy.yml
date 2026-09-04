@@ -1,0 +1,129 @@
+---
+name: Deploy
+
+on:
+    workflow_dispatch:
+        inputs:
+            environment:
+                description: Целевое окружение
+                required: true
+                type: choice
+                options:
+                    - lab
+                    - production
+            ref:
+                description: Что выкатить — версия, ветка или коммит. Пусто — последний выпуск.
+                required: false
+                type: string
+            label:
+                description: Необязательно. Имя записи в реестре и цель отката.
+                required: false
+                type: string
+
+jobs:
+    # Платформа выкатывает по отпечатку и отвергает подвижную метку,
+    # поэтому отпечаток резолвится здесь: оператор пишет имя ветки,
+    # а не вставляет 71 символ и не может вставить не те.
+    resolve:
+        name: Resolve image
+        runs-on: ubuntu-24.04
+        timeout-minutes: 5
+        permissions:
+            contents: read
+            packages: read
+        outputs:
+            image: ${{ steps.resolve.outputs.image }}
+            release_tag: ${{ steps.resolve.outputs.release_tag }}
+            commit: ${{ steps.resolve.outputs.commit }}
+        env:
+            REPOSITORY: ghcr.io/{{org}}/{{project}}
+        steps:
+            # Вероятная ошибка — вставить сюда ссылку на образ.
+            - name: Reject an image reference in the ref field
+              env:
+                  REF: ${{ inputs.ref }}
+              run: |
+                  if [[ "${REF}" == *"@sha256:"* || "${REF}" == *"/"*":"* ]]; then
+                      echo "ref takes a branch or commit, not an image." >&2
+                      exit 1
+                  fi
+
+            # Умолчание — последний выпуск, а не голова ветки: выкатка
+            # «того, что сейчас на main» — обычный способ увезти
+            # незарелизенную работу в боевое окружение.
+            - name: Choose what to deploy
+              id: chosen
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  REF: ${{ inputs.ref }}
+              run: |
+                  ref="${REF}"
+                  if [[ -z "${ref}" ]]; then
+                      ref="$(gh release view --repo "${GITHUB_REPOSITORY}" \
+                          --json tagName --jq .tagName)"
+                  fi
+                  echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+
+            - uses: actions/checkout@v5
+              with:
+                  ref: ${{ steps.chosen.outputs.ref }}
+                  fetch-depth: 0
+
+            - uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Resolve the commit to an image digest
+              id: resolve
+              env:
+                  CHOSEN_REF: ${{ steps.chosen.outputs.ref }}
+                  ENVIRONMENT: ${{ inputs.environment }}
+                  SUPPLIED_LABEL: ${{ inputs.label }}
+              run: |
+                  commit="$(git rev-parse HEAD)"
+                  short="$(git rev-parse --short HEAD)"
+
+                  if ! digest="$(
+                      docker buildx imagetools inspect \
+                          "${REPOSITORY}:${commit}" \
+                          --format '{{.Manifest.Digest}}' 2>/dev/null
+                  )"; then
+                      echo "No image built for ${commit}." >&2
+                      exit 1
+                  fi
+
+                  release_tag="${SUPPLIED_LABEL}"
+                  if [[ -z "${release_tag}" ]]; then
+                      if [[ "${CHOSEN_REF}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                          release_tag="${ENVIRONMENT}-${CHOSEN_REF}"
+                      else
+                          release_tag="${ENVIRONMENT}-${short}"
+                      fi
+                  fi
+
+                  echo "image=${REPOSITORY}@${digest}" >> "${GITHUB_OUTPUT}"
+                  echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
+                  # Пакет собирается из этого же коммита, поэтому манифест
+                  # и образ не могут описывать разные ревизии.
+                  echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
+
+    deploy:
+        needs: resolve
+        permissions:
+            contents: read
+            id-token: write
+            packages: read
+        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@{{core_pin}}
+        with:
+            manifest_path: deploy/platform.${{ inputs.environment }}.yml
+            image_reference: ${{ needs.resolve.outputs.image }}
+            application_commit: ${{ needs.resolve.outputs.commit }}
+            release_tag: ${{ needs.resolve.outputs.release_tag }}
+            target_host: {{tailnet}}
+            tailscale_tag: tag:ci-{{project}}
+            minimum_age_recipients: 2
+        secrets:
+            tailscale_oauth_client_id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+            tailscale_audience: ${{ secrets.TS_AUDIENCE }}

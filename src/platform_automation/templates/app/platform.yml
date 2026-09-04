@@ -1,0 +1,24 @@
+api_version: platform/v1
+project: {{project}}
+environment: {{env}}
+compose_file: deploy/compose.yml
+
+image:
+    repository: ghcr.io/{{org}}/{{project}}
+
+service:
+    web: web
+    internal_port: {{internal_port}}
+    healthcheck:
+        path: {{healthcheck_path}}
+        timeout_seconds: {{healthcheck_timeout}}
+
+domains:
+    - host: {{domain}}
+      tls: true
+      nginx:
+          client_max_body_size: 10m
+          proxy_read_timeout: 60s
+
+deployment:
+    retained_releases: 5

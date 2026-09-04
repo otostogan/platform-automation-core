@@ -1,0 +1,39 @@
+name: ${PLATFORM_COMPOSE_PROJECT_NAME:-{{project}}}
+
+services:
+    web:
+        image: ${PLATFORM_IMAGE:?}
+        restart: unless-stopped
+        init: true
+        read_only: true
+
+        env_file:
+            - ${PLATFORM_RUNTIME_ENV_FILE:?}
+
+        environment:
+            VIRTUAL_HOST: ${PLATFORM_VIRTUAL_HOSTS:?}
+            VIRTUAL_PORT: ${PLATFORM_INTERNAL_PORT:?}
+            LETSENCRYPT_HOST: ${PLATFORM_TLS_HOSTS:-}
+
+        expose:
+            - "{{internal_port}}"
+
+        networks:
+            - edge
+            - db
+
+        tmpfs:
+            - /tmp
+
+        mem_limit: 512m
+        security_opt:
+            - no-new-privileges:true
+
+networks:
+    edge:
+        name: platform-edge
+        external: true
+
+    db:
+        name: ${PLATFORM_DB_NETWORK:?}
+        external: true
