@@ -236,6 +236,17 @@ class AppDoctorTest(unittest.TestCase):
         )
         return infra
 
+    def test_templates_are_checked_without_a_registered_infrastructure(self) -> None:
+        write(
+            self.root / ".github/workflows/build.yml",
+            "jobs:\n  build:\n    env:\n      REPOSITORY: ghcr.io/example/example\n",
+        )
+        findings = self.diagnose()
+        self.assertEqual(by_title(findings, "Core pin")[0].status, "skip")
+        finding = by_title(findings, "Templates")[0]
+        self.assertTrue(finding.failed, finding.detail)
+        self.assertIn("platform update", finding.detail)
+
     def test_templates_behind_the_console_are_reported(self) -> None:
         from platform_automation.operator.scaffold import strip_marker
 

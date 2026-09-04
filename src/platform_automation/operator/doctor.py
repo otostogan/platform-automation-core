@@ -483,6 +483,8 @@ def diagnose_app(context: Context, tailnet: Tailnet, home: Path) -> list:
     else:
         findings.append(peer_finding(tailnet, context.target_host, "Target host"))
 
+    findings.append(templates_finding(context, home))
+
     infra = infra_for_host(context.target_host, home) if context.target_host else None
     if infra is None:
         known = len(infras(home))
@@ -518,7 +520,6 @@ def diagnose_app(context: Context, tailnet: Tailnet, home: Path) -> list:
         )
 
     findings.append(recipients_finding(context, infra))
-    findings.append(templates_finding(context, home))
     return findings
 
 

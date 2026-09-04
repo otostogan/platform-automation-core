@@ -245,10 +245,38 @@ def apply(root: Path, changes: list) -> list:
     return written
 
 
+def declared_recipients(text: str) -> set:
+    """The age recipients a ``.sops.yaml`` text names, in any rule or group."""
+    import yaml
+
+    try:
+        document = yaml.safe_load(strip_marker(text))
+    except yaml.YAMLError:
+        return set()
+    found = set()
+    try:
+        for rule in document.get("creation_rules") or []:
+            for group in rule.get("key_groups") or []:
+                found.update(str(item) for item in group.get("age") or [])
+    except AttributeError:
+        pass
+    return found
+
+
 def recipients_changed(changes: list) -> bool:
-    return any(
-        change.path == ".sops.yaml" and change.kind == "update" for change in changes
-    )
+    """Only a different set of recipients makes the ciphertext stale.
+
+    A new console version changes the marker line of ``.sops.yaml`` too; that
+    must not re-encrypt anything. A ``.sops.yaml`` that did not exist means
+    the ciphertext was made under unknown rules, so it counts as changed.
+    """
+    for change in changes:
+        if change.path != ".sops.yaml" or not change.writes:
+            continue
+        if change.kind == "create":
+            return True
+        return declared_recipients(change.current) != declared_recipients(change.wanted)
+    return False
 
 
 def behind(root: Path, files: dict) -> list:

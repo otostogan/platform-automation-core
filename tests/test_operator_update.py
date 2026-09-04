@@ -89,6 +89,26 @@ class MarkerTest(unittest.TestCase):
         )[".github/workflows/deploy.yml"]
         self.assertNotIn("- staging", two)
 
+    def test_only_different_recipients_count_as_a_recipient_change(self) -> None:
+        from platform_automation.operator.update import Change
+
+        same = with_marker(
+            "creation_rules:\n  - key_groups:\n      - age:\n          - age1a\n          - age1b\n"
+        )
+        older = same.replace("v" + __version__, "v0.0.1")
+        other = same.replace("age1b", "age1c")
+
+        self.assertFalse(
+            recipients_changed([Change(".sops.yaml", "update", older, same)])
+        )
+        self.assertTrue(
+            recipients_changed([Change(".sops.yaml", "update", same, other)])
+        )
+        self.assertTrue(recipients_changed([Change(".sops.yaml", "create", "", same)]))
+        self.assertFalse(
+            recipients_changed([Change(".sops.yaml", "owned", other, same)])
+        )
+
     def test_console_ahead_of_hosts(self) -> None:
         self.assertTrue(console_ahead_of_hosts("v0.15.0", "0.15.1"))
         self.assertFalse(console_ahead_of_hosts("v0.15.1", "0.15.1"))
