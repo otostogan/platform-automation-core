@@ -642,6 +642,22 @@ def print_human_status(document: dict[str, Any]) -> None:
     print_backup_status(document["backups"])
 
 
+def is_platform_host(projects_root: Path) -> bool:
+    """Whether this process runs on a converged host, without needing root.
+
+    ``/var/lib/platform`` is root-owned and mode 0750, so ``ops`` cannot look
+    inside it: ``is_dir()`` on the projects root raises PermissionError there
+    rather than answering. A workstation has no such directory at all, so a
+    denied look is itself the answer.
+    """
+    try:
+        return projects_root.is_dir()
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
 def summarize_release(record: dict[str, Any]) -> dict[str, Any]:
     if record is None:
         return None
@@ -2423,6 +2439,16 @@ def main(
     arguments = parse_arguments(argv)
 
     if arguments.command in (None, "new", "doctor"):
+        # The operator console is workstation-only and is not shipped to
+        # hosts, so the refusal has to happen here, before it is imported.
+        if is_platform_host(projects_root):
+            print(
+                "This is a platform host. The operator console runs on your "
+                "workstation; here, use: sudo -n platform <command>",
+                file=sys.stderr,
+            )
+            return 2
+
         from .operator.console import run as run_console
 
         console_argv = [] if arguments.command is None else [arguments.command]

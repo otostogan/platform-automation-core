@@ -1,4 +1,5 @@
 import io
+import os
 import json
 import tempfile
 import unittest
@@ -670,6 +671,41 @@ class PlatformCliTest(unittest.TestCase):
         )
 
         return record
+
+    def test_bare_platform_on_a_host_refuses_without_the_console(self) -> None:
+        # An existing projects root is what makes this "a host".
+        self.projects_root.mkdir(parents=True, exist_ok=True)
+
+        for arguments in ((), ("doctor",), ("new",)):
+            code, _, stderr = self.run_cli(*arguments)
+
+            self.assertEqual(code, 2, arguments)
+            self.assertIn("This is a platform host", stderr)
+            self.assertNotIn("Traceback", stderr)
+
+    @unittest.skipIf(os.geteuid() == 0, "root can traverse anything")
+    def test_bare_platform_as_ops_cannot_look_inside_the_root_and_still_refuses(
+        self,
+    ) -> None:
+        # /var/lib/platform is root:root 0750 on a host: ops cannot traverse
+        # it, so the projects root cannot even be stat'ed.
+        locked = self.base / "locked"
+        locked.mkdir()
+        (locked / "projects").mkdir()
+        locked.chmod(0o000)
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        try:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = main([], projects_root=locked / "projects")
+        finally:
+            # tearDown removes the temporary tree; it must be traversable again.
+            locked.chmod(0o700)
+
+        self.assertEqual(code, 2)
+        self.assertIn("This is a platform host", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_projects_lists_every_scope_with_its_current_release(self) -> None:
         self.write_record("1" * 32, "2026-08-25T12:00:00Z", "v1", "deployed")
