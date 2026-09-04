@@ -7,6 +7,11 @@ release.
 
 ## [Unreleased]
 
+- The operator console stays open after an action: it returns to the first
+  question — host or environment — instead of exiting, so several actions in a
+  row do not mean re-entering the context each time. `Exit` on the first menu
+  and `← Back` on the action menu; Esc and Ctrl-C still leave.
+
 ## [0.15.1] - 2026-09-04
 
 - Fix bare `platform` (and `platform doctor` / `platform new`) on a host.

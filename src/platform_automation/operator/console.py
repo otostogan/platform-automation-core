@@ -490,35 +490,77 @@ def choose(questionary, style, message: str, options: list, describe: Callable):
     return answer
 
 
-def run_menu(context: Context) -> int:
-    questionary, style = load_prompts()
+EXIT = object()
+BACK = object()
 
+
+def choose_scope(context: Context, questionary, style):
+    """The first question: which host, or which environment. None means exit."""
     if context.kind == "infra":
-        if not context.hosts:
-            print("The inventory lists no hosts yet. Start with: platform new host")
-            return 1
-        host = choose(questionary, style, "Host", list(context.hosts), lambda h: h.name)
-        actions = host_actions(context, host, prompts=(questionary, style))
-    elif context.kind == "app":
-        if not context.environments:
-            print(
-                "No platform/v1 manifest found under deploy/. Start with: platform new app"
-            )
-            return 1
-        scope = choose(
+        options = [*context.hosts, EXIT]
+        answer = choose(
+            questionary,
+            style,
+            "Host",
+            options,
+            lambda h: "Exit" if h is EXIT else h.name,
+        )
+    else:
+        options = [*context.environments, EXIT]
+        answer = choose(
             questionary,
             style,
             "Environment",
-            list(context.environments),
-            lambda s: f"{s.project}/{s.environment}",
+            options,
+            lambda s: "Exit" if s is EXIT else f"{s.project}/{s.environment}",
         )
-        actions = app_actions(context, scope)
-    else:
+    return None if answer is EXIT else answer
+
+
+def run_menu(context: Context) -> int:
+    """Stay in the console: after an action, return to the first question.
+
+    An operator rarely wants exactly one thing; leaving after every action
+    meant re-entering the context each time. Esc, Ctrl-C or the Exit item end
+    the session.
+    """
+    questionary, style = load_prompts()
+
+    if context.kind == "infra" and not context.hosts:
+        print("The inventory lists no hosts yet. Start with: platform new host")
+        return 1
+    if context.kind == "app" and not context.environments:
+        print(
+            "No platform/v1 manifest found under deploy/. Start with: platform new app"
+        )
+        return 1
+    if context.kind not in ("infra", "app"):
         print("Nothing to operate here. Start with: platform new")
         return 1
 
-    action = choose(questionary, style, "Action", actions, lambda a: a.label)
-    return perform(action)
+    while True:
+        scope = choose_scope(context, questionary, style)
+        if scope is None:
+            return 0
+
+        if context.kind == "infra":
+            actions = host_actions(context, scope, prompts=(questionary, style))
+        else:
+            actions = app_actions(context, scope)
+
+        while True:
+            action = choose(
+                questionary,
+                style,
+                "Action",
+                [*actions, BACK],
+                lambda a: "← Back" if a is BACK else a.label,
+            )
+            if action is BACK:
+                break
+            perform(action)
+            print()
+            break  # back to the first question, not to this menu
 
 
 NEW_TARGETS = [
