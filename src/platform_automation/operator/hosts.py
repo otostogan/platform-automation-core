@@ -340,14 +340,17 @@ def write_host(
 
     recipients_path = root / RECIPIENTS_RELATIVE
     if plan.recipients_missing:
+        rows = [(answers.name, recipients[answers.name])]
+        rows.append(
+            ("recovery", recipients.get("recovery", "age1<recovery recipient>"))
+        )
+        width = max(len(label) for label, _ in rows)
         text = render(
             template("recipients.md"),
             {
-                "host": answers.name,
-                "recipient_host": recipients[answers.name],
-                "recipient_recovery": recipients.get(
-                    "recovery", "age1<recovery recipient>"
-                ),
+                "recipient_rows": "".join(
+                    f"{label:<{width}}  {value}\n" for label, value in rows
+                )
             },
         )
     else:

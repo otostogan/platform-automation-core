@@ -1,0 +1,8 @@
+---
+collections:
+    - name: community.general
+      version: "8.6.0"
+
+    - name: >-
+          https://github.com/otostogan/platform-automation-core/releases/download/{{core_pin}}/otostogan-platform-{{core_version}}.tar.gz
+      type: url

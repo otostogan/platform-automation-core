@@ -1,0 +1,9 @@
+---
+# First-contact inventory. Used ONCE per host, over the provider's public SSH,
+# before the tailnet exists. Used by: otostogan.platform.bootstrap.
+#
+# Keep the provider console session open until converge has succeeded.
+all:
+    children:
+        platform_hosts:
+            hosts:
