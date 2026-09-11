@@ -47,7 +47,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "platform_automation.contracts" = ["*.json"]
-"platform_automation.templates" = ["app/*"]
+"platform_automation.templates" = ["app/*", "infra/*"]
 
 [tool.black]
 line-length = 88
