@@ -60,20 +60,46 @@ class Facts:
     recipient_recovery: str
     pin_source: str  # "infra:<name>" | "deploy.yml"
     recipients_source: str  # "infra:<name>" | ".sops.yaml"
+    tailscale_tag: str = (
+        ""  # what deploy.yml already uses; the template's tag:ci-<project> otherwise
+    )
+
+
+def find_repository(document) -> Optional[str]:
+    """The first ``REPOSITORY: ghcr.io/<owner>/<project>`` in any env mapping, job or step."""
+    if isinstance(document, dict):
+        env = document.get("env")
+        value = env.get("REPOSITORY") if isinstance(env, dict) else None
+        if (
+            isinstance(value, str)
+            and value.startswith("ghcr.io/")
+            and value.count("/") == 2
+        ):
+            return value
+        for child in document.values():
+            found = find_repository(child)
+            if found:
+                return found
+    elif isinstance(document, list):
+        for child in document:
+            found = find_repository(child)
+            if found:
+                return found
+    return None
 
 
 def read_repository(root: Path) -> dict:
-    """Owner and project from the build workflow, recipients from .sops.yaml."""
+    """Owner and project from the workflows' image name, recipients from .sops.yaml."""
+    from .scaffold import git_org
+
     facts = {"owner": None, "project": None, "recipients": ()}
-    document = load_yaml(root / DESTINATIONS["workflow_build.yml"])
-    jobs = document.get("jobs") if isinstance(document, dict) else None
-    for job in (jobs or {}).values():
-        env = job.get("env") if isinstance(job, dict) else None
-        repository = env.get("REPOSITORY") if isinstance(env, dict) else None
-        if isinstance(repository, str) and repository.startswith("ghcr.io/"):
-            parts = repository.split("/")
-            if len(parts) == 3:
-                facts["owner"], facts["project"] = parts[1], parts[2]
+    for relative in (DESTINATIONS["workflow_build.yml"], DEPLOY_WORKFLOW):
+        repository = find_repository(load_yaml(root / relative))
+        if repository:
+            _, facts["owner"], facts["project"] = repository.split("/")
+            break
+    if facts["owner"] is None:
+        facts["owner"] = git_org(root)
 
     sops = load_yaml(root / ".sops.yaml")
     declared = []
@@ -101,7 +127,7 @@ def gather_facts(context: Context, home: Path) -> Facts:
     )
     if not project or not repository["owner"]:
         raise UpdateError(
-            ".github/workflows/build.yml names no ghcr.io/<owner>/<project> image"
+            "no ghcr.io/<owner>/<project> image in the workflows and no GitHub remote to read the owner from"
         )
 
     environments = tuple(
@@ -143,6 +169,7 @@ def gather_facts(context: Context, home: Path) -> Facts:
         recipient_recovery=recipients[1],
         pin_source=pin_source,
         recipients_source=recipients_source,
+        tailscale_tag=context.tailscale_tag or f"tag:ci-{project}",
     )
 
 
@@ -174,6 +201,12 @@ def render_managed(facts: Facts, version: str = __version__) -> dict:
             text = render(template(name), values)
             if destination == DEPLOY_WORKFLOW:
                 text = environment_options(text, facts.environments)
+                # the tag is the tailnet policy's business, not the template's
+                text = text.replace(
+                    f"tailscale_tag: tag:ci-{facts.project}",
+                    f"tailscale_tag: {facts.tailscale_tag}",
+                    1,
+                )
             files[destination] = with_marker(text, version)
         elif destination in MERGED:
             files[destination] = render(template(name), values)

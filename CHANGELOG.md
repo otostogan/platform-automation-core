@@ -7,6 +7,13 @@ release.
 
 ## [Unreleased]
 
+- `platform update` reads the image name from any `env:` mapping in the
+  build or deploy workflow — a step's as well as a job's — and falls back to
+  the GitHub remote for the owner, so applications written before the
+  templates can be updated. The `tailscale_tag` already in `deploy.yml` is
+  kept instead of being replaced by the template's `tag:ci-<project>`: the
+  tag is the tailnet policy's business.
+
 ## [0.16.0] - 2026-09-11
 
 - Add `platform new company-infra`: from an empty directory it asks the
