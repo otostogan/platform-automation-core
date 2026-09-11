@@ -5717,7 +5717,7 @@ jobs:
             contents: read
             id-token: write
             packages: read
-        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.15.1
+        uses: otostogan/platform-automation-core/.github/workflows/reusable-deploy.yml@v0.16.0
         with:
             manifest_path: deploy/platform.${{ inputs.environment }}.yml
             image_reference: ${{ needs.resolve.outputs.image }}
@@ -10563,7 +10563,7 @@ collections:
       version: "8.6.0"
 
     - name: &gt;-
-          https://github.com/otostogan/platform-automation-core/releases/download/v0.15.1/otostogan-platform-0.15.1.tar.gz
+          https://github.com/otostogan/platform-automation-core/releases/download/v0.16.0/otostogan-platform-0.16.0.tar.gz
       type: url</code></pre>
         <p>Версия стоит в двух местах одной строки — в теге и в имени файла.</p>
       </div></details>
@@ -13914,7 +13914,7 @@ users_ops_ssh_keys:
       version: "8.6.0"
 
     - name: >-
-          https://github.com/otostogan/platform-automation-core/releases/download/v0.15.1/otostogan-platform-0.15.1.tar.gz
+          https://github.com/otostogan/platform-automation-core/releases/download/v0.16.0/otostogan-platform-0.16.0.tar.gz
       type: url</code></pre>
       <p>Обновление платформы — это правка одной строки, коммит и переустановка.
       Никакого «обновись до последней» не существует, и это осознанно: сервер не
@@ -14670,7 +14670,7 @@ users_ops_ssh_keys:
           стоит <strong>в двух местах одной строки</strong> — в теге и в имени
           файла. Поменять надо оба.</p>
 <pre><code>    - name: &gt;-
-          https://github.com/otostogan/platform-automation-core/releases/download/v0.15.1/otostogan-platform-0.15.1.tar.gz
+          https://github.com/otostogan/platform-automation-core/releases/download/v0.16.0/otostogan-platform-0.16.0.tar.gz
       type: url</code></pre>
           <p>Закоммитьте отдельно. Обновление платформы — ревьюируемое изменение,
           а не команда, которую кто-то помнит.</p>
