@@ -574,24 +574,9 @@ NEW_TARGETS = [
 ]
 
 
-def ask_app(context: Context, questionary, style) -> "AppAnswers":
-    """Ask only what cannot be read; show what was; let every answer be revisited."""
-    from .config import infras as registered_infras
-    from .context import read_collection_pin, read_hosts
-    from .doctor import age_recipient, host_secret_path
-    from .recipients import host_recipient, read_recipients, recovery_recipient
-    from .scaffold import (
-        AppAnswers,
-        DOMAIN_PATTERN,
-        ENVIRONMENTS,
-        PROJECT_PATTERN,
-        SECRET_NAME_PATTERN,
-        git_org,
-    )
-    from .wizard import BACK, CANCEL, Step, is_back, run_wizard
-
-    root = context.root
-    hint = "(< to go back)"
+def make_prompts(questionary, style) -> tuple:
+    """``text`` and ``select`` with the wizard's back/cancel conventions."""
+    from .wizard import BACK, CANCEL, is_back
 
     def text(message, default="", validate=None):
         # The previous value is shown, not pre-typed: a pre-filled buffer is
@@ -626,6 +611,63 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
             instruction="(↑↓ to move, enter to select)",
         ).ask()
         return CANCEL if answer is None else answer
+
+    return text, select
+
+
+def review_screen(questionary, style, steps, shown, question):
+    """Show every answer, offer to change one, or confirm. None means confirm."""
+    from .wizard import CANCEL
+
+    WRITE = object()
+
+    def review(state):
+        print()
+        print(f"{BOLD}Review{RESET}")
+        for step in steps:
+            if step.applies(state) and step.key in state:
+                print(f"  {step.label:<22} {shown(state, step)}")
+        options = [s for s in steps if s.applies(state) and s.key in state]
+        # A choice whose value is None would be indistinguishable from Ctrl-C
+        # (ask() returns None for both), so "write" is a sentinel of its own.
+        answer = questionary.select(
+            question,
+            choices=[questionary.Choice(title="Yes, write", value=WRITE)]
+            + [
+                questionary.Choice(title=f"Change: {s.label}", value=s.key)
+                for s in options
+            ]
+            + [questionary.Choice(title="Cancel", value=CANCEL)],
+            style=style,
+            pointer="»",
+        ).ask()
+        if answer is None:
+            return CANCEL
+        return None if answer is WRITE else answer
+
+    return review
+
+
+def ask_app(context: Context, questionary, style) -> "AppAnswers":
+    """Ask only what cannot be read; show what was; let every answer be revisited."""
+    from .config import infras as registered_infras
+    from .context import read_collection_pin, read_hosts
+    from .doctor import age_recipient, host_secret_path
+    from .recipients import host_recipient, read_recipients, recovery_recipient
+    from .scaffold import (
+        AppAnswers,
+        DOMAIN_PATTERN,
+        ENVIRONMENTS,
+        PROJECT_PATTERN,
+        SECRET_NAME_PATTERN,
+        git_org,
+    )
+    from .wizard import BACK, CANCEL, Step, is_back, run_wizard
+
+    root = context.root
+    hint = "(< to go back)"
+
+    text, select = make_prompts(questionary, style)
 
     def number(message, key, default, low, high):
         def ask(state):
@@ -868,31 +910,7 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
             return ", ".join(str(v) for v in value)
         return "" if value is None else str(value)
 
-    def review(state):
-        print()
-        print(f"{BOLD}Review{RESET}")
-        for step in steps:
-            if step.applies(state) and step.key in state:
-                print(f"  {step.label:<22} {shown(state, step)}")
-        options = [None] + [s for s in steps if s.applies(state) and s.key in state]
-        # A choice whose value is None would be indistinguishable from Ctrl-C
-        # (ask() returns None for both), so "write" is a sentinel of its own.
-        answer = questionary.select(
-            "Write these files?",
-            choices=[questionary.Choice(title="Yes, write", value=WRITE)]
-            + [
-                questionary.Choice(title=f"Change: {s.label}", value=s.key)
-                for s in options[1:]
-            ]
-            + [questionary.Choice(title="Cancel", value=CANCEL)],
-            style=style,
-            pointer="»",
-        ).ask()
-        if answer is None:
-            return CANCEL
-        return None if answer is WRITE else answer
-
-    WRITE = object()
+    review = review_screen(questionary, style, steps, shown, "Write these files?")
     state = run_wizard(steps, review=review)
     infra = state.get("infra") or {}
     environments = state["environments"]
@@ -917,6 +935,151 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         secret_names=state["secret_names"],
         **({"core_pin": infra["core_pin"]} if infra.get("core_pin") else {}),
     )
+
+
+def ask_new_host(context: Context, questionary, style) -> "HostAnswers":
+    """Two age keys are made, not asked; the rest defaults to what the last host answered."""
+    from .hosts import (
+        HOST_PATTERN,
+        INTERFACE_PATTERN,
+        IPV4_PATTERN,
+        HostAnswers,
+        defaults_from,
+        offsite_enabled,
+    )
+    from .recipients import read_recipients
+    from .scaffold import DOMAIN_PATTERN
+    from .tailnet import read_tailnet
+    from .wizard import BACK, CANCEL, Step, run_wizard
+
+    root = context.root
+    text, select = make_prompts(questionary, style)
+    known = defaults_from(root)
+    published = read_recipients(root)
+    tailnet = read_tailnet()
+    suffix = known["suffix"]
+    if suffix is None and tailnet.self_dns and "." in tailnet.self_dns:
+        suffix = tailnet.self_dns.rstrip(".").split(".", 1)[1]
+
+    def ask_name(state):
+        return text(
+            "Host name",
+            state.get("name", ""),
+            lambda v: bool(HOST_PATTERN.match(v)) or "lowercase, digits and dashes",
+        )
+
+    def ask_public(state):
+        return text(
+            "Public address from the provider",
+            state.get("public_address", ""),
+            lambda v: bool(IPV4_PATTERN.match(v) or DOMAIN_PATTERN.match(v))
+            or "IPv4 or hostname",
+        )
+
+    def ask_tailnet(state):
+        default = state.get("tailnet") or (
+            f"{state['name']}.{suffix}" if suffix else ""
+        )
+        return text(
+            "Tailnet address (MagicDNS name)",
+            default,
+            lambda v: bool(DOMAIN_PATTERN.match(v)) or "lowercase, at least one dot",
+        )
+
+    def ask_interface(state):
+        return text(
+            "Public network interface",
+            state.get("interface") or known["interface"] or "eth0",
+            lambda v: bool(INTERFACE_PATTERN.match(v))
+            or "an interface name such as eth0",
+        )
+
+    def ask_ssh(state):
+        default = state.get("ssh_key") or (
+            f"~/.ssh/{state['name']}-ops" if not known["ssh_key"] else known["ssh_key"]
+        )
+        return text(
+            "Operator SSH private key", default, lambda v: bool(v) or "required"
+        )
+
+    def ask_keys_dir(state):
+        return text(
+            "Directory for age keys",
+            state.get("keys_dir") or known["keys_dir"] or "~/.config/platform-keys",
+            lambda v: bool(v) or "required",
+        )
+
+    def ask_recovery(state):
+        if published.get("recovery"):
+            return False
+        answer = questionary.confirm(
+            "No recovery recipient is published yet. Generate the company recovery key now?",
+            default=True,
+            style=style,
+        ).ask()
+        return CANCEL if answer is None else answer
+
+    steps = [
+        Step("name", ask_name, label="Host"),
+        Step("public_address", ask_public, label="Public address"),
+        Step("tailnet", ask_tailnet, label="Tailnet address"),
+        Step("interface", ask_interface, label="Interface"),
+        Step("ssh_key", ask_ssh, label="SSH key"),
+        Step("keys_dir", ask_keys_dir, label="Keys dir"),
+        Step("recovery", ask_recovery, label="Recovery key"),
+    ]
+
+    def shown(state, step):
+        if step.key == "recovery":
+            return "generate now" if state["recovery"] else "already published"
+        return state[step.key]
+
+    review = review_screen(
+        questionary, style, steps, shown, "Write these files and generate the keys?"
+    )
+    state = run_wizard(steps, review=review)
+    return HostAnswers(
+        name=state["name"],
+        public_address=state["public_address"],
+        tailnet=state["tailnet"],
+        interface=state["interface"],
+        ssh_key=state["ssh_key"],
+        keys_dir=state["keys_dir"],
+        offsite=offsite_enabled(root),
+        recovery_needed=bool(state["recovery"]),
+    )
+
+
+def run_new_host(context: Context, questionary, style) -> int:
+    from .hosts import HostError, next_steps, plan_host, write_host
+    from .wizard import Cancelled
+
+    if context.kind != "infra":
+        print(f"{RED}new host works inside an infrastructure repository{RESET}")
+        return 2
+    try:
+        answers = ask_new_host(context, questionary, style)
+        plan = plan_host(context.root, answers)
+        print()
+        for label, path in plan.keys:
+            print(f"{DIM}→ age-keygen --output {path}{RESET}")
+        recipients = write_host(context.root, answers, plan)
+    except HostError as error:
+        print(f"{RED}{error}{RESET}")
+        return 1
+    except Cancelled:
+        print("cancelled — nothing written")
+        return 130
+
+    for label, recipient in recipients.items():
+        print(f"{GREEN}{label}: {recipient}{RESET}")
+    print("Written (nothing committed):")
+    for relative in plan.files:
+        print(f"  {relative}")
+    print()
+    print(next_steps(answers, recipients))
+    print(f"{DIM}  handbook: {HANDBOOK}#/flow-new-host{RESET}")
+    return 0
 
 
 def run_new_app(context: Context, questionary, style) -> int:
@@ -1001,6 +1164,8 @@ def run_new(context: Context, target: Optional[str]) -> int:
 
     if target == "app":
         return run_new_app(context, questionary, style)
+    if target == "host":
+        return run_new_host(context, questionary, style)
 
     print()
     print(f"{DIM}→ scaffold '{target}' is not wired yet.{RESET}")

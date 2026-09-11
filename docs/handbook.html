@@ -2281,6 +2281,10 @@
 									><span class="ttl">Два age-ключа</span>
 								</button>
 								<div class="step-body">
+									<div class="note">
+										<span class="label">Консоль делает это сама</span>
+										<p><code>platform new host</code> в репозитории инфраструктуры спрашивает имя, адреса и интерфейс, генерирует ключ хоста (и recovery, если он ещё не опубликован), дописывает оба инвентаря, создаёт <code>host_vars/&lt;хост&gt;/local-secrets.yml</code> и строку в <code>RECIPIENTS.md</code>. Шаги 1 и 4 тогда только сверяются. Auth key тейлнета и ключ у провайдера (шаги 3 и 5) остаются за вами: их выдают чужие сервисы.</p>
+									</div>
 									<p>
 										Секреты приложений шифруются на
 										<em>публичные</em> половины, сервер
@@ -2789,6 +2793,10 @@ head -c 11 {{keydir}}/tailscale-auth.key; echo</code></pre>
 									>
 								</button>
 								<div class="step-body">
+									<div class="note">
+										<span class="label">Если хост создан консолью</span>
+										<p><code>platform new host</code> уже вписал обе записи и создал <code>local-secrets.yml</code>. Сверьте <code>git diff</code> с образцами ниже и переходите дальше.</p>
+									</div>
 									<p>
 										Инвентарей два, и это не дублирование:
 										<code>bootstrap.yml</code> используется

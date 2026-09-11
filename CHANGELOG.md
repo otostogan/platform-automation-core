@@ -7,6 +7,18 @@ release.
 
 ## [Unreleased]
 
+- Add `platform new host`: inside an infrastructure repository it asks for
+  the host name, the provider address, the tailnet name, the interface, the
+  operator SSH key and the key directory — defaults come from the host that
+  is already there — generates the host's age key with `age-keygen` under
+  `umask 077` (and the recovery key when `docs/RECIPIENTS.md` publishes
+  none), appends the host to both inventories as text so their comments
+  survive, proves the result parses back to the same hosts plus one, writes
+  `host_vars/<host>/local-secrets.yml` and its example, adds the offsite
+  prefix and credentials path when offsite is enabled, and publishes the
+  recipient in `docs/RECIPIENTS.md`. Nothing is committed; existing files
+  and keys are never overwritten.
+
 - Handbook: the «Шифрование секретов» step of «Новое приложение» now describes
   the path the console implements — edit `.env.<environment>`, commit, the
   `pre-commit` hook writes the ciphertext — with `platform secrets pull` as
