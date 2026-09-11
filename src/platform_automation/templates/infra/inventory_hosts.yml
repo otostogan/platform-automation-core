@@ -1,0 +1,7 @@
+---
+# Steady-state inventory. Reached over the tailnet as the ops user.
+# Used by: otostogan.platform.converge, readiness, preflight.
+all:
+    children:
+        platform_hosts:
+            hosts:

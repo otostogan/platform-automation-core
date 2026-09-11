@@ -292,7 +292,7 @@ class PlanTest(unittest.TestCase):
 
         published = (self.root / "docs/RECIPIENTS.md").read_text(encoding="utf-8")
         self.assertIn(f"platform-host-2  {recipients['platform-host-2']}", published)
-        self.assertIn(f"recovery  {recipients['recovery']}", published)
+        self.assertIn(f"recovery         {recipients['recovery']}", published)
 
     def test_keygen_refuses_to_overwrite(self) -> None:
         write(self.home / "keys/x.agekey", "old")

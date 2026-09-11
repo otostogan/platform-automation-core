@@ -2142,7 +2142,12 @@
 						предполагает, что предыдущий прошёл.
 					</p>
 
-					<dl class="flow-meta">
+					<div class="note">
+										<span class="label">Ещё нет репозитория инфраструктуры?</span>
+										<p>Его создаёт <code>platform new company-infra</code> в пустом каталоге: спрашивает компанию, контакт для Let's Encrypt, ваше имя и первый хост; генерирует ваш ops-ключ и оба age-ключа; пишет пин ядра, оба инвентаря, групповую политику, пути к ключам и документы; делает <code>git init</code>, регистрирует репозиторий для консоли и предлагает собрать venv. После него этот флоу начинается с шага 3.</p>
+									</div>
+
+									<dl class="flow-meta">
 						<div>
 							<dt>Шагов</dt>
 							<dd><span data-step-count>13</span></dd>
@@ -10547,7 +10552,9 @@ systemctl status platform-nginx-reconcile.timer</code></pre>
 
       <h3>Шаблоны</h3>
       <p>Раскройте нужный и скопируйте. Значения подставлены из вашего контекста —
-      кнопка «Мой контекст» вверху.</p>
+      кнопка «Мой контекст» вверху. Целиком это дерево пишет
+      <code>platform new company-infra</code>, а записи хостов —
+      <code>platform new host</code>; шаблоны здесь и в консоли одни и те же.</p>
 
       <details class="fold"><summary><code>requirements.yml</code></summary><div class="inner">
 <pre><code>---

@@ -6,9 +6,10 @@ before it runs; a choice that is not wired yet prints only the command, so
 what the console *would* do is never a guess.
 """
 
+import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -937,33 +938,21 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
     )
 
 
-def ask_new_host(context: Context, questionary, style) -> "HostAnswers":
-    """Two age keys are made, not asked; the rest defaults to what the last host answered."""
-    from .hosts import (
-        HOST_PATTERN,
-        INTERFACE_PATTERN,
-        IPV4_PATTERN,
-        HostAnswers,
-        defaults_from,
-        offsite_enabled,
-    )
-    from .recipients import read_recipients
-    from .scaffold import DOMAIN_PATTERN
-    from .tailnet import read_tailnet
-    from .wizard import BACK, CANCEL, Step, run_wizard
+def host_steps(
+    questionary, style, text, known: dict, published: dict, suffix, prefix=""
+):
+    """The questions a host needs; shared by ``new host`` and ``new company-infra``.
 
-    root = context.root
-    text, select = make_prompts(questionary, style)
-    known = defaults_from(root)
-    published = read_recipients(root)
-    tailnet = read_tailnet()
-    suffix = known["suffix"]
-    if suffix is None and tailnet.self_dns and "." in tailnet.self_dns:
-        suffix = tailnet.self_dns.rstrip(".").split(".", 1)[1]
+    ``known`` holds what an existing host already answered (or Nones), and the
+    recovery question is asked only when nothing is published yet.
+    """
+    from .hosts import HOST_PATTERN, INTERFACE_PATTERN, IPV4_PATTERN
+    from .scaffold import DOMAIN_PATTERN
+    from .wizard import CANCEL, Step
 
     def ask_name(state):
         return text(
-            "Host name",
+            f"{prefix}Host name",
             state.get("name", ""),
             lambda v: bool(HOST_PATTERN.match(v)) or "lowercase, digits and dashes",
         )
@@ -989,14 +978,16 @@ def ask_new_host(context: Context, questionary, style) -> "HostAnswers":
     def ask_interface(state):
         return text(
             "Public network interface",
-            state.get("interface") or known["interface"] or "eth0",
+            state.get("interface") or known.get("interface") or "eth0",
             lambda v: bool(INTERFACE_PATTERN.match(v))
             or "an interface name such as eth0",
         )
 
     def ask_ssh(state):
-        default = state.get("ssh_key") or (
-            f"~/.ssh/{state['name']}-ops" if not known["ssh_key"] else known["ssh_key"]
+        default = (
+            state.get("ssh_key")
+            or known.get("ssh_key")
+            or f"~/.ssh/{state['name']}-ops"
         )
         return text(
             "Operator SSH private key", default, lambda v: bool(v) or "required"
@@ -1005,7 +996,7 @@ def ask_new_host(context: Context, questionary, style) -> "HostAnswers":
     def ask_keys_dir(state):
         return text(
             "Directory for age keys",
-            state.get("keys_dir") or known["keys_dir"] or "~/.config/platform-keys",
+            state.get("keys_dir") or known.get("keys_dir") or "~/.config/platform-keys",
             lambda v: bool(v) or "required",
         )
 
@@ -1019,7 +1010,7 @@ def ask_new_host(context: Context, questionary, style) -> "HostAnswers":
         ).ask()
         return CANCEL if answer is None else answer
 
-    steps = [
+    return [
         Step("name", ask_name, label="Host"),
         Step("public_address", ask_public, label="Public address"),
         Step("tailnet", ask_tailnet, label="Tailnet address"),
@@ -1029,15 +1020,10 @@ def ask_new_host(context: Context, questionary, style) -> "HostAnswers":
         Step("recovery", ask_recovery, label="Recovery key"),
     ]
 
-    def shown(state, step):
-        if step.key == "recovery":
-            return "generate now" if state["recovery"] else "already published"
-        return state[step.key]
 
-    review = review_screen(
-        questionary, style, steps, shown, "Write these files and generate the keys?"
-    )
-    state = run_wizard(steps, review=review)
+def host_from_state(state: dict, offsite: bool) -> "HostAnswers":
+    from .hosts import HostAnswers
+
     return HostAnswers(
         name=state["name"],
         public_address=state["public_address"],
@@ -1045,9 +1031,246 @@ def ask_new_host(context: Context, questionary, style) -> "HostAnswers":
         interface=state["interface"],
         ssh_key=state["ssh_key"],
         keys_dir=state["keys_dir"],
-        offsite=offsite_enabled(root),
-        recovery_needed=bool(state["recovery"]),
+        offsite=offsite,
+        recovery_needed=bool(state.get("recovery")),
     )
+
+
+def tailnet_suffix(fallback=None):
+    from .tailnet import read_tailnet
+
+    if fallback:
+        return fallback
+    tailnet = read_tailnet()
+    if tailnet.self_dns and "." in tailnet.self_dns:
+        return tailnet.self_dns.rstrip(".").split(".", 1)[1]
+    return None
+
+
+def shown_host(state, step):
+    if step.key == "recovery":
+        return "generate now" if state["recovery"] else "already published"
+    return state[step.key]
+
+
+def ask_new_host(context: Context, questionary, style) -> "HostAnswers":
+    """Two age keys are made, not asked; the rest defaults to what the last host answered."""
+    from .hosts import defaults_from, offsite_enabled
+    from .recipients import read_recipients
+    from .wizard import run_wizard
+
+    root = context.root
+    text, _ = make_prompts(questionary, style)
+    known = defaults_from(root)
+    steps = host_steps(
+        questionary,
+        style,
+        text,
+        known,
+        read_recipients(root),
+        tailnet_suffix(known["suffix"]),
+    )
+    review = review_screen(
+        questionary,
+        style,
+        steps,
+        shown_host,
+        "Write these files and generate the keys?",
+    )
+    state = run_wizard(steps, review=review)
+    return host_from_state(state, offsite_enabled(root))
+
+
+def ask_company(questionary, style, root: Path) -> "CompanyAnswers":
+    from .company import (
+        ACME_PRODUCTION,
+        ACME_STAGING,
+        COMPANY_PATTERN,
+        EMAIL_PATTERN,
+        SSH_PUBLIC_PATTERN,
+        CompanyAnswers,
+    )
+    from .wizard import BACK, CANCEL, Step, run_wizard
+
+    text, select = make_prompts(questionary, style)
+    user = os.environ.get("USER") or "operator"
+
+    def ask_company_name(state):
+        return text(
+            "Company (short, lowercase)",
+            state.get("company")
+            or (root.name if COMPANY_PATTERN.match(root.name) else ""),
+            lambda v: bool(COMPANY_PATTERN.match(v)) or "lowercase, digits and dashes",
+        )
+
+    def ask_email(state):
+        return text(
+            "ACME contact email (Let's Encrypt notices)",
+            state.get("acme_email", ""),
+            lambda v: bool(EMAIL_PATTERN.match(v)) or "an email address",
+        )
+
+    def ask_ca(state):
+        return select(
+            "ACME directory",
+            [ACME_STAGING, ACME_PRODUCTION],
+            lambda v: (
+                "staging — start here, switch after acceptance"
+                if v == ACME_STAGING
+                else "production — rate-limited on failed validations"
+            ),
+        )
+
+    def ask_operator(state):
+        return text(
+            "Your name (key comment ops:<name>)",
+            state.get("operator") or user,
+            lambda v: bool(v.strip()) or "required",
+        )
+
+    def ask_operator_key(state):
+        return text(
+            "Your ops SSH private key (generated if missing)",
+            state.get("operator_key") or f"~/.ssh/{state['company']}-ops",
+            lambda v: bool(v) or "required",
+        )
+
+    def ask_second(state):
+        answer = text(
+            "Second operator's public key line (Enter to skip)",
+            state.get("second", ""),
+            lambda v: v == ""
+            or bool(SSH_PUBLIC_PATTERN.match(v.strip()))
+            or "an OpenSSH public key line",
+        )
+        return answer
+
+    company = [
+        Step("company", ask_company_name, label="Company"),
+        Step("acme_email", ask_email, label="ACME email"),
+        Step("acme_ca", ask_ca, label="ACME CA"),
+        Step("operator", ask_operator, label="Operator"),
+        Step("operator_key", ask_operator_key, label="Ops SSH key"),
+        Step("second", ask_second, label="Second operator"),
+    ]
+    known = {"ssh_key": None, "keys_dir": None, "interface": None}
+
+    def keys_dir_default(state):
+        return f"~/.config/platform-keys/{state['company']}"
+
+    host = host_steps(
+        questionary, style, text, known, {}, tailnet_suffix(), prefix="First "
+    )
+
+    def ask_host_ssh(state):
+        return text(
+            "Operator SSH private key",
+            state.get("ssh_key") or state["operator_key"],
+            lambda v: bool(v) or "required",
+        )
+
+    def ask_host_keys_dir(state):
+        return text(
+            "Directory for age keys",
+            state.get("keys_dir") or keys_dir_default(state),
+            lambda v: bool(v) or "required",
+        )
+
+    overrides = {"ssh_key": ask_host_ssh, "keys_dir": ask_host_keys_dir}
+    host = [
+        replace(step, ask=overrides[step.key]) if step.key in overrides else step
+        for step in host
+    ]
+    steps = company + host
+
+    def shown(state, step):
+        if step.key == "acme_ca":
+            return "staging" if state["acme_ca"] == ACME_STAGING else "production"
+        if step.key == "second":
+            return state["second"][:40] + "…" if state["second"] else "none yet"
+        if step.key in {
+            "recovery",
+            "name",
+            "public_address",
+            "tailnet",
+            "interface",
+            "ssh_key",
+            "keys_dir",
+        }:
+            return shown_host(state, step)
+        return state[step.key]
+
+    review = review_screen(
+        questionary, style, steps, shown, "Create the repository and generate the keys?"
+    )
+    state = run_wizard(steps, review=review)
+    return CompanyAnswers(
+        company=state["company"],
+        acme_email=state["acme_email"],
+        acme_ca=state["acme_ca"],
+        operator=state["operator"],
+        operator_key=state["operator_key"],
+        extra_ops_keys=(state["second"].strip(),) if state["second"].strip() else (),
+        host=host_from_state(state, offsite=False),
+    )
+
+
+def run_new_company(context: Context, questionary, style) -> int:
+    from .company import CompanyError, next_steps, venv_commands, write_company
+    from .wizard import Cancelled
+
+    if context.kind in ("infra", "app"):
+        print(
+            f"{RED}new company-infra starts from an empty directory, not inside {context.kind} {context.root}{RESET}"
+        )
+        return 2
+    root = Path.cwd()
+    try:
+        answers = ask_company(questionary, style, root)
+        print()
+        print(
+            f"{DIM}→ ssh-keygen -t ed25519 -f {answers.operator_key} (if missing){RESET}"
+        )
+        print(f"{DIM}→ age-keygen --output {answers.host.age_key}{RESET}")
+        print(f"{DIM}→ age-keygen --output {answers.host.recovery_key}{RESET}")
+        result = write_company(root, answers)
+    except CompanyError as error:
+        print(f"{RED}{error}{RESET}")
+        return 1
+    except Cancelled:
+        print("cancelled — nothing written")
+        return 130
+
+    for label, recipient in result.recipients.items():
+        print(f"{GREEN}{label}: {recipient}{RESET}")
+    print(f"{GREEN}ops key: {result.operator_public_key[:40]}…{RESET}")
+    print("Written (nothing committed):")
+    for relative in result.written:
+        print(f"  {relative}")
+    if result.git_initialised:
+        print(f"{DIM}git init done; registered in ~/.config/platform/config.yml{RESET}")
+
+    commands = venv_commands()
+    print()
+    print("Controller venv and the pinned collection:")
+    for command in commands:
+        print(f"  {command}")
+    answer = questionary.confirm(
+        "Run these now? (a couple of minutes)", default=True, style=style
+    ).ask()
+    if answer:
+        for command in commands:
+            print(f"{DIM}→ {command}{RESET}")
+            completed = subprocess.run(command, shell=True, cwd=str(root))
+            if completed.returncode != 0:
+                print(f"{RED}failed: {command}{RESET}")
+                return 1
+        print(f"{GREEN}collection installed{RESET}")
+
+    print()
+    print(next_steps(answers, result))
+    print(f"{DIM}  handbook: {HANDBOOK}#/flow-new-host{RESET}")
+    return 0
 
 
 def run_new_host(context: Context, questionary, style) -> int:
@@ -1166,6 +1389,8 @@ def run_new(context: Context, target: Optional[str]) -> int:
         return run_new_app(context, questionary, style)
     if target == "host":
         return run_new_host(context, questionary, style)
+    if target == "company-infra":
+        return run_new_company(context, questionary, style)
 
     print()
     print(f"{DIM}→ scaffold '{target}' is not wired yet.{RESET}")

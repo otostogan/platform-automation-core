@@ -7,6 +7,19 @@ release.
 
 ## [Unreleased]
 
+- Add `platform new company-infra`: from an empty directory it asks the
+  company, the ACME contact, the ACME directory, the operator's name and key
+  path, an optional second operator key, and the first host; generates the
+  operator's ed25519 key when it is missing and both age keys; writes
+  `requirements.yml` pinned to this console's version, `ansible.cfg`,
+  `.gitignore`, both inventories with the first host, the group policy with
+  every operator key, the `local-secrets.yml` files and their examples,
+  `README.md`, `docs/TAILNET.md` and `docs/RECIPIENTS.md`; runs `git init`,
+  registers the repository for `doctor` and `new app`, and offers to build
+  the controller venv with the pinned collection. Nothing is committed; a
+  directory that already holds an inventory is refused. The host questions
+  are shared with `new host`.
+
 - Add `platform new host`: inside an infrastructure repository it asks for
   the host name, the provider address, the tailnet name, the interface, the
   operator SSH key and the key directory — defaults come from the host that

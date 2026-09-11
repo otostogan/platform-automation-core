@@ -4,9 +4,7 @@ Public age recipients for the platform hosts. These are public keys:
 committing them is safe and intended. The private halves are not here.
 
 ```
-{{host}}  {{recipient_host}}
-recovery  {{recipient_recovery}}
-```
+{{recipient_rows}}```
 
 Every application encrypts its secrets to **both** recipients: the host it
 deploys to and recovery. `platform new app` reads this file and writes the

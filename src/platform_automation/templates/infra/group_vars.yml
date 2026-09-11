@@ -1,0 +1,37 @@
+---
+# Refuse full convergence unless the session is a verified tailnet session as
+# the ops user. Set to false only during a documented recovery.
+access_guard_enabled: true
+
+# Every deployable SOPS file must carry a host and a recovery recipient.
+# The host then refuses new and rollback bundles, and boot secret recovery,
+# for any bundle with only one recipient.
+platform_cli_minimum_age_recipients: 2
+
+# Operators. Revoking access is removing a line here and running converge:
+# the authorized_keys file is rewritten whole, so a removed key stops working.
+# Keep at least two — one key recreates the dependency this platform removes.
+users_ops_ssh_keys:
+{{ops_keys}}
+
+# CI reaches hosts through Tailscale SSH as the deploy user; no key is needed.
+users_deploy_ssh_keys: []
+
+# Role tag, shared by every platform host. Must be declared in tagOwners
+# before enrollment. See docs/TAILNET.md.
+tailscale_advertise_tags:
+    - tag:server-platform
+
+proxy_acme_enabled: true
+# Let's Encrypt expiry notices go here. A role address survives staff changes
+# better than a personal one.
+proxy_acme_email: {{acme_email}}
+# Start on staging; switch to https://acme-v02.api.letsencrypt.org/directory
+# after converge, readiness and reboot acceptance passed. Production limits
+# failed validations to five per hostname per hour.
+proxy_acme_ca_uri: {{acme_ca}}
+
+# Readiness audits the machine in the "pre" phase and everything convergence
+# built in "post". Default to post; on a fresh machine, before the first
+# converge, override on the command line: -e vps_readiness_phase=pre
+vps_readiness_phase: post
