@@ -148,6 +148,29 @@ class UpdateTest(unittest.TestCase):
         )
         self.assertEqual(facts.recipients_source, ".sops.yaml")
 
+    def test_image_name_is_found_in_a_step_env_and_the_tag_is_kept(self) -> None:
+        write(
+            self.root / ".github/workflows/build.yml",
+            "jobs:\n  build:\n    steps: []\n",
+        )
+        write(
+            self.root / ".github/workflows/deploy.yml",
+            "jobs:\n  resolve:\n    steps:\n      - run: x\n        env:\n"
+            "          REPOSITORY: ghcr.io/other-org/my-app\n"
+            "  deploy:\n    uses: otostogan/platform-automation-core/.github/workflows/"
+            "reusable-deploy.yml@v0.15.1\n    with:\n"
+            "      target_host: platform-host-1.tailnet.example.net\n"
+            "      tailscale_tag: tag:ci-legacy\n",
+        )
+
+        facts = self.facts()
+
+        self.assertEqual((facts.owner, facts.project), ("other-org", "my-app"))
+        self.assertEqual(facts.tailscale_tag, "tag:ci-legacy")
+        deploy = render_managed(facts)[".github/workflows/deploy.yml"]
+        self.assertIn("tailscale_tag: tag:ci-legacy", deploy)
+        self.assertNotIn("tag:ci-my-app", deploy)
+
     def test_a_fresh_application_has_nothing_to_update(self) -> None:
         changes = plan(self.root, render_managed(self.facts()))
 
