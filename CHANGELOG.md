@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-11
+
 - Add `platform new company-infra`: from an empty directory it asks the
   company, the ACME contact, the ACME directory, the operator's name and key
   path, an optional second operator key, and the first host; generates the
