@@ -7,6 +7,16 @@ release.
 
 ## [Unreleased]
 
+- The host now checks `service.healthcheck.path` itself. After
+  `compose up --wait`, `platform deploy` requests the path on the new web
+  container's edge-network address with the first domain as `Host`, until
+  it answers 2xx or 3xx or `timeout_seconds` runs out — before nginx is
+  switched and before the release is recorded as deployed. A release that
+  starts but answers 404 is now refused and rolled back like one that never
+  started; previously only the workflow's final check noticed, after the
+  ledger already said `deployed`. The same probe guards `rollback` and
+  reboot recovery, which start releases through the same path.
+
 - The console's Deploy action now runs: it offers the latest release or a
   version tag (or a typed ref), asks the branch to run the workflow from —
   the tailnet credential is bound to one — shows the exact `gh workflow run`

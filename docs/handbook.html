@@ -6612,7 +6612,10 @@ sudo -n platform status --project {{project}} --environment {{env}} --json</code
 											>: <code>platform status</code> и
 											запрос через прокси по
 											<code>127.0.0.1</code> с нужным
-											<code>Host</code>-заголовком.
+											<code>Host</code>-заголовком. Это второе,
+											независимое подтверждение снаружи: тот
+											же путь хост уже проверил сам до
+											переключения.
 										</li>
 										<li>
 											<strong
@@ -6679,11 +6682,19 @@ sudo -n platform status --project {{project}} --environment {{env}} --json</code
 										</li>
 										<li>
 											Готовится конфигурация nginx,
-											стартуют контейнеры, конфигурация
+											стартуют контейнеры, и хост
+											<strong>сам запрашивает</strong>
+											<code>healthcheck.path</code> у нового
+											контейнера с заголовком <code>Host</code>
+											первого домена — до истечения
+											<code>timeout_seconds</code>, пока не
+											получит <code>2xx</code> или <code>3xx</code>.
+											Только после этого конфигурация
 											активируется — в одной транзакции.
-											Не получилось — возвращается
-											предыдущий релиз и прежние фрагменты
-											nginx.
+											Не запустился <em>или не ответил</em> —
+											возвращается предыдущий релиз и прежние
+											фрагменты nginx, запись получает статус
+											<code>rolled_back</code>.
 										</li>
 										<li>
 											Статус становится

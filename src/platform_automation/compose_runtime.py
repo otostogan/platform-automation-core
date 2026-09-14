@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -281,6 +283,8 @@ def start_release(
     docker_executable: Path,
     runner=subprocess.run,
     sleeper=time.sleep,
+    http_get=None,
+    clock=time.monotonic,
 ) -> None:
     timeout = manifest["service"]["healthcheck"]["timeout_seconds"]
     command, environment = compose_context(
@@ -321,6 +325,138 @@ def start_release(
             expected_services,
             runner,
         )
+
+    probe_release_http(
+        manifest,
+        command,
+        environment,
+        runner=runner,
+        sleeper=sleeper,
+        http_get=http_get,
+        clock=clock,
+    )
+
+
+EDGE_NETWORK = "platform-edge"
+PROBE_INTERVAL_SECONDS = 2
+PROBE_REQUEST_TIMEOUT_SECONDS = 5
+
+
+def default_http_get(url: str, host: str, timeout: float) -> int:
+    """HTTP status of a GET; a connection failure is reported as 0."""
+    request = urllib.request.Request(
+        url, headers={"Host": host, "User-Agent": "platform-healthcheck"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return int(response.status)
+    except urllib.error.HTTPError as error:
+        return int(error.code)
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0
+
+
+def service_container_address(
+    command: list[str],
+    environment: dict[str, str],
+    service: str,
+    runner=subprocess.run,
+) -> str:
+    """The web service's address on the edge network — where nginx will send traffic."""
+    try:
+        listed = runner(
+            [*command, "ps", "-q", service],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+        )
+    except OSError as error:
+        raise ComposeRuntimeError(
+            "application container could not be listed"
+        ) from error
+    container = (listed.stdout or "").strip().splitlines()
+    if listed.returncode != 0 or not container:
+        raise ComposeRuntimeError(f"application service has no container: {service}")
+
+    try:
+        inspected = runner(
+            [
+                command[0],
+                "inspect",
+                "--format",
+                "{{json .NetworkSettings.Networks}}",
+                container[0],
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+        )
+    except OSError as error:
+        raise ComposeRuntimeError(
+            "application container could not be inspected"
+        ) from error
+    try:
+        networks = json.loads(inspected.stdout or "{}")
+    except ValueError:
+        networks = {}
+    if inspected.returncode != 0 or not isinstance(networks, dict):
+        raise ComposeRuntimeError("application container networks could not be read")
+
+    addresses = {
+        name: str(values.get("IPAddress") or "")
+        for name, values in networks.items()
+        if isinstance(values, dict) and values.get("IPAddress")
+    }
+    if not addresses:
+        raise ComposeRuntimeError("application container has no network address")
+    return addresses.get(EDGE_NETWORK) or next(iter(addresses.values()))
+
+
+def probe_release_http(
+    manifest: dict[str, Any],
+    command: list[str],
+    environment: dict[str, str],
+    runner=subprocess.run,
+    sleeper=time.sleep,
+    http_get=None,
+    clock=time.monotonic,
+) -> None:
+    """GET ``healthcheck.path`` on the new container until it answers, or the timeout.
+
+    ``compose up --wait`` only proves the process is up. The manifest promises
+    a path that answers, and that promise is checked here, on the host, before
+    nginx is switched — so a release that starts but answers 404 is refused
+    and rolled back like one that never started, instead of being recorded
+    as deployed and discovered by the workflow's check afterwards.
+    """
+    service = manifest["service"]
+    path = service["healthcheck"]["path"]
+    timeout = float(service["healthcheck"]["timeout_seconds"])
+    port = int(service["internal_port"])
+    host = manifest["domains"][0]["host"]
+    http_get = default_http_get if http_get is None else http_get
+
+    address = service_container_address(command, environment, service["web"], runner)
+    url = f"http://{address}:{port}{path}"
+    deadline = clock() + timeout
+    last = 0
+    while True:
+        last = http_get(url, host, PROBE_REQUEST_TIMEOUT_SECONDS)
+        if 200 <= last < 400:  # what curl --fail accepts in the workflow's check
+            return
+        if clock() >= deadline:
+            break
+        sleeper(PROBE_INTERVAL_SECONDS)
+    reason = f"HTTP {last}" if last else "no HTTP answer"
+    raise ComposeRuntimeError(
+        f"application healthcheck failed: GET {path} (Host: {host}) on the web"
+        f" container answered {reason} within {int(timeout)}s; expected 2xx or 3xx"
+    )
 
 
 def stop_release(
