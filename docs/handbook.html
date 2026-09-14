@@ -6161,7 +6161,12 @@ sudo -n platform status --project {{project}} --environment {{env}} --json</code
 						что-то не сойдётся.
 					</p>
 
-					<dl class="flow-meta">
+					<div class="note">
+    <span class="label">Из консоли</span>
+    <p><code>platform</code> в репозитории приложения → окружение → <strong>Deploy</strong>: консоль предложит последний выпуск или тег, спросит ветку, с которой запускать процесс (к ней привязан credential тейлнета), покажет команду <code>gh workflow run</code>, запустит её, найдёт прогон и покажет его ход до конца, затем <code>status</code> с сервера. Для production просит напечатать имя окружения. Шаги ниже — то же самое руками, и они же объясняют, что происходит на каждой стадии.</p>
+  </div>
+
+  <dl class="flow-meta">
 						<div>
 							<dt>Шагов</dt>
 							<dd><span data-step-count>4</span></dd>

@@ -7,6 +7,15 @@ release.
 
 ## [Unreleased]
 
+- The console's Deploy action now runs: it offers the latest release or a
+  version tag (or a typed ref), asks the branch to run the workflow from —
+  the tailnet credential is bound to one — shows the exact `gh workflow run`
+  it will issue with only the inputs `deploy.yml` declares, dispatches it,
+  finds the run that appeared, streams `gh run watch` to the end and then
+  shows `platform status` from the host. Production asks for the environment
+  name to be typed. The console still never reaches the host for a
+  deployment itself; only the CI identity the tailnet policy grants does.
+
 - `platform update` reads the image name from any `env:` mapping in the
   build or deploy workflow — a step's as well as a job's — and falls back to
   the GitHub remote for the owner, so applications written before the
