@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-09-14
+
 - The host now checks `service.healthcheck.path` itself. After
   `compose up --wait`, `platform deploy` requests the path on the new web
   container's edge-network address with the first domain as `Host`, until
