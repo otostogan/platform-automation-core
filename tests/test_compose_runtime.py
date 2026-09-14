@@ -39,6 +39,18 @@ class RecordingRunner:
 
     def __call__(self, command: list[str], **kwargs):
         self.calls.append({"command": command, **kwargs})
+        if command[-3:-1] == ["ps", "-q"]:
+            return SimpleNamespace(returncode=0, stdout="abc123\n")
+        if command[1:3] == ["inspect", "--format"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "example_default": {"IPAddress": "172.20.0.5"},
+                        "platform-edge": {"IPAddress": "172.18.0.9"},
+                    }
+                ),
+            )
         return SimpleNamespace(returncode=self.returncode, stdout=self.stdout)
 
 
@@ -121,10 +133,16 @@ class ComposeRuntimeTest(unittest.TestCase):
             ],
         )
 
+    def http_ok(self, url, host, timeout):
+        self.probes.append((url, host))
+        return 200
+
     def test_starts_and_waits_for_healthy_services(self) -> None:
+        self.probes = []
         start_release(
             **self.runtime_arguments(),
             sleeper=lambda seconds: None,
+            http_get=self.http_ok,
         )
 
         command = self.runner.calls[0]["command"]
@@ -139,12 +157,50 @@ class ComposeRuntimeTest(unittest.TestCase):
                 "90",
             ],
         )
-        self.assertEqual(len(self.runner.calls), 4)
+        self.assertEqual(len(self.runner.calls), 6)
         self.assertTrue(
             all(
                 call["command"][-4:] == ["ps", "--all", "--format", "json"]
-                for call in self.runner.calls[1:]
+                for call in self.runner.calls[1:4]
             )
+        )
+        manifest = self.request.bundle.manifest
+        self.assertEqual(
+            self.probes,
+            [
+                (
+                    f"http://172.18.0.9:{manifest['service']['internal_port']}"
+                    f"{manifest['service']['healthcheck']['path']}",
+                    manifest["domains"][0]["host"],
+                )
+            ],
+            "the probe goes to the edge-network address, with the domain as Host",
+        )
+
+    def test_a_release_that_starts_but_answers_404_is_refused(self) -> None:
+        ticks = iter(range(0, 1000, 10))
+        answers = iter([0, 404, 404])
+
+        with self.assertRaisesRegex(
+            ComposeRuntimeError,
+            r"application healthcheck failed: GET .* answered HTTP 404 within \d+s; expected 2xx",
+        ):
+            start_release(
+                **self.runtime_arguments(),
+                sleeper=lambda seconds: None,
+                http_get=lambda url, host, timeout: next(answers, 404),
+                clock=lambda: next(ticks),
+            )
+
+    def test_a_slow_start_is_waited_for_within_the_timeout(self) -> None:
+        answers = iter([0, 0, 503, 200])
+        ticks = iter(range(0, 1000, 5))
+
+        start_release(
+            **self.runtime_arguments(),
+            sleeper=lambda seconds: None,
+            http_get=lambda url, host, timeout: next(answers),
+            clock=lambda: next(ticks),
         )
 
     def test_rejects_service_restart_loop_after_compose_wait(self) -> None:
@@ -162,6 +218,7 @@ class ComposeRuntimeTest(unittest.TestCase):
             start_release(
                 **self.runtime_arguments(),
                 sleeper=lambda seconds: None,
+                http_get=lambda url, host, timeout: 200,
             )
 
     def test_reports_failed_healthcheck_without_command_output(self) -> None:
