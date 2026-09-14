@@ -7,6 +7,18 @@ release.
 
 ## [Unreleased]
 
+- `platform update` inside an infrastructure repository moves the core the
+  handbook's way: it shows the console, installed, pinned and latest
+  versions and, per host, the runtime version read over SSH; offers the
+  latest release with its notes (or the current pin, or a typed tag);
+  rewrites the one pin line in `requirements.yml` after a confirmation
+  (nothing committed); installs the collection, falling back to the release
+  artifact URL when Galaxy times out; lets the operator pick hosts — those
+  behind are pre-selected — and converges them twice, reading `PLAY RECAP`
+  so an unreachable host, a failed task or a second run that still changes
+  something is named; then runs readiness. `--check` prints the table only
+  and exits 1 when a host is behind.
+
 ## [0.16.1] - 2026-09-14
 
 - The host now checks `service.healthcheck.path` itself. After
