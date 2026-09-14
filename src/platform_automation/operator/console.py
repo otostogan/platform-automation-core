@@ -406,15 +406,139 @@ def deploy_command(dispatch_inputs: tuple, environment: str) -> str:
     return " ".join(parts)
 
 
-def app_actions(context: Context, scope) -> list:
+def deploy_action(context: Context, scope, prompts) -> Action:
+    """Dispatch the application's Deploy workflow and watch the run it started."""
+    from .deploy import (
+        DeployError,
+        current_branch,
+        dispatch,
+        dispatch_arguments,
+        find_run,
+        list_run_ids,
+        release_tags,
+        watch,
+    )
+
+    root = context.root
+    ident = ["--project", scope.project, "--environment", scope.environment]
+
+    def run() -> int:
+        questionary, style = prompts
+        text, select = make_prompts(questionary, style)
+        from .wizard import BACK, CANCEL
+
+        branch = current_branch(root)
+        inputs = context.dispatch_inputs
+        if not inputs:
+            print(
+                f"{RED}deploy.yml declares no workflow_dispatch inputs; nothing to dispatch{RESET}"
+            )
+            return 1
+
+        ref = ""
+        if "ref" in inputs:
+            tags = release_tags(root)
+            LATEST, OTHER = "latest release", "another ref…"
+            chosen = select(
+                "What to deploy",
+                [LATEST, *tags, OTHER],
+                lambda v: {
+                    LATEST: "latest release (ref left empty)",
+                    OTHER: "type a tag, branch or commit",
+                }.get(v, v),
+            )
+            if chosen in (BACK, CANCEL):
+                print("cancelled — nothing dispatched")
+                return 130
+            if chosen == OTHER:
+                chosen = text("Ref", "", lambda v: bool(v.strip()) or "required")
+                if chosen in (BACK, CANCEL):
+                    print("cancelled — nothing dispatched")
+                    return 130
+            ref = "" if chosen == LATEST else chosen.strip()
+
+        if branch:
+            answer = text(
+                "Run the workflow from branch (the tailnet credential is bound to one)",
+                branch,
+                lambda v: bool(v.strip()) or "required",
+            )
+            if answer in (BACK, CANCEL):
+                print("cancelled — nothing dispatched")
+                return 130
+            branch = answer.strip()
+
+        arguments = dispatch_arguments(inputs, scope.environment, ref, "", branch)
+        print()
+        print(f"{DIM}→ gh {' '.join(arguments)}{RESET}")
+        if scope.environment == "production":
+            typed = questionary.text(
+                "This is production. Type the environment name to confirm",
+                style=style,
+            ).ask()
+            if typed != "production":
+                print("cancelled — nothing dispatched")
+                return 130
+        elif not questionary.confirm("Dispatch?", default=True, style=style).ask():
+            print("cancelled — nothing dispatched")
+            return 130
+
+        try:
+            known = list_run_ids(root, branch)
+            dispatch(root, arguments)
+            print(f"{GREEN}dispatched{RESET} — waiting for the run to appear…")
+            started = find_run(root, branch, known)
+            print(f"{DIM}  {started.url}{RESET}")
+            print()
+            code = watch(root, started)
+        except DeployError as error:
+            print(f"{RED}{error}{RESET}")
+            return 1
+
+        print()
+        if code == 0:
+            print(f"{GREEN}deployment succeeded{RESET}")
+        else:
+            print(
+                f"{RED}deployment failed — see the run above; the previous release keeps serving{RESET}"
+            )
+            print(f"{DIM}  handbook: {HANDBOOK}#/flow-incidents{RESET}")
+        if context.target_host:
+            status = remote_action(
+                "Status on the host",
+                context.target_host,
+                "ops",
+                ["status", *ident],
+                render_status,
+                "#/flow-deploy",
+                core_pin=context.core_pin,
+            )
+            print()
+            print(f"{DIM}→ {status.command}{RESET}")
+            status.run()
+        return code
+
+    return Action(
+        "Deploy",
+        "gh workflow run deploy.yml … (ref and branch are asked first)",
+        run,
+        "#/flow-deploy",
+    )
+
+
+def app_actions(context: Context, scope, prompts=None) -> list:
     target = context.target_host or "<target host>"
     ident = ["--project", scope.project, "--environment", scope.environment]
     actions = [
-        Action(
-            "Deploy",
-            deploy_command(context.dispatch_inputs, scope.environment),
-            None,
-            "#/flow-deploy",
+        (
+            deploy_action(context, scope, prompts)
+            if prompts
+            else Action(
+                "Deploy",
+                deploy_command(context.dispatch_inputs, scope.environment),
+                None,
+                "#/flow-deploy",
+            )
         ),
         remote_action(
             "Status on the host",
@@ -548,7 +672,7 @@ def run_menu(context: Context) -> int:
         if context.kind == "infra":
             actions = host_actions(context, scope, prompts=(questionary, style))
         else:
-            actions = app_actions(context, scope)
+            actions = app_actions(context, scope, prompts=(questionary, style))
 
         while True:
             action = choose(
