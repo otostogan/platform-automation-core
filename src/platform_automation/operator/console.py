@@ -1622,6 +1622,213 @@ def run_infra(argv: list) -> int:
     return 0
 
 
+def run_core_update(context: Context, argv: list) -> int:
+    """Pin → install → converge twice → readiness, host by host, with versions shown."""
+    from .context import read_collection_pin
+    from .core_update import (
+        CoreUpdateError,
+        HostVersion,
+        artifact_url,
+        host_version,
+        install_collection,
+        latest_release,
+        parse_recap,
+        playbook_command,
+        rewrite_pin,
+        run_playbook,
+        verdict,
+    )
+    from .doctor import default_collections_root, installed_collection
+
+    root = context.root
+    check_only = "--check" in argv
+    installed = installed_collection(default_collections_root(Path.home()))
+    have = f"v{installed['version']}" if installed else None
+    pin = read_collection_pin(root)
+    release = latest_release()
+    print(
+        f"{DIM}console v{__version__} · installed {have or '—'} · requirements.yml {pin or '—'}"
+        f" · latest release {release.tag if release else '? (gh unavailable)'}{RESET}"
+    )
+    print()
+
+    blocked = tailnet_gate(read_tailnet())
+    versions = []
+    for host in context.hosts:
+        address, user, identity = host_connection(host)
+        found = (
+            HostVersion(address, None, blocked)
+            if blocked
+            else host_version(address, user, identity)
+        )
+        versions.append((host, found))
+        mark = (
+            f"{GREEN}{found.version}{RESET}"
+            if found.version and found.version == pin
+            else (
+                f"{CYAN}{found.version}{RESET}"
+                if found.version
+                else f"{RED}? {found.error}{RESET}"
+            )
+        )
+        print(f"  {host.name:<24} {mark}")
+    print()
+
+    behind = [h for h, v in versions if v.version != pin]
+    if check_only:
+        if behind:
+            print(f"{len(behind)} host(s) do not run the pinned {pin}")
+            return 1
+        print(f"{GREEN}every host runs {pin}{RESET}")
+        return 0
+
+    questionary, style = load_prompts()
+    text, select = make_prompts(questionary, style)
+    from .wizard import BACK, CANCEL
+
+    OTHER = "another tag…"
+    candidates = []
+    if release:
+        candidates.append(release.tag)
+    if pin and pin not in candidates:
+        candidates.append(pin)
+    candidates.append(OTHER)
+    labels = {}
+    if release:
+        labels[release.tag] = f"{release.tag}  latest release"
+    if pin:
+        labels[pin] = f"{pin}  current pin — reinstall and converge only"
+    labels[OTHER] = "type a release tag"
+    target = select("Target core version", candidates, lambda v: labels.get(v, v))
+    if target in (BACK, CANCEL):
+        print("cancelled — nothing changed")
+        return 130
+    if target == OTHER:
+        target = text(
+            "Release tag", "", lambda v: v.startswith("v") or "a tag such as v0.16.1"
+        )
+        if target in (BACK, CANCEL):
+            print("cancelled — nothing changed")
+            return 130
+
+    if release and target == release.tag and release.notes.strip():
+        print()
+        print(f"{BOLD}Release notes {release.tag}{RESET}")
+        for line in release.notes.strip().splitlines()[:40]:
+            print(f"  {line}")
+        print()
+    if target != f"v{__version__}":
+        print(
+            f"{DIM}this console is v{__version__}; after the hosts move to {target},"
+            f" update the console too (git pull in the core checkout, or pipx upgrade){RESET}"
+        )
+
+    try:
+        if target != pin:
+            path = root / "requirements.yml"
+            new_text = rewrite_pin(path.read_text(encoding="utf-8"), target)
+            print(f"{DIM}→ requirements.yml: {pin or 'no pin'} → {target}{RESET}")
+            if not questionary.confirm(
+                "Move the pin? (not committed)", default=True, style=style
+            ).ask():
+                print("cancelled — nothing changed")
+                return 130
+            path.write_text(new_text, encoding="utf-8")
+            print(
+                f"{GREEN}pinned {target} in requirements.yml — commit it as its own change{RESET}"
+            )
+
+        print(
+            f"{DIM}→ .venv/bin/ansible-galaxy collection install --force --requirement requirements.yml{RESET}"
+        )
+        print(
+            f"{DIM}  (falls back to {artifact_url(target)} when Galaxy times out){RESET}"
+        )
+        if not questionary.confirm(
+            "Install the collection?", default=True, style=style
+        ).ask():
+            print(
+                "stopped after the pin — install and converge by hand or run update again"
+            )
+            return 0
+        used = install_collection(root, target)
+        print(f"{GREEN}installed: {used}{RESET}")
+    except CoreUpdateError as error:
+        print(f"{RED}{error}{RESET}")
+        return 1
+
+    if blocked:
+        print(f"{RED}{blocked}{RESET}")
+        print(
+            f"{DIM}  converge needs the tailnet — handbook: {HANDBOOK}#/flow-incidents{RESET}"
+        )
+        return 1
+    choices = [
+        questionary.Choice(
+            f"{h.name}  ({v.version or '?'})",
+            value=h.name,
+            checked=(v.version != target),
+        )
+        for h, v in versions
+    ]
+    chosen = questionary.checkbox(
+        "Converge which hosts?",
+        choices=choices,
+        style=style,
+        instruction="(space to toggle, enter to confirm)",
+    ).ask()
+    if not chosen:
+        print("no hosts chosen — the pin and the collection are updated, hosts are not")
+        return 0
+
+    try:
+        for attempt in (1, 2):
+            command = playbook_command(root, "converge", chosen)
+            print()
+            print(f"{DIM}→ converge #{attempt}: {' '.join(command)}{RESET}")
+            if (
+                attempt == 1
+                and not questionary.confirm(
+                    "Run converge twice on these hosts?", default=True, style=style
+                ).ask()
+            ):
+                print("cancelled before converge")
+                return 130
+            code, output = run_playbook(root, command)
+            problems = verdict(parse_recap(output), chosen, second=(attempt == 2))
+            if code != 0 or problems:
+                print()
+                for problem in problems or [f"ansible-playbook exited {code}"]:
+                    print(f"{RED}{problem}{RESET}")
+                print(f"{DIM}  handbook: {HANDBOOK}#/flow-core-update{RESET}")
+                return 1
+            print(f"{GREEN}converge #{attempt}: clean{RESET}")
+
+        command = playbook_command(root, "readiness", chosen)
+        print()
+        print(f"{DIM}→ readiness: {' '.join(command)}{RESET}")
+        code, output = run_playbook(root, command)
+        problems = verdict(parse_recap(output), chosen, second=False)
+        if code != 0 or problems:
+            for problem in problems or [f"ansible-playbook exited {code}"]:
+                print(f"{RED}{problem}{RESET}")
+            return 1
+        print(f"{GREEN}readiness: passed{RESET}")
+    except CoreUpdateError as error:
+        print(f"{RED}{error}{RESET}")
+        return 1
+
+    print()
+    print(
+        f"{GREEN}{', '.join(chosen)}: {target}, second converge changed nothing, readiness passed{RESET}"
+    )
+    print(
+        "Next: commit requirements.yml; in every application that deploys here: platform update"
+    )
+    print(f"{DIM}  handbook: {HANDBOOK}#/flow-core-update{RESET}")
+    return 0
+
+
 def run_update(context: Context, argv: list) -> int:
     """Rewrite the platform-owned files from the console's templates, after a look."""
     from .update import (
@@ -1636,6 +1843,9 @@ def run_update(context: Context, argv: list) -> int:
 
     assume_yes = "--yes" in argv
     check_only = "--check" in argv
+
+    if context.kind == "infra":
+        return run_core_update(context, argv)
 
     if context.kind != "app":
         print(
