@@ -777,6 +777,33 @@ class PlatformCliTest(unittest.TestCase):
             stdout,
         )
 
+    def test_status_json_lists_the_history_newest_first(self) -> None:
+        from platform_automation.platform_cli import build_status_document
+
+        def record(release_id, tag, status, health):
+            return {
+                "release_id": release_id,
+                "release_tag": tag,
+                "status": status,
+                "healthcheck": {"status": health},
+                "migration": {"status": "not_required"},
+                "created_at": release_id,
+                "updated_at": release_id,
+            }
+
+        document = build_status_document(
+            "p",
+            "lab",
+            [
+                record("1", "lab-v1", "deployed", "succeeded"),
+                record("2", "lab-v2", "failed", "failed"),
+            ],
+        )
+        self.assertEqual(
+            [e["release_tag"] for e in document["history"]], ["lab-v2", "lab-v1"]
+        )
+        self.assertEqual(document["history"][1]["healthcheck"], "succeeded")
+
     def test_status_json_without_releases(self) -> None:
         code, stdout, stderr = self.run_cli(
             "status",

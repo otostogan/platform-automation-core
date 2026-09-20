@@ -406,7 +406,9 @@ def deploy_command(dispatch_inputs: tuple, environment: str) -> str:
     return " ".join(parts)
 
 
-def deploy_action(context: Context, scope, prompts) -> Action:
+def deploy_action(
+    context: Context, scope, prompts, preset_ref: Optional[str] = None
+) -> Action:
     """Dispatch the application's Deploy workflow and watch the run it started."""
     from .deploy import (
         DeployError,
@@ -435,8 +437,8 @@ def deploy_action(context: Context, scope, prompts) -> Action:
             )
             return 1
 
-        ref = ""
-        if "ref" in inputs:
+        ref = preset_ref or ""
+        if "ref" in inputs and preset_ref is None:
             tags = release_tags(root)
             LATEST, OTHER = "latest release", "another ref…"
             chosen = select(
@@ -541,6 +543,144 @@ def secrets_action(context: Context, environment: str, verb: str) -> Action:
     return Action(label, f"platform secrets {' '.join(argv)}", run, "#/flow-new-app")
 
 
+def rollback_action(context: Context, scope, prompts) -> Action:
+    """Two routes, one gate: the target is chosen by the ledger's own rules."""
+    from .rollback import (
+        blocked_by_deploying,
+        current_tag,
+        eligible_targets,
+        migrations_between,
+        version_of,
+    )
+
+    ident = ["--project", scope.project, "--environment", scope.environment]
+    target_host = context.target_host
+
+    def run() -> int:
+        questionary, style = prompts
+        text, select = make_prompts(questionary, style)
+        from .wizard import BACK, CANCEL
+
+        if not target_host:
+            print(
+                f"{RED}deploy.yml names no target_host; the ledger cannot be read{RESET}"
+            )
+            return 1
+        print(f"{DIM}→ reading the release history from {target_host}{RESET}")
+        result = run_platform(target_host, "ops", ["status", *ident])
+        if not result.ok:
+            return report_failure(result.error, context.core_pin)
+        document = result.document
+        if blocked_by_deploying(document):
+            print(
+                f"{RED}a release is still deploying: its migration outcome is unknown,"
+                f" and a rollback on top could seal a data loss{RESET}"
+            )
+            print(f"{DIM}  handbook: {HANDBOOK}#/flow-incidents{RESET}")
+            return 1
+        targets = eligible_targets(document)
+        if not targets:
+            print(
+                "nothing to roll back to: no earlier release with a successful"
+                " deployment and a passed healthcheck"
+            )
+            return 1
+
+        print(f"  current: {current_tag(document) or 'none'}")
+        chosen = select(
+            "Roll back to",
+            targets,
+            lambda t: f"{t.release_tag:<28} {t.updated_at[:16]}"
+            + ("  migrated" if t.migration == "succeeded" else ""),
+        )
+        if chosen in (BACK, CANCEL):
+            print("cancelled")
+            return 130
+
+        migrated = migrations_between(document, chosen.release_tag)
+        print()
+        print(f"{BOLD}A rollback moves the application, not the data.{RESET}")
+        if migrated:
+            print(
+                f"{RED}{len(migrated)} release(s) after {chosen.release_tag} ran a"
+                f" migration: {', '.join(migrated)}.{RESET}"
+            )
+            print(
+                "  The schema stays where those migrations left it; the older code"
+                " may not know it. Restore the pre-migration dump too —"
+                " handbook #/flow-backups."
+            )
+        else:
+            print("  No migration ran after that release; a rollback is enough.")
+        if not questionary.confirm(
+            "Understood — continue?", default=False, style=style
+        ).ask():
+            print("cancelled")
+            return 130
+
+        CI = "Redeploy through GitHub (normal)"
+        HOST = "On the host, from its disk (emergency)"
+        route = select(
+            "How",
+            [CI, HOST],
+            lambda v: v
+            + (
+                "  — full build, migrations, healthcheck"
+                if v == CI
+                else "  — no CI or registry needed"
+            ),
+        )
+        if route in (BACK, CANCEL):
+            print("cancelled")
+            return 130
+
+        if route == CI:
+            version = version_of(chosen.release_tag)
+            if version is None:
+                version = text(
+                    f"{chosen.release_tag} carries no version; ref to deploy",
+                    "",
+                    lambda v: bool(v.strip()) or "required",
+                )
+                if version in (BACK, CANCEL):
+                    print("cancelled")
+                    return 130
+            print(f"{DIM}→ Deploy with ref={version}{RESET}")
+            return deploy_action(context, scope, prompts, preset_ref=version).run()
+
+        arguments = ["rollback", *ident, "--to", chosen.release_tag]
+        shown = f"ssh ops@{target_host} 'sudo -n platform {' '.join(arguments)} --json'"
+        print(f"{DIM}→ {shown}{RESET}")
+        typed = questionary.text(
+            f"Type the release tag to confirm ({chosen.release_tag})", style=style
+        ).ask()
+        if typed != chosen.release_tag:
+            print("cancelled — nothing changed on the host")
+            return 130
+        result = run_platform(target_host, "ops", arguments, timeout=600)
+        if not result.ok:
+            code = report_failure(result.error, context.core_pin)
+            if "registry" in (result.error or "") or "image" in (result.error or ""):
+                print(
+                    f"{DIM}  the image is no longer on the host: pass registry"
+                    f" credentials by hand — handbook #/flow-rollback, step 3{RESET}"
+                )
+            return code
+        print(f"{GREEN}rolled back to {chosen.release_tag}{RESET}")
+        status = run_platform(target_host, "ops", ["status", *ident])
+        if status.ok:
+            print(render_status(status.document))
+        return 0
+
+    return Action(
+        "Roll back",
+        "platform rollback … (target chosen from the ledger)",
+        run,
+        "#/flow-rollback",
+        remote=True,
+    )
+
+
 def app_actions(context: Context, scope, prompts=None) -> list:
     target = context.target_host or "<target host>"
     ident = ["--project", scope.project, "--environment", scope.environment]
@@ -554,6 +694,11 @@ def app_actions(context: Context, scope, prompts=None) -> list:
                 None,
                 "#/flow-deploy",
             )
+        ),
+        (
+            rollback_action(context, scope, prompts)
+            if prompts
+            else Action("Roll back", "platform rollback …", None, "#/flow-rollback")
         ),
         remote_action(
             "Status on the host",

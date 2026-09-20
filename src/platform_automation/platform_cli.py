@@ -486,6 +486,9 @@ def build_status_document(
         "release_count": len(records),
         "current": current,
         "latest": latest,
+        # Newest first: the rollback targets an operator chooses from, read
+        # from the same ledger a rollback validates against.
+        "history": [summarize_release(record) for record in reversed(records)],
         "backups": backups,
     }
 

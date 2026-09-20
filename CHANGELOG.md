@@ -7,6 +7,18 @@ release.
 
 ## [Unreleased]
 
+- `platform status --json` gains `history`: every ledger record summarised
+  (tag, status, healthcheck, migration, time), newest first. Read-only; it is
+  the list a rollback target is chosen from.
+- The console's application menu gains «Roll back». It reads the history
+  from the host, refuses while a release is `deploying`, offers only the
+  targets the host would accept (deployed, healthcheck passed, not current),
+  names the migrations that ran after the chosen target — a rollback moves
+  the application, not the data — and then takes one of two routes: a
+  redeploy through GitHub with `ref` set to the target's version, or the
+  emergency `platform rollback --to <tag>` on the host after the tag is
+  typed back. Registry credentials are never passed by the console.
+
 - The console's application menu replaces the printed-only «Re-key secrets»
   (`sops updatekeys`, the pre-`.env` path) with two actions that run:
   «Secrets: push» encrypts `.env.<environment>` into the ciphertext the way
