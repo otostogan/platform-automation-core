@@ -1139,7 +1139,9 @@ def execute_prepared_release(
         )
         raise DeploymentExecutionError(str(error)) from error
 
-    plan = nginx_manager.build_plan(request.bundle.manifest, record["release_id"])
+    plan = nginx_manager.build_plan(
+        request.bundle.manifest, record["release_id"], runtime_secrets_path
+    )
 
     with nginx_manager.prepare(plan) as nginx_transaction:
         record = update_release_state(

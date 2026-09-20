@@ -296,3 +296,74 @@ class NginxTransactionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HtpasswdTransactionTest(NginxTransactionTest):
+    """Basic-auth files ride the same transaction as the fragments."""
+
+    def auth_plan(self, hosts, release_id="3" * 32):
+        return build_fragment_plan(
+            "example",
+            "lab",
+            release_id,
+            {host: "# managed\n" for host in hosts},
+            {host: f"user:$6$salt$hash-{host}\n" for host in hosts},
+        )
+
+    def test_htpasswd_is_written_owned_and_removed_with_the_domain(self) -> None:
+        (self.base / "htpasswd").mkdir(mode=0o755)
+        self.generated = "server_name mail.example.test;\n"
+        with self.manager.prepare(self.auth_plan(["mail.example.test"])) as transaction:
+            transaction.stage()
+            self.assertFalse((self.base / "htpasswd/mail.example.test").exists())
+            transaction.activate()
+        auth_file = self.base / "htpasswd/mail.example.test"
+        self.assertEqual(auth_file.read_text(), "user:$6$salt$hash-mail.example.test\n")
+        self.assertEqual(auth_file.stat().st_mode & 0o777, 0o644)
+        metadata = json.loads((self.ownership / "example--lab.json").read_text())
+        self.assertEqual(metadata["htpasswd"], ["mail.example.test"])
+
+        # the next release drops the auth block: the file goes with it
+        self.generated = "server_name app.example.test;\n"
+        with self.manager.prepare(self.plan(release_id="4" * 32)) as transaction:
+            transaction.stage()
+            transaction.activate()
+        self.assertFalse(auth_file.exists())
+        metadata = json.loads((self.ownership / "example--lab.json").read_text())
+        self.assertEqual(metadata["htpasswd"], [])
+
+    def test_rollback_restores_the_previous_htpasswd(self) -> None:
+        (self.base / "htpasswd").mkdir(mode=0o755)
+        self.generated = "server_name mail.example.test;\n"
+        with self.manager.prepare(
+            self.auth_plan(["mail.example.test"], "1" * 32)
+        ) as transaction:
+            transaction.stage()
+            transaction.activate()
+        with self.manager.prepare(
+            self.plan({"mail.example.test": "x\n"}, "2" * 32)
+        ) as transaction:
+            transaction.stage()
+            transaction.activate()
+            self.assertFalse((self.base / "htpasswd/mail.example.test").exists())
+            transaction.rollback()
+        self.assertEqual(
+            (self.base / "htpasswd/mail.example.test").read_text(),
+            "user:$6$salt$hash-mail.example.test\n",
+        )
+
+    def test_a_foreign_or_unmanaged_htpasswd_is_never_touched(self) -> None:
+        (self.base / "htpasswd").mkdir(mode=0o755)
+        stray = self.base / "htpasswd/mail.example.test"
+        stray.write_text("someone:else\n")
+        with self.assertRaisesRegex(NginxTransactionError, "unmanaged htpasswd"):
+            with self.manager.prepare(self.auth_plan(["mail.example.test"])):
+                pass
+        self.assertEqual(stray.read_text(), "someone:else\n")
+
+    def test_plan_without_auth_never_needs_the_directory(self) -> None:
+        self.assertFalse((self.base / "htpasswd").exists())
+        with self.manager.prepare(self.plan()) as transaction:
+            transaction.stage()
+            transaction.activate()
+        self.assertFalse((self.base / "htpasswd").exists())

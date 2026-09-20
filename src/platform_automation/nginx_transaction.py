@@ -12,6 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Iterator, Mapping, Optional
 
+from .htpasswd import HtpasswdError, htpasswd_files_for_release
 from .nginx_config import NginxConfigError, generate_vhost_fragments
 
 
@@ -43,6 +44,7 @@ class NginxFragmentPlan:
     environment: str
     release_id: str
     fragments: Mapping[str, str]
+    htpasswd: Mapping[str, str] = MappingProxyType({})  # host → "user:$6$…"
 
     @property
     def hosts(self) -> frozenset[str]:
@@ -58,6 +60,7 @@ class NginxOwnershipRecord:
     environment: str
     release_id: str
     fragments: tuple[str, ...]
+    htpasswd: tuple[str, ...] = ()
 
 
 def _validate_identity(project: str, environment: str, release_id: str) -> None:
@@ -81,11 +84,21 @@ def _validate_fragment(name: str, content: str) -> None:
         raise NginxTransactionError(f"nginx fragment {name!r} is too large")
 
 
+def _validate_htpasswd(host: str, content: str) -> None:
+    if not HOST_PATTERN.fullmatch(host):
+        raise NginxTransactionError(f"invalid htpasswd host: {host!r}")
+    if not isinstance(content, str) or "\x00" in content:
+        raise NginxTransactionError(f"htpasswd for {host!r} must be text")
+    if len(content.encode("utf-8")) > MAX_FRAGMENT_BYTES:
+        raise NginxTransactionError(f"htpasswd for {host!r} is too large")
+
+
 def build_fragment_plan(
     project: str,
     environment: str,
     release_id: str,
     fragments: Mapping[str, str],
+    htpasswd: Mapping[str, str] = None,
 ) -> NginxFragmentPlan:
     _validate_identity(project, environment, release_id)
     if not isinstance(fragments, Mapping):
@@ -94,11 +107,16 @@ def build_fragment_plan(
     for name, content in fragments.items():
         _validate_fragment(name, content)
         copied[name] = content
+    auth: dict[str, str] = {}
+    for host, content in (htpasswd or {}).items():
+        _validate_htpasswd(host, content)
+        auth[host] = content
     return NginxFragmentPlan(
         project=project,
         environment=environment,
         release_id=release_id,
         fragments=MappingProxyType(copied),
+        htpasswd=MappingProxyType(auth),
     )
 
 
@@ -106,13 +124,18 @@ def build_release_fragment_plan(
     manifest: dict[str, Any],
     release_id: str,
     allowed_raw_projects: set[str],
+    runtime_secrets_path: Optional[Path] = None,
 ) -> NginxFragmentPlan:
     try:
         fragments = generate_vhost_fragments(manifest, allowed_raw_projects)
     except (KeyError, TypeError, NginxConfigError) as exc:
         raise NginxTransactionError(f"cannot render nginx fragments: {exc}") from exc
+    try:
+        htpasswd = htpasswd_files_for_release(manifest, runtime_secrets_path)
+    except (KeyError, TypeError, OSError, HtpasswdError) as exc:
+        raise NginxTransactionError(f"cannot render basic auth: {exc}") from exc
     return build_fragment_plan(
-        manifest["project"], manifest["environment"], release_id, fragments
+        manifest["project"], manifest["environment"], release_id, fragments, htpasswd
     )
 
 
@@ -217,7 +240,16 @@ def _parse_ownership(content: bytes, source: Path) -> NginxOwnershipRecord:
         raise NginxTransactionError(f"fragment inventory is not canonical: {source}")
     for name in fragments:
         _validate_fragment(name, "")
-    return NginxOwnershipRecord(project, environment, release_id, tuple(fragments))
+    htpasswd = data.get("htpasswd", [])
+    if not isinstance(htpasswd, list) or any(not isinstance(h, str) for h in htpasswd):
+        raise NginxTransactionError(f"invalid htpasswd inventory: {source}")
+    if htpasswd != sorted(set(htpasswd)):
+        raise NginxTransactionError(f"htpasswd inventory is not canonical: {source}")
+    for host in htpasswd:
+        _validate_htpasswd(host, "")
+    return NginxOwnershipRecord(
+        project, environment, release_id, tuple(fragments), tuple(htpasswd)
+    )
 
 
 def load_raw_project_allowlist(path: Path) -> set[str]:
@@ -279,11 +311,13 @@ class NginxFragmentTransaction:
         previous: Optional[NginxOwnershipRecord],
         snapshots: Mapping[str, Optional[bytes]],
         metadata_snapshot: Optional[bytes],
+        htpasswd_snapshots: Mapping[str, Optional[bytes]] = None,
     ) -> None:
         self.manager = manager
         self.plan = plan
         self.previous = previous
         self.snapshots = dict(snapshots)
+        self.htpasswd_snapshots = dict(htpasswd_snapshots or {})
         self.metadata_snapshot = metadata_snapshot
         self.staged = False
         self.activated = False
@@ -330,6 +364,15 @@ class NginxFragmentTransaction:
                     _atomic_write(
                         path, self.plan.fragments[name].encode("utf-8"), 0o644
                     )
+                elif path.exists():
+                    _unlink_file(path)
+            # Basic-auth files ride the same transaction: docker-gen reads them
+            # at render time, so they must be in place before regeneration and
+            # gone before it when a domain loses its auth.
+            for host in sorted(self.htpasswd_snapshots):
+                path = self.manager.htpasswd_root / host
+                if host in self.plan.htpasswd:
+                    _atomic_write(path, self.plan.htpasswd[host].encode("utf-8"), 0o644)
                 elif path.exists():
                     _unlink_file(path)
         except (OSError, NginxTransactionError) as exc:
@@ -395,6 +438,13 @@ class NginxFragmentTransaction:
                     _unlink_file(path)
             else:
                 _atomic_write(path, content, 0o644)
+        for host, content in sorted(self.htpasswd_snapshots.items()):
+            path = self.manager.htpasswd_root / host
+            if content is None:
+                if path.exists():
+                    _unlink_file(path)
+            else:
+                _atomic_write(path, content, 0o644)
         if self.config_snapshot is None:
             if self.manager.default_config.exists():
                 _unlink_file(self.manager.default_config)
@@ -418,8 +468,14 @@ class NginxTransactionManager:
         convergence_interval: float = 0.25,
         docker_gen_container: str = "platform-docker-gen",
         command_timeout: float = 30.0,
+        htpasswd_root: Optional[Path] = None,
     ) -> None:
         self.vhost_root = Path(vhost_root)
+        self.htpasswd_root = (
+            Path(htpasswd_root)
+            if htpasswd_root is not None
+            else Path(vhost_root).parent / "htpasswd"
+        )
         self.ownership_root = Path(ownership_root)
         self.default_config = Path(default_config)
         self.lock_root = Path(lock_root)
@@ -445,10 +501,16 @@ class NginxTransactionManager:
             )
 
     def build_plan(
-        self, manifest: dict[str, Any], release_id: str
+        self,
+        manifest: dict[str, Any],
+        release_id: str,
+        runtime_secrets_path: Optional[Path] = None,
     ) -> NginxFragmentPlan:
         return build_release_fragment_plan(
-            manifest, release_id, load_raw_project_allowlist(self.raw_allowlist)
+            manifest,
+            release_id,
+            load_raw_project_allowlist(self.raw_allowlist),
+            runtime_secrets_path,
         )
 
     @contextmanager
@@ -489,6 +551,7 @@ class NginxTransactionManager:
                 f"ownership metadata scope does not match filename: {scope_path}"
             )
         owners: dict[str, tuple[str, str]] = {}
+        auth_owners: dict[str, tuple[str, str]] = {}
         for metadata_path in sorted(self.ownership_root.glob("*.json")):
             content = _read_regular_file(metadata_path, MAX_METADATA_BYTES, 0o600)
             if content is None:
@@ -513,6 +576,23 @@ class NginxTransactionManager:
                     raise NginxTransactionError(
                         f"duplicate ownership for fragment: {name}"
                     )
+            for host in record.htpasswd:
+                if (
+                    _read_regular_file(
+                        self.htpasswd_root / host, MAX_FRAGMENT_BYTES, 0o644
+                    )
+                    is None
+                ):
+                    raise NginxTransactionError(
+                        f"owned htpasswd file is missing: {host}"
+                    )
+                owner = auth_owners.setdefault(
+                    host, (record.project, record.environment)
+                )
+                if owner != (record.project, record.environment):
+                    raise NginxTransactionError(
+                        f"duplicate ownership for htpasswd: {host}"
+                    )
         scope = (plan.project, plan.environment)
         for name in plan.fragments:
             owner = owners.get(name)
@@ -524,15 +604,37 @@ class NginxTransactionManager:
                 raise NginxTransactionError(
                     f"refusing to overwrite unmanaged nginx fragment: {name}"
                 )
+        if plan.htpasswd or auth_owners:
+            # Convergence creates the directory; a plan that needs it must
+            # find it as root-owned as everything else the proxy reads.
+            _ensure_owned_directory(self.htpasswd_root, 0o755)
+        for host in plan.htpasswd:
+            owner = auth_owners.get(host)
+            if owner is not None and owner != scope:
+                raise NginxTransactionError(
+                    f"htpasswd for {host!r} is owned by {owner[0]}/{owner[1]}"
+                )
+            if owner is None and (self.htpasswd_root / host).exists():
+                raise NginxTransactionError(
+                    f"refusing to overwrite unmanaged htpasswd file: {host}"
+                )
         affected = set(plan.fragments)
+        affected_auth = set(plan.htpasswd)
         if previous is not None:
             affected.update(previous.fragments)
+            affected_auth.update(previous.htpasswd)
         snapshots = {
             name: _read_regular_file(self.vhost_root / name, MAX_FRAGMENT_BYTES, 0o644)
             for name in affected
         }
+        htpasswd_snapshots = {
+            host: _read_regular_file(
+                self.htpasswd_root / host, MAX_FRAGMENT_BYTES, 0o644
+            )
+            for host in affected_auth
+        }
         return NginxFragmentTransaction(
-            self, plan, previous, snapshots, metadata_snapshot
+            self, plan, previous, snapshots, metadata_snapshot, htpasswd_snapshots
         )
 
     def write_ownership(self, plan: NginxFragmentPlan) -> None:
@@ -540,6 +642,7 @@ class NginxTransactionManager:
             "api_version": OWNERSHIP_API_VERSION,
             "environment": plan.environment,
             "fragments": sorted(plan.fragments),
+            "htpasswd": sorted(plan.htpasswd),
             "project": plan.project,
             "release_id": plan.release_id,
         }

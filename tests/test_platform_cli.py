@@ -531,7 +531,7 @@ class PlatformCliTest(unittest.TestCase):
         self.runtime_events.append(("load_manifest", str(staged_bundle_path)))
         return self.request.bundle.manifest
 
-    def build_plan(self, manifest: dict, release_id: str):
+    def build_plan(self, manifest: dict, release_id: str, runtime_secrets_path=None):
         self.nginx_events.append("build")
         if self.nginx_build_error is not None:
             from platform_automation.nginx_transaction import NginxTransactionError
