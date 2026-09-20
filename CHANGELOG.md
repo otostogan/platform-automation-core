@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-20
+
 - A domain can be closed with basic auth: `domains[].auth` names a user
   and the *name* of the environment-secret variable holding the password.
   At deploy the host reads the value from the release's decrypted secrets,
