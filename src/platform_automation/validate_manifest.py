@@ -121,8 +121,23 @@ def validate_manifest(
     ]
 
     formatted_errors.extend(validate_unique_domain_hosts(manifest))
+    formatted_errors.extend(validate_web_domain_present(manifest))
 
     return formatted_errors
+
+
+def validate_web_domain_present(manifest: Any) -> list[str]:
+    """The healthcheck and the workflow's check both address the web service by a domain."""
+    try:
+        web = manifest["service"]["web"]
+        domains = manifest["domains"]
+    except (KeyError, TypeError):
+        return []
+    if not isinstance(domains, list) or not all(isinstance(d, dict) for d in domains):
+        return []
+    if any((d.get("service") or web) == web for d in domains):
+        return []
+    return ["$.domains: at least one domain must belong to the web service"]
 
 
 def resolve_compose_path(
@@ -233,6 +248,23 @@ def validate_compose(
             errors.append(
                 f"$.compose.services.{web_service_name}.networks: "
                 "web service must join edge"
+            )
+
+    for index, domain in enumerate(manifest["domains"]):
+        owner = domain.get("service")
+        if not owner or owner == web_service_name:
+            continue
+        holder = services.get(owner)
+        if not isinstance(holder, dict):
+            errors.append(
+                f"$.domains[{index}].service: Compose service {owner!r} does not exist"
+            )
+        elif "edge" not in service_network_names(holder):
+            # docker-gen only sees containers on platform-edge; a domain on a
+            # service outside it would be accepted and never answer.
+            errors.append(
+                f"$.compose.services.{owner}.networks: "
+                f"service carrying {domain['host']} must join edge"
             )
 
     migration_service = manifest["deployment"].get("migration_service")

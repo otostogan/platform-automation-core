@@ -451,3 +451,67 @@ class ManifestValidatorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DomainServiceTest(ManifestValidatorTest):
+    """A domain may belong to a helper service; the checks name what would fail silently."""
+
+    def with_helper(self):
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["domains"].append(
+            {
+                "host": "mail.app.example.invalid",
+                "tls": True,
+                "service": "mailpit",
+                "nginx": {},
+            }
+        )
+        compose = copy.deepcopy(self.valid_compose)
+        compose["services"]["mailpit"] = {
+            "image": "docker.io/axllent/mailpit@sha256:" + "0" * 64,
+            "expose": ["8025"],
+            "networks": ["edge"],
+        }
+        return manifest, compose
+
+    def test_a_helper_domain_is_accepted_when_the_service_is_on_edge(self) -> None:
+        manifest, compose = self.with_helper()
+        self.assertEqual(self.validate(manifest), [])
+        self.assertEqual(self.validate_compose_contract(compose, manifest), [])
+
+    def test_a_domain_on_a_missing_service_is_named(self) -> None:
+        manifest, compose = self.with_helper()
+        del compose["services"]["mailpit"]
+        errors = self.validate_compose_contract(compose, manifest)
+        self.assertTrue(
+            any(e.startswith("$.domains[1].service:") for e in errors), errors
+        )
+
+    def test_a_helper_off_the_edge_network_is_refused(self) -> None:
+        manifest, compose = self.with_helper()
+        compose["services"]["mailpit"]["networks"] = ["mail"]
+        errors = self.validate_compose_contract(compose, manifest)
+        self.assertTrue(
+            any(
+                "mailpit.networks" in e and "mail.app.example.invalid" in e
+                for e in errors
+            ),
+            errors,
+        )
+
+    def test_the_web_service_must_keep_at_least_one_domain(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        for domain in manifest["domains"]:
+            domain["service"] = "mailpit"
+        errors = self.validate(manifest)
+        self.assertIn(
+            "$.domains: at least one domain must belong to the web service", errors
+        )
+
+    def test_naming_the_web_service_explicitly_is_the_default(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["domains"][0]["service"] = manifest["service"]["web"]
+        self.assertEqual(self.validate(manifest), [])
+        self.assertEqual(
+            self.validate_compose_contract(self.valid_compose, manifest), []
+        )
