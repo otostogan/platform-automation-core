@@ -526,6 +526,21 @@ def deploy_action(context: Context, scope, prompts) -> Action:
     )
 
 
+def secrets_action(context: Context, environment: str, verb: str) -> Action:
+    """push: encrypt .env.<env> into the ciphertext (what the hook does); pull: read it back."""
+    argv = [verb, environment]
+    label = (
+        f"Secrets: push .env.{environment} → ciphertext"
+        if verb == "push"
+        else f"Secrets: pull ciphertext → .env.{environment} (needs a key)"
+    )
+
+    def run() -> int:
+        return run_secrets(context, argv)
+
+    return Action(label, f"platform secrets {' '.join(argv)}", run, "#/flow-new-app")
+
+
 def app_actions(context: Context, scope, prompts=None) -> list:
     target = context.target_host or "<target host>"
     ident = ["--project", scope.project, "--environment", scope.environment]
@@ -557,12 +572,8 @@ def app_actions(context: Context, scope, prompts=None) -> list:
             "#/flow-backups",
         ),
         validate_action(context.root, scope.manifest),
-        Action(
-            "Re-key secrets",
-            f"sops updatekeys deploy/secrets.{scope.environment}.sops.yaml",
-            None,
-            "#/flow-operators",
-        ),
+        secrets_action(context, scope.environment, "push"),
+        secrets_action(context, scope.environment, "pull"),
     ]
     if context.target_host is None:
         actions = [
