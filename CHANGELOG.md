@@ -7,6 +7,18 @@ release.
 
 ## [Unreleased]
 
+- A domain can be closed with basic auth: `domains[].auth` names a user
+  and the *name* of the environment-secret variable holding the password.
+  At deploy the host reads the value from the release's decrypted secrets,
+  writes only its sha512-crypt hash to `htpasswd/<host>` and switches nginx
+  in the same transaction as the vhost fragments — snapshot, atomic write,
+  restore on any error, ownership by project and environment, never a
+  foreign or unmanaged file. Removing the block or the domain removes the
+  file with the same deployment; a rollback restores the previous one. A
+  missing or empty variable refuses the deployment before anything is
+  switched, and the value never appears in a message, a log or the ledger.
+  The helper service the domain belongs to is not told about the password.
+
 - A manifest domain may belong to a Compose service other than `web`:
   `domains[].service` names it. `PLATFORM_VIRTUAL_HOSTS` and
   `PLATFORM_TLS_HOSTS` now carry only the web service's domains; a helper

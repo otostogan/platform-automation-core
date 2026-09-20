@@ -515,3 +515,32 @@ class DomainServiceTest(ManifestValidatorTest):
         self.assertEqual(
             self.validate_compose_contract(self.valid_compose, manifest), []
         )
+
+
+class DomainAuthTest(ManifestValidatorTest):
+    def test_auth_needs_both_username_and_password_env(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["domains"][0]["auth"] = {"username": "team"}
+        errors = self.validate(manifest)
+        self.assertTrue(any("password_env" in e for e in errors), errors)
+
+        manifest["domains"][0]["auth"] = {
+            "username": "team",
+            "password_env": "UI_PASSWORD",
+        }
+        self.assertEqual(self.validate(manifest), [])
+
+    def test_auth_never_carries_a_password(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["domains"][0]["auth"] = {
+            "username": "team",
+            "password_env": "X",
+            "password": "no",
+        }
+        errors = self.validate(manifest)
+        self.assertTrue(any("password" in e for e in errors), errors)
+
+    def test_username_cannot_contain_a_colon(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["domains"][0]["auth"] = {"username": "te:am", "password_env": "X"}
+        self.assertNotEqual(self.validate(manifest), [])

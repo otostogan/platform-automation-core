@@ -20,6 +20,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 from platform_automation.nginx_reconcile import reconcile
+from platform_automation.htpasswd import sha512_crypt
 from platform_automation.nginx_transaction import (
     NginxTransactionError,
     NginxTransactionManager,
@@ -254,6 +255,64 @@ def main():
             ]
             print(
                 "PASS: real nginx -t rejects candidate, rollback restores files and HTTP",
+                flush=True,
+            )
+
+            # Basic auth rides the same transaction: the file is read by the
+            # real docker-gen template, enforced by the real nginx, and gone
+            # again when the next plan drops it.
+            def status(credentials=""):
+                # busybox wget: credentials go in the URL, not in options
+                result = run(
+                    docker,
+                    "exec",
+                    prefix + "-nginx",
+                    "wget",
+                    "-S",
+                    "-O",
+                    "-",
+                    "--header=Host: example.test",
+                    f"http://{credentials}127.0.0.1",
+                    check=False,
+                )
+                return result.stderr + result.stdout
+
+            guarded = build_fragment_plan(
+                "example",
+                "lab",
+                "d" * 32,
+                {"example.test": "client_max_body_size 2m;\n"},
+                {"example.test": "team:" + sha512_crypt("s3cret") + "\n"},
+            )
+            with manager.prepare(guarded) as transaction:
+                transaction.stage()
+                transaction.activate()
+
+            def wait_status(needle, credentials=""):
+                # nginx -s reload is asynchronous: old workers may answer for a
+                # moment, exactly as wait_response above allows for.
+                deadline = time.monotonic() + 15
+                while True:
+                    seen = status(credentials)
+                    if needle in seen:
+                        return
+                    if time.monotonic() >= deadline:
+                        raise AssertionError(
+                            f"proxy never answered {needle!r}:\n{seen}"
+                        )
+                    time.sleep(0.25)
+
+            wait_status(" 401 ")
+            wait_status("version-b", "team:s3cret@")
+            wait_status(" 401 ", "team:wrong@")
+            assert (state / "htpasswd/example.test").read_text().startswith("team:$6$")
+            with manager.prepare(candidate) as transaction:
+                transaction.stage()
+                transaction.activate()
+            assert not (state / "htpasswd/example.test").exists()
+            wait_status("version-b")
+            print(
+                "PASS: htpasswd installed and enforced in the transaction, removed with the plan",
                 flush=True,
             )
 
