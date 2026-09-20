@@ -7,6 +7,17 @@ release.
 
 ## [Unreleased]
 
+- A manifest domain may belong to a Compose service other than `web`:
+  `domains[].service` names it. `PLATFORM_VIRTUAL_HOSTS` and
+  `PLATFORM_TLS_HOSTS` now carry only the web service's domains; a helper
+  service receives its own through `PLATFORM_VIRTUAL_HOSTS_<SERVICE>` and
+  `PLATFORM_TLS_HOSTS_<SERVICE>`, so a Compose file never holds a hostname
+  as a literal. Validation refuses a domain whose service is not in the
+  Compose file or not on the `edge` network — the proxy would accept it and
+  never answer — and a manifest that leaves the web service without a
+  domain. The host healthcheck addresses the first web domain. Manifests
+  without the field behave exactly as before.
+
 - `platform status --json` gains `history`: every ledger record summarised
   (tag, status, healthcheck, migration, time), newest first. Read-only; it is
   the list a rollback target is chosen from.

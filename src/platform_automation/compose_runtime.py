@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from .domains import helper_host_variables, web_domains
 from .validate_manifest import load_yaml
 from .verify_bundle import METADATA_PATH
 
@@ -59,7 +60,8 @@ def build_compose_environment(
         )
 
     environment = dict(os.environ if base_environment is None else base_environment)
-    tls_hosts = [domain["host"] for domain in manifest["domains"] if domain["tls"]]
+    own = web_domains(manifest)
+    tls_hosts = [domain["host"] for domain in own if domain["tls"]]
 
     database_network = (
         f"platform-db-{manifest['project']}-{manifest['environment']}"
@@ -79,11 +81,12 @@ def build_compose_environment(
             "PLATFORM_INTERNAL_PORT": str(manifest["service"]["internal_port"]),
             "PLATFORM_RUNTIME_ENV_FILE": str(runtime_secrets_path.resolve()),
             "PLATFORM_TLS_HOSTS": ",".join(tls_hosts),
-            "PLATFORM_VIRTUAL_HOSTS": ",".join(
-                domain["host"] for domain in manifest["domains"]
-            ),
+            "PLATFORM_VIRTUAL_HOSTS": ",".join(domain["host"] for domain in own),
         }
     )
+    # A helper's domains reach it through its own variables, so the Compose
+    # file never carries a hostname as a literal.
+    environment.update(helper_host_variables(manifest))
 
     return environment
 
@@ -438,7 +441,7 @@ def probe_release_http(
     path = service["healthcheck"]["path"]
     timeout = float(service["healthcheck"]["timeout_seconds"])
     port = int(service["internal_port"])
-    host = manifest["domains"][0]["host"]
+    host = web_domains(manifest)[0]["host"]
     http_get = default_http_get if http_get is None else http_get
 
     address = service_container_address(command, environment, service["web"], runner)

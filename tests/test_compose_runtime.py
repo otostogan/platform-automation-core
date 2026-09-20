@@ -110,6 +110,37 @@ class ComposeRuntimeTest(unittest.TestCase):
         self.assertEqual(environment["PLATFORM_TLS_HOSTS"], "")
         self.assertNotIn("test-only", str(environment))
 
+    def test_helper_domains_reach_their_service_through_own_variables(self) -> None:
+        manifest = dict(self.request.bundle.manifest)
+        manifest["domains"] = manifest["domains"] + [
+            {
+                "host": "mail.app.example.invalid",
+                "tls": True,
+                "service": "mail-pit",
+                "nginx": {},
+            },
+            {
+                "host": "smtp.app.example.invalid",
+                "tls": False,
+                "service": "mail-pit",
+                "nginx": {},
+            },
+        ]
+
+        environment = build_compose_environment(
+            manifest, IMAGE, self.runtime_secrets_path, base_environment={}
+        )
+
+        self.assertEqual(environment["PLATFORM_VIRTUAL_HOSTS"], "app.example.invalid")
+        self.assertEqual(environment["PLATFORM_TLS_HOSTS"], "")
+        self.assertEqual(
+            environment["PLATFORM_VIRTUAL_HOSTS_MAIL_PIT"],
+            "mail.app.example.invalid,smtp.app.example.invalid",
+        )
+        self.assertEqual(
+            environment["PLATFORM_TLS_HOSTS_MAIL_PIT"], "mail.app.example.invalid"
+        )
+
     def test_validates_compose_before_deployment(self) -> None:
         validate_release_compose(**self.runtime_arguments())
 
@@ -176,6 +207,22 @@ class ComposeRuntimeTest(unittest.TestCase):
             ],
             "the probe goes to the edge-network address, with the domain as Host",
         )
+
+    def test_the_probe_uses_the_first_web_domain_not_a_helper_one(self) -> None:
+        manifest = dict(self.request.bundle.manifest)
+        manifest["domains"] = [
+            {
+                "host": "mail.app.example.invalid",
+                "tls": True,
+                "service": "mailpit",
+                "nginx": {},
+            },
+            *manifest["domains"],
+        ]
+        arguments = {**self.runtime_arguments(), "manifest": manifest}
+        self.probes = []
+        start_release(**arguments, sleeper=lambda seconds: None, http_get=self.http_ok)
+        self.assertEqual(self.probes[0][1], "app.example.invalid")
 
     def test_a_release_that_starts_but_answers_404_is_refused(self) -> None:
         ticks = iter(range(0, 1000, 10))

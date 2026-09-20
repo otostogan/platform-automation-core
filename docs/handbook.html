@@ -11019,16 +11019,33 @@ restore_validation:
 							<dd>
 								От 1 до 20 доменов. У каждого —
 								<code>host</code> (строчное доменное имя),
-								<code>tls</code> и блок <code>nginx</code>.
+								<code>tls</code> и блок <code>nginx</code>;
+								необязательно — <code>service</code>, имя
+								compose-сервиса, которому домен принадлежит.
 							</dd>
 							<dt>Обязательно</dt>
-							<dd>да, все три поля у каждого домена</dd>
+							<dd>да, <code>host</code>, <code>tls</code> и <code>nginx</code> у каждого домена; <code>service</code> — нет, по умолчанию это <code>service.web</code></dd>
 							<dt>Что делает</dt>
 							<dd>
-								Все домены передаются прокси; те, у кого
-								<code>tls: true</code>, ещё и уходят на выпуск
-								сертификата. Первый домен используется при
-								проверке после выкатки.
+								Домены сервиса <code>web</code> приходят в его
+								контейнер через <code>PLATFORM_VIRTUAL_HOSTS</code>
+								и <code>PLATFORM_TLS_HOSTS</code>. Домены
+								помощника — например перехватчика писем — через
+								<code>PLATFORM_VIRTUAL_HOSTS_&lt;СЕРВИС&gt;</code> и
+								<code>PLATFORM_TLS_HOSTS_&lt;СЕРВИС&gt;</code>
+								(имя в верхнем регистре, всё кроме букв и цифр
+								— подчёркивание). Те, у кого
+								<code>tls: true</code>, уходят на выпуск
+								сертификата. Первый домен <code>web</code>
+								используется при проверке после выкатки.
+							</dd>
+							<dt>Что сломается</dt>
+							<dd>
+								Сервис из <code>service</code> обязан быть в
+								compose и состоять в сети <code>edge</code> —
+								иначе прокси его не увидит, и домен молча не
+								ответит; валидация это отклоняет. Хотя бы один
+								домен должен остаться у <code>web</code>.
 							</dd>
 						</dl>
 					</article>
@@ -11383,14 +11400,21 @@ restore_validation:
 						<dl>
 							<dt>Что в них</dt>
 							<dd>
-								Домены через запятую. В первой — все, во второй
-								— только те, у кого <code>tls: true</code>.
+								Домены сервиса <code>web</code> через запятую. В
+								первой — все его домены, во второй — только те,
+								у кого <code>tls: true</code>. Домены, у которых
+								в манифесте стоит <code>service</code> другого
+								сервиса, сюда не попадают: они приходят в
+								<code>PLATFORM_VIRTUAL_HOSTS_&lt;СЕРВИС&gt;</code> и
+								<code>PLATFORM_TLS_HOSTS_&lt;СЕРВИС&gt;</code>, и
+								ссылаться на них должен тот сервис.
 							</dd>
 							<dt>Как использовать</dt>
 							<dd>
 								Прокси и служба сертификатов читают их из
 								окружения контейнера, поэтому их передают в
-								<code>environment</code>.
+								<code>environment</code>. Один хост никогда не
+								заявляют два контейнера.
 							</dd>
 						</dl>
 					</article>
