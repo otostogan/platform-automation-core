@@ -7,6 +7,11 @@ release.
 
 ## [Unreleased]
 
+- The console's application menu replaces the printed-only «Re-key secrets»
+  (`sops updatekeys`, the pre-`.env` path) with two actions that run:
+  «Secrets: push» encrypts `.env.<environment>` into the ciphertext the way
+  the hook does, «Secrets: pull» reads it back for a key holder.
+
 - `platform update` inside an infrastructure repository moves the core the
   handbook's way: it shows the console, installed, pinned and latest
   versions and, per host, the runtime version read over SSH; offers the
