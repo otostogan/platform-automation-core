@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-24
+
 - Add `platform retire` and `platform purge`. `retire` takes an application
   off a host and keeps every byte: containers of the application and its
   database stopped, the backup timer disabled, the domains released through
