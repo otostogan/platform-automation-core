@@ -140,6 +140,12 @@ def render_status(document: dict) -> str:
         f"{DIM}{document.get('release_count', 0)} release record(s){RESET}"
     ]
 
+    retired = document.get("retired")
+    if retired:
+        lines.append(
+            f"  {DIM}RETIRED {retired.get('retired_at', '')[:16]} · last {retired.get('last_release_tag')}"
+            f" · stopped, domains released, data kept — revive with Deploy{RESET}"
+        )
     current = document.get("current")
     if not current:
         lines.append("  current release: none")
@@ -190,10 +196,16 @@ def render_projects(document: dict) -> str:
     for entry in entries:
         shown = entry.get("current") or entry.get("latest")
         release = shown["release_tag"] if shown else "-"
-        status = shown["status"] if shown else "none"
+        status = (
+            "retired"
+            if entry.get("retired")
+            else (shown["status"] if shown else "none")
+        )
         health = shown.get("healthcheck", "-") if shown else "-"
         healthy = status == "deployed" and health == "succeeded"
-        colour = GREEN if healthy else (RED if shown else DIM)
+        colour = (
+            GREEN if healthy else (DIM if status == "retired" or not shown else RED)
+        )
         lines.append(
             f"{entry['project']:<24} {entry['environment']:<11} {release:<22} "
             f"{colour}{status:<11}{RESET} {health:<10} {entry.get('release_count', 0)}"
@@ -571,6 +583,11 @@ def rollback_action(context: Context, scope, prompts) -> Action:
         if not result.ok:
             return report_failure(result.error, context.core_pin)
         document = result.document
+        if document.get("retired"):
+            print(
+                f"{RED}this application is retired on the host; Deploy revives it{RESET}"
+            )
+            return 1
         if blocked_by_deploying(document):
             print(
                 f"{RED}a release is still deploying: its migration outcome is unknown,"
@@ -681,6 +698,79 @@ def rollback_action(context: Context, scope, prompts) -> Action:
     )
 
 
+def retire_action(context: Context, scope, prompts, purge: bool = False) -> Action:
+    """Retire keeps every byte; purge is the irreversible half and needs retire first."""
+    ident = ["--project", scope.project, "--environment", scope.environment]
+    target_host = context.target_host
+    verb = "purge" if purge else "retire"
+    label = (
+        "Purge: delete data, backups and history (irreversible)"
+        if purge
+        else "Retire: stop and free the domains (data kept)"
+    )
+
+    def run() -> int:
+        questionary, style = prompts
+        if not target_host:
+            print(f"{RED}deploy.yml names no target_host{RESET}")
+            return 1
+        print()
+        if purge:
+            print(f"{BOLD}This deletes on {target_host}:{RESET}")
+            print(
+                "  the database volume, every local dump, the release bundles and the ledger."
+            )
+            print(
+                "  Offsite copies stay: the host cannot delete them. Nothing is recoverable from the host afterwards."
+            )
+            print(
+                f"{DIM}  requires a retired application; handbook #/flow-retire{RESET}"
+            )
+            typed = questionary.text(
+                f"Type {scope.project}/{scope.environment} to confirm", style=style
+            ).ask()
+            if typed != f"{scope.project}/{scope.environment}":
+                print("cancelled — nothing changed on the host")
+                return 130
+            arguments = [verb, *ident, "--confirm-destructive"]
+        else:
+            print(
+                f"{BOLD}Retire {scope.project}/{scope.environment} on {target_host}:{RESET}"
+            )
+            print(
+                "  containers stopped, domains released from nginx, backup schedule off."
+            )
+            print(
+                "  Kept: database volume, local dumps, offsite copies, ledger. A Deploy brings it back."
+            )
+            if not questionary.confirm("Retire now?", default=False, style=style).ask():
+                print("cancelled")
+                return 130
+            arguments = [verb, *ident]
+        shown = f"ssh ops@{target_host} 'sudo -n platform {' '.join(arguments)} --json'"
+        print(f"{DIM}→ {shown}{RESET}")
+        result = run_platform(target_host, "ops", arguments, timeout=900)
+        if not result.ok:
+            return report_failure(result.error, context.core_pin)
+        document = result.document
+        if purge:
+            print(f"{GREEN}purged{RESET}")
+            for path in document.get("removed") or []:
+                print(f"  removed {path}")
+        else:
+            print(
+                f"{GREEN}retired — last release {document.get('last_release')}{RESET}"
+            )
+            print(
+                f"  domains released: {', '.join(document.get('domains_released') or []) or 'none'}"
+            )
+            print(f"  kept: {'; '.join(document.get('kept') or [])}")
+        print(f"{DIM}  handbook: {HANDBOOK}#/flow-retire{RESET}")
+        return 0
+
+    return Action(label, f"platform {verb} …", run, "#/flow-retire", remote=True)
+
+
 def app_actions(context: Context, scope, prompts=None) -> list:
     target = context.target_host or "<target host>"
     ident = ["--project", scope.project, "--environment", scope.environment]
@@ -720,6 +810,11 @@ def app_actions(context: Context, scope, prompts=None) -> list:
         secrets_action(context, scope.environment, "push"),
         secrets_action(context, scope.environment, "pull"),
     ]
+    if prompts:
+        actions += [
+            retire_action(context, scope, prompts),
+            retire_action(context, scope, prompts, purge=True),
+        ]
     if context.target_host is None:
         actions = [
             a for a in actions if a.run is None or a.label.startswith("Validate")

@@ -50,6 +50,7 @@ platform_cli_tool_files:
     - reboot_recovery_entrypoint.py
     - registry_pull.py
     - release_ledger.py
+    - retire.py
     - release_retention.py
     - restore_runtime.py
     - runtime_secrets.py

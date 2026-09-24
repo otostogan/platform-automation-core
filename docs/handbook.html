@@ -1250,6 +1250,7 @@
 					<a href="#/flow-operators">Операторы</a>
 					<a href="#/flow-domains">Домены и TLS</a>
 					<a href="#/flow-core-update">Обновление ядра</a>
+					<a href="#/flow-retire">Вывод приложения</a>
 					<h4>Когда плохо</h4>
 					<a href="#/flow-reboot">Ребут и приёмка</a>
 					<a href="#/flow-incidents">Инциденты</a>
@@ -12194,6 +12195,32 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
     </div>
 
     <div class="tabpanel" data-tab="release" role="tabpanel">
+      <article class="card" id="ref-cli-retire">
+        <h3><code>platform retire</code></h3>
+        <p>Снять приложение с хоста, не тронув ни байта данных. Обратимо обычной выкаткой.</p>
+        <dl>
+          <dt>Что делает</dt>
+          <dd>Останавливает контейнеры приложения и его базы, выключает таймер бэкапов, освобождает домены через ту же транзакцию nginx, что и деплой (фрагменты и htpasswd уходят, прокси перечитан), и ставит отметку <code>retired.json</code> рядом с реестром. Том базы, локальные дампы, offsite-копии, пакеты релизов и реестр остаются.</dd>
+          <dt>После</dt>
+          <dd><code>status</code> и <code>projects</code> показывают <code>retired</code>; восстановление после ребута такое приложение не поднимает; <code>rollback</code> отказывает. <code>platform deploy</code> снимает отметку и возвращает приложение.</dd>
+          <dt>Отказ</dt>
+          <dd><code>unfinished deployment requires operator review</code> — релиз в <code>deploying</code>, сначала <a href="#/flow-incidents">Инциденты</a>. <code>nothing was ever deployed here</code> — реестра нет.</dd>
+        </dl>
+      </article>
+
+      <article class="card" id="ref-cli-purge">
+        <h3><code>platform purge</code></h3>
+        <p>Необратимая половина. Только после <code>retire</code> и только с <code>--confirm-destructive</code>.</p>
+        <dl>
+          <dt>Что удаляет</dt>
+          <dd>Том базы и сеть (<code>docker compose down --volumes</code> для приложения и для базы), пакеты релизов, локальные дампы, креденшлы базы, секреты в tmpfs, запись владения nginx и, последним, каталог реестра. Дальше на хосте от приложения нет ничего.</dd>
+          <dt>Чего не трогает</dt>
+          <dd>Offsite-копии в объектном хранилище: у хоста креденшл только на запись, и это намеренно. Удалять их — отдельное решение с операторским ключом.</dd>
+          <dt>Отказ</dt>
+          <dd><code>purge requires a retired application</code> — сначала <code>retire</code>. Без флага — текст того, что будет удалено, и отказ.</dd>
+        </dl>
+      </article>
+
       <article class="card" id="ref-cli-deploy">
         <h3><code>platform deploy</code></h3>
         <p>Выкатывает готовый пакет. Вызывается автоматикой, руками почти никогда.</p>
@@ -14917,6 +14944,121 @@ users_ops_ssh_keys:
           <li>Рабочие процессы и хуки каждого приложения совпадают с шаблонами
           этой версии, пин в <code>deploy.yml</code> — с пином инфраструктуры;
           <code>platform doctor</code> в приложении это подтверждает.</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="page" id="flow-retire" data-flow="retire">
+  <h1>Вывод приложения</h1>
+  <p class="lede">Снять приложение с хоста. Два шага, и второй необратим: между ними
+  можно жить сколько угодно.</p>
+
+  <div class="note">
+    <span class="label">Из консоли</span>
+    <p><code>platform</code> в репозитории приложения → окружение → <strong>Retire</strong>, позже <strong>Purge</strong>. Для purge консоль просит напечатать <code>проект/окружение</code>.</p>
+  </div>
+
+  <dl class="flow-meta">
+    <div><dt>Шагов</dt><dd><span data-step-count>3</span></dd></div>
+    <div><dt>Времени</dt><dd>минуты; purge — когда решите</dd></div>
+    <div><dt>Главное</dt><dd>retire ничего не удаляет; purge не достаёт до offsite</dd></div>
+  </dl>
+
+  <div class="gate" data-gate>
+    <h2>Что нужно иметь на руках</h2>
+    <ul>
+      <li><label><input type="checkbox" data-req> Вход на сервер как <code>ops</code> через частную сеть</label></li>
+      <li><label><input type="checkbox" data-req> Решение, нужны ли данные: дампы можно снять и проверить до вывода — <a href="#/flow-backups">Бэкапы</a></label></li>
+    </ul>
+    <button class="btn primary" data-gate-open disabled>Начать</button>
+  </div>
+
+  <div class="flow-body" hidden>
+    <div class="rail-wrap"><ol class="rail"></ol></div>
+    <div class="steps">
+
+      <article class="step" data-step="retire" data-title="Снять с хоста">
+        <button class="step-head"><span class="n">1</span><span class="ttl">Снять с хоста</span></button>
+        <div class="step-body">
+<pre><code>ssh ops@{{tailnet}}
+sudo -n platform retire --project {{project}} --environment {{env}}</code></pre>
+          <p>Контейнеры остановлены, домены освобождены той же транзакцией nginx, что делает
+          деплой, таймер бэкапов выключен. Том базы, дампы, offsite-копии и реестр на месте.</p>
+          <div class="expect">
+            <span class="label">Как понять, что получилось</span>
+            <p><code>Retired: {{project}}/{{env}}</code> с перечнем освобождённых доменов и того, что
+            сохранено. Домен отдаёт 404 от прокси. <code>platform projects</code> показывает
+            <code>retired</code>. Передумали — <a href="#/flow-deploy">Деплой</a> возвращает всё.</p>
+          </div>
+          <details class="trouble">
+          	<summary>Если пойдёт не так</summary>
+          	<div class="inner">
+          		<dl>
+          			<dt><code>unfinished deployment requires operator review</code></dt>
+          			<dd>Релиз завис в <code>deploying</code>. Разбор — <a href="#/flow-incidents">Инциденты</a>; вывод поверх него закрепил бы неизвестный исход миграции.</dd>
+          			<dt><code>could not release the domains</code></dt>
+          			<dd>Транзакция nginx откатилась, конфигурация прежняя, но контейнеры уже остановлены. Повторите команду; если повторяется — <code>docker exec platform-nginx nginx -t</code> назовёт причину.</dd>
+          		</dl>
+          	</div>
+          </details>
+          <div class="step-actions"><button class="btn primary next">Готово, дальше</button></div>
+        </div>
+      </article>
+
+      <article class="step" data-step="outside" data-title="Убрать то, что снаружи хоста">
+        <button class="step-head"><span class="n">2</span><span class="ttl">Убрать то, что снаружи хоста</span></button>
+        <div class="step-body">
+          <p>Хост не знает про чужие сервисы, поэтому это руками:</p>
+          <ul>
+            <li>политика тейлнета: <code>tag:ci-{{project}}</code> из <code>tagOwners</code>, <code>grants</code>, <code>ssh</code> и тестов;</li>
+            <li>credential в Tailscale (Settings → Trust credentials) и секреты <code>TS_*</code> в репозитории приложения;</li>
+            <li>DNS-записи доменов;</li>
+            <li>если приложение вернётся не скоро — offsite-копии по политике хранения компании, операторским ключом.</li>
+          </ul>
+          <div class="step-actions"><button class="btn primary next">Готово, дальше</button></div>
+        </div>
+      </article>
+
+      <article class="step" data-step="purge" data-title="Удалить данные">
+        <button class="step-head"><span class="n">3</span><span class="ttl">Удалить данные</span></button>
+        <div class="step-body">
+          <div class="stop">
+            <span class="label">Стоп-условие</span>
+            <p>Удаляются том базы, все локальные дампы, пакеты релизов и реестр. С хоста после
+            этого не восстановить ничего. Offsite-копии остаются только если они были включены.</p>
+            <label class="confirm"><input type="checkbox" data-stop> Данные больше не нужны, либо есть проверенная копия вне хоста</label>
+          </div>
+<pre><code>sudo -n platform purge --project {{project}} --environment {{env}} --confirm-destructive</code></pre>
+          <div class="expect">
+            <span class="label">Как понять, что получилось</span>
+            <p><code>Purged: {{project}}/{{env}}</code> и список удалённых путей.
+            <code>platform projects</code> приложение больше не показывает;
+            <code>docker volume ls</code> не содержит <code>platform-db-{{project}}-{{env}}</code>.</p>
+          </div>
+          <details class="trouble">
+          	<summary>Если пойдёт не так</summary>
+          	<div class="inner">
+          		<dl>
+          			<dt><code>purge requires a retired application</code></dt>
+          			<dd>Шаг 1 не выполнен. Порядок намеренный: нельзя удалить данные работающего приложения одной командой.</dd>
+          			<dt>Команда прервалась посередине</dt>
+          			<dd>Каталог реестра удаляется последним, поэтому отметка <code>retired</code> ещё на месте и <code>purge</code> можно запустить повторно — он доделает.</dd>
+          		</dl>
+          	</div>
+          </details>
+          <div class="step-actions"><button class="btn primary next">Завершить</button></div>
+        </div>
+      </article>
+
+      <div class="flow-done" hidden>
+        <h2>Снято</h2>
+        <ul>
+          <li>На хосте от приложения не осталось ни контейнеров, ни доменов, ни данных.</li>
+          <li>Снаружи — тег, credential и DNS убраны руками.</li>
         </ul>
       </div>
 

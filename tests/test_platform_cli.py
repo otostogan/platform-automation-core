@@ -457,6 +457,13 @@ class PlatformCliTest(unittest.TestCase):
     def report_offsite(self, **kwargs):
         return self.offsite_report
 
+    def disable_timer(self, project, environment, **kwargs):
+        self.timer_calls.append({"disable": f"{project}-{environment}"})
+        return {
+            "unit": f"platform-backup@{project}-{environment}.timer",
+            "state": "disabled",
+        }
+
     def reconcile_timer(self, **kwargs):
         self.timer_calls.append(kwargs)
 
@@ -542,6 +549,8 @@ class PlatformCliTest(unittest.TestCase):
     @contextmanager
     def prepare(self, plan):
         self.nginx_events.append("prepare")
+        self.last_plan = plan
+        self.previous_hosts = frozenset({"app.example.invalid"})
         yield self
 
     def stage(self) -> None:
@@ -590,6 +599,7 @@ class PlatformCliTest(unittest.TestCase):
                 backup_creator=self.create_backup,
                 backups_root=self.backups_root,
                 timer_reconciler=self.reconcile_timer,
+                timer_disabler=self.disable_timer,
                 uploader=self.upload_offsite,
                 offsite_reporter=self.report_offsite,
                 systemd_root=self.base / "systemd",
@@ -1870,3 +1880,139 @@ class PlatformCliTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _recording_run(calls):
+    import subprocess
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    return run
+
+
+class RetireAndPurgeTest(PlatformCliTest):
+    """Retire frees the host's holdings and keeps the data; purge needs both gates."""
+
+    def compose_down_calls(self, calls):
+        return [
+            (c[3], "--volumes" in c)
+            for c in calls
+            if len(c) > 4 and c[1:3] == ["compose", "--project-name"] and "down" in c
+        ]
+
+    def with_recording_docker(self, calls):
+        import platform_automation.retire as module
+
+        original = module.subprocess.run
+        module.subprocess.run = _recording_run(calls)
+        self.addCleanup(setattr, module.subprocess, "run", original)
+
+    def test_retire_stops_frees_disables_and_marks_but_keeps_data(self) -> None:
+        code, out, err = self.run_cli(*self.deploy_arguments())
+        self.assertEqual(code, 0, err)
+        self.nginx_events.clear()
+        calls = []
+        self.with_recording_docker(calls)
+
+        code, out, err = self.run_cli(
+            "retire", "--project", "example", "--environment", "lab", "--json"
+        )
+
+        self.assertEqual(code, 0, err)
+        document = json.loads(out)
+        self.assertEqual(document["operation"], "retire")
+        self.assertEqual(document["last_release"], "v1")
+        self.assertEqual(document["domains_released"], ["app.example.invalid"])
+        self.assertEqual(
+            self.compose_down_calls(calls),
+            [("example-lab", False), ("platform-db-example-lab", False)],
+        )
+        self.assertIn({"disable": "example-lab"}, self.timer_calls)
+        self.assertEqual(self.nginx_events, ["prepare", "stage", "activate"])
+        self.assertEqual(dict(self.last_plan.fragments), {})
+        self.assertTrue((self.projects_root / "example/lab/retired.json").is_file())
+        self.assertTrue(
+            (self.projects_root / "example/lab/ledger").is_dir(), "the ledger stays"
+        )
+
+        code, out, _ = self.run_cli(
+            "status", "--project", "example", "--environment", "lab", "--json"
+        )
+        self.assertEqual(json.loads(out)["retired"]["last_release_tag"], "v1")
+        code, out, _ = self.run_cli("projects")
+        self.assertIn("retired", out)
+
+        code, _, err = self.run_cli(
+            "rollback",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--to",
+            "v1",
+            "--json",
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("retired", err)
+
+        code, _, err = self.run_cli(*self.deploy_arguments(release_tag="v2"))
+        self.assertEqual(code, 0, err)
+        self.assertFalse(
+            (self.projects_root / "example/lab/retired.json").exists(),
+            "a deploy revives",
+        )
+
+    def test_purge_needs_retire_and_the_flag_then_removes_everything_local(
+        self,
+    ) -> None:
+        code, _, err = self.run_cli(*self.deploy_arguments())
+        self.assertEqual(code, 0, err)
+        code, _, err = self.run_cli(
+            "purge",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--confirm-destructive",
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("requires a retired application", err)
+
+        calls = []
+        self.with_recording_docker(calls)
+        code, _, err = self.run_cli(
+            "retire", "--project", "example", "--environment", "lab"
+        )
+        self.assertEqual(code, 0, err)
+        code, _, err = self.run_cli(
+            "purge", "--project", "example", "--environment", "lab"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("--confirm-destructive", err)
+        (self.backups_root / "example/lab").mkdir(parents=True)
+        (self.backups_root / "example/lab/dump").write_text("x")
+
+        code, out, err = self.run_cli(
+            "purge",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--confirm-destructive",
+            "--json",
+        )
+
+        self.assertEqual(code, 0, err)
+        document = json.loads(out)
+        self.assertEqual(
+            self.compose_down_calls(calls)[-2:],
+            [("example-lab", True), ("platform-db-example-lab", True)],
+        )
+        self.assertFalse((self.projects_root / "example").exists())
+        self.assertFalse((self.releases_root / "example").exists())
+        self.assertFalse((self.backups_root / "example").exists())
+        self.assertIn("offsite copies (the host cannot delete them)", document["kept"])
+        code, out, _ = self.run_cli("projects")
+        self.assertIn("No projects on this host", out)

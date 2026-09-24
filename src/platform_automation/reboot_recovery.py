@@ -18,6 +18,7 @@ from .database_runtime import (
     DEFAULT_DATABASES_ROOT,
     restore_database_environment,
 )
+from .retire import is_retired
 from .runtime_secrets import materialize_env_secrets
 
 
@@ -227,6 +228,9 @@ def recover_project_environment_secrets(
         environment,
         "recovery",
     ):
+        if is_retired(projects_root, project, environment):
+            # Nothing runs here by decision, not by accident: leave it down.
+            return None
         records = list_release_records(
             projects_root,
             project,

@@ -7,6 +7,20 @@ release.
 
 ## [Unreleased]
 
+- Add `platform retire` and `platform purge`. `retire` takes an application
+  off a host and keeps every byte: containers of the application and its
+  database stopped, the backup timer disabled, the domains released through
+  the same nginx transaction a deployment uses, and a `retired.json` marker
+  next to the ledger. `status` and `projects` say `retired`, reboot recovery
+  leaves it down, `rollback` refuses, and a `deploy` clears the marker and
+  brings it back. `purge` is the irreversible half: only after `retire` and
+  only with `--confirm-destructive`, it removes the database volume, the
+  release bundles, the local dumps, the database credentials, the tmpfs
+  secrets, the nginx ownership record and, last, the ledger — never the
+  offsite copies, which the host cannot delete. The console offers both
+  (purge asks for `project/environment` to be typed); the handbook gains
+  «Вывод приложения».
+
 ## [0.17.0] - 2026-09-20
 
 - A domain can be closed with basic auth: `domains[].auth` names a user
