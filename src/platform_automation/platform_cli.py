@@ -5,7 +5,7 @@ import copy
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from . import compose_runtime
 from .compose_runtime import ComposeRuntimeError
@@ -14,6 +14,7 @@ from .operation_lock import (
     project_environment_lock,
 )
 from .nginx_transaction import NginxTransactionError, NginxTransactionManager
+from .retire import RetireError, clear_marker, is_retired, purge, read_marker, retire
 from .registry_pull import (
     RegistryPullError,
     pull_immutable_image,
@@ -72,6 +73,7 @@ from .backup_schedule import (
     DEFAULT_SYSTEMCTL_EXECUTABLE,
     DEFAULT_SYSTEMD_ROOT,
     BackupScheduleError,
+    disable_backup_timer,
     backups_are_scheduled,
     reconcile_backup_timer,
     resolve_interval,
@@ -442,6 +444,29 @@ def parse_arguments(
         help="Print machine-readable JSON.",
     )
 
+    retire_parser = subparsers.add_parser(
+        "retire",
+        help="Stop an application and free its domains; keep every byte of data.",
+    )
+    add_identity_arguments(retire_parser)
+    retire_parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON."
+    )
+
+    purge_parser = subparsers.add_parser(
+        "purge",
+        help="Delete a retired application's data, backups and history from this host.",
+    )
+    add_identity_arguments(purge_parser)
+    purge_parser.add_argument(
+        "--confirm-destructive",
+        action="store_true",
+        help="Required: the database volume, local backups and ledger are deleted.",
+    )
+    purge_parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON."
+    )
+
     rollback_parser = subparsers.add_parser(
         "rollback",
         help="Restore a previously successful release without migrations.",
@@ -476,6 +501,7 @@ def build_status_document(
     environment: str,
     records: list[dict[str, Any]],
     backups: dict[str, Any] = None,
+    retired: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     current = find_latest_deployed_release(records)
     latest = records[-1] if records else None
@@ -490,6 +516,7 @@ def build_status_document(
         # from the same ledger a rollback validates against.
         "history": [summarize_release(record) for record in reversed(records)],
         "backups": backups,
+        "retired": retired,
     }
 
 
@@ -725,6 +752,7 @@ def build_projects_document(projects_root: Path) -> dict[str, Any]:
                 "release_count": len(records),
                 "current": summarize_release(find_latest_deployed_release(records)),
                 "latest": summarize_release(records[-1] if records else None),
+                "retired": is_retired(projects_root, project, environment),
             }
         )
 
@@ -746,7 +774,11 @@ def print_projects(document: dict[str, Any]) -> None:
         latest = entry["latest"]
         shown = current or latest
         release = shown["release_tag"] if shown else "-"
-        status = shown["status"] if shown else "none"
+        status = (
+            "retired"
+            if entry.get("retired")
+            else (shown["status"] if shown else "none")
+        )
         health = shown["healthcheck"] if shown else "-"
         print(
             f"{entry['project']:<24} {entry['environment']:<11} {release:<22} "
@@ -815,6 +847,13 @@ def run_status(
             ),
         ),
     )
+    document["retired"] = read_marker(
+        projects_root, arguments.project, arguments.environment
+    )
+    if document["retired"] and not arguments.json:
+        print(
+            "RETIRED: stopped, domains released, data kept — revive with: platform deploy"
+        )
 
     if arguments.json:
         print(
@@ -1618,6 +1657,9 @@ def run_deploy(
                 image_remover=image_remover,
             )
 
+            # A deploy is how a retired application comes back.
+            clear_marker(projects_root, request.project, request.environment)
+
             document = build_deploy_result(
                 record,
                 staged_bundle_path,
@@ -2277,6 +2319,10 @@ def run_rollback(
                 raise DeploymentExecutionError(
                     "rollback requires a current deployed release"
                 )
+            if is_retired(projects_root, arguments.project, arguments.environment):
+                raise DeploymentExecutionError(
+                    "application is retired; deploy to revive it, then roll back"
+                )
 
             target = select_rollback_release(
                 records,
@@ -2466,6 +2512,7 @@ def main(
     uploader=upload_backups,
     offsite_reporter=offsite_status,
     downloader=download_backup,
+    timer_disabler=disable_backup_timer,
     token_stream=None,
     compose_runtime_module=compose_runtime,
     nginx_manager=None,
@@ -2515,7 +2562,7 @@ def main(
                 console_argv.append("--stage")
         return run_console(console_argv)
 
-    if arguments.command in ("deploy", "rollback") and nginx_manager is None:
+    if arguments.command in ("deploy", "rollback", "retire") and nginx_manager is None:
         nginx_manager = NginxTransactionManager(
             vhost_root=nginx_vhost_root,
             ownership_root=nginx_ownership_root,
@@ -2553,6 +2600,57 @@ def main(
             systemctl_executable,
             timer_reconciler,
         )
+
+    if arguments.command in ("retire", "purge"):
+        try:
+            if arguments.command == "retire":
+                document = retire(
+                    arguments.project,
+                    arguments.environment,
+                    projects_root=projects_root,
+                    lock_root=lock_root,
+                    docker_executable=docker_executable,
+                    nginx_manager=nginx_manager,
+                    systemd_root=systemd_root,
+                    systemctl_executable=systemctl_executable,
+                    timer_disabler=timer_disabler,
+                )
+            else:
+                document = purge(
+                    arguments.project,
+                    arguments.environment,
+                    projects_root=projects_root,
+                    releases_root=releases_root,
+                    backups_root=backups_root,
+                    databases_root=databases_root,
+                    runtime_secrets_root=runtime_secrets_root,
+                    lock_root=lock_root,
+                    docker_executable=docker_executable,
+                    nginx_ownership_root=nginx_ownership_root,
+                    confirmed=arguments.confirm_destructive,
+                    systemd_root=systemd_root,
+                    systemctl_executable=systemctl_executable,
+                    timer_disabler=timer_disabler,
+                )
+        except (RetireError, ReleaseLedgerError, OperationLockError) as error:
+            print(f"{arguments.command} error: {error}", file=sys.stderr)
+            return 1
+        if arguments.json:
+            print(json.dumps(document, indent=2, sort_keys=True))
+        elif arguments.command == "retire":
+            print(f"Retired: {document['project']}/{document['environment']}")
+            print(f"  last release: {document['last_release']}")
+            print(
+                f"  domains released: {', '.join(document['domains_released']) or 'none'}"
+            )
+            print(f"  kept: {'; '.join(document['kept'])}")
+            print("  revive with: platform deploy")
+        else:
+            print(f"Purged: {document['project']}/{document['environment']}")
+            for path in document["removed"]:
+                print(f"  removed {path}")
+            print(f"  kept: {'; '.join(document['kept'])}")
+        return 0
 
     if arguments.command in ("restore", "verify-backup"):
         handler = run_restore if arguments.command == "restore" else run_verify_backup
