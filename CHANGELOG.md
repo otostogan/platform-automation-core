@@ -7,6 +7,17 @@ release.
 
 ## [Unreleased]
 
+- Add `platform database-session`: a throwaway login for an operator's own
+  client — a role `tunnel_<hex>`, member of `app`, valid for `--minutes`
+  (default 30, at most 240) — printed with the container's address; expired
+  session roles are swept on every open, `--close <role>` drops one at once.
+  The application's credential never leaves the host. The console gains
+  «Database: tunnel», which opens a session, runs `ssh -L 127.0.0.1:15432`,
+  shows the fields for pgAdmin or TablePlus and closes both the tunnel and
+  the role on Enter, on timeout or on Ctrl-C; and «Database: psql on the
+  host», which opens psql in the database container after the handbook's
+  full-rights warning.
+
 ## [0.18.0] - 2026-09-24
 
 - Add `platform retire` and `platform purge`. `retire` takes an application

@@ -9,6 +9,7 @@ what the console *would* do is never a guess.
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Optional
@@ -698,6 +699,154 @@ def rollback_action(context: Context, scope, prompts) -> Action:
     )
 
 
+def database_actions(context: Context, scope, prompts) -> list:
+    """A tunnel for the operator's own client, or psql on the host. Both leave no door open."""
+    import select
+    import socket
+
+    ident = ["--project", scope.project, "--environment", scope.environment]
+    target_host = context.target_host
+    container = f"platform-db-{scope.project}-{scope.environment}-postgres-1"
+    LOCAL_PORT = 15432
+
+    def gate(questionary, style) -> bool:
+        print()
+        print(
+            f"{BOLD}Full rights on live data.{RESET} There is no read-only mode; an UPDATE without"
+        )
+        print(
+            "WHERE is undone only from a dump. Take one first if you intend to change anything."
+        )
+        return bool(questionary.confirm("Continue?", default=False, style=style).ask())
+
+    def tunnel() -> int:
+        questionary, style = prompts
+        if not target_host:
+            print(f"{RED}deploy.yml names no target_host{RESET}")
+            return 1
+        if not gate(questionary, style):
+            print("cancelled")
+            return 130
+        probe = socket.socket()
+        try:
+            probe.bind(("127.0.0.1", LOCAL_PORT))
+        except OSError:
+            print(
+                f"{RED}127.0.0.1:{LOCAL_PORT} is busy — another tunnel is still open{RESET}"
+            )
+            return 1
+        finally:
+            probe.close()
+        arguments = ["database-session", *ident, "--minutes", "30"]
+        print(
+            f"{DIM}→ ssh ops@{target_host} 'sudo -n platform {' '.join(arguments)} --json'{RESET}"
+        )
+        result = run_platform(target_host, "ops", arguments)
+        if not result.ok:
+            return report_failure(result.error, context.core_pin)
+        session = result.document
+        ssh = subprocess.Popen(
+            [
+                "ssh",
+                "-N",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ExitOnForwardFailure=yes",
+                "-L",
+                f"127.0.0.1:{LOCAL_PORT}:{session['address']}:{session['port']}",
+                f"ops@{target_host}",
+            ],
+            stdin=subprocess.DEVNULL,
+        )
+        try:
+            print()
+            print(
+                f"{GREEN}Tunnel open for {session['minutes']} min{RESET}  (pgAdmin, TablePlus, psql…)"
+            )
+            print(f"  host      127.0.0.1")
+            print(f"  port      {LOCAL_PORT}")
+            print(f"  database  {session['database']}")
+            print(f"  user      {session['user']}")
+            print(f"  password  {session['password']}")
+            print(
+                f"  url       postgresql://{session['user']}:{session['password']}@127.0.0.1:{LOCAL_PORT}/{session['database']}"
+            )
+            print(
+                f"{DIM}  expires {session['expires_at']} · the role is dropped when this closes{RESET}"
+            )
+            print()
+            print("Press Enter to close the tunnel.")
+            deadline = time.monotonic() + session["minutes"] * 60
+            while time.monotonic() < deadline:
+                if ssh.poll() is not None:
+                    print(f"{RED}the ssh tunnel exited (code {ssh.returncode}){RESET}")
+                    break
+                ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+                if ready:
+                    sys.stdin.readline()
+                    break
+            else:
+                print("time is up — closing")
+        except KeyboardInterrupt:
+            print()
+        finally:
+            if ssh.poll() is None:
+                ssh.terminate()
+                try:
+                    ssh.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    ssh.kill()
+            closing = run_platform(
+                target_host,
+                "ops",
+                ["database-session", *ident, "--close", session["user"]],
+            )
+            if closing.ok:
+                print(f"{GREEN}tunnel closed, role {session['user']} dropped{RESET}")
+            else:
+                print(
+                    f"{RED}tunnel closed but the role could not be dropped: {closing.error}{RESET}"
+                )
+                print(
+                    f"{DIM}  it expires at {session['expires_at']} anyway; or: {session['close_with']}{RESET}"
+                )
+        print(f"{DIM}  handbook: {HANDBOOK}#/flow-database{RESET}")
+        return 0
+
+    def psql() -> int:
+        questionary, style = prompts
+        if not target_host:
+            print(f"{RED}deploy.yml names no target_host{RESET}")
+            return 1
+        if not gate(questionary, style):
+            print("cancelled")
+            return 130
+        remote = f"sudo -n docker exec -it {container} psql -U app -d app"
+        print(f"{DIM}→ ssh -t ops@{target_host} '{remote}'{RESET}")
+        print(f"{DIM}  \\dt tables · \\d+ name · \\q leaves{RESET}")
+        code = subprocess.call(["ssh", "-t", f"ops@{target_host}", "--", remote])
+        print(f"{DIM}  handbook: {HANDBOOK}#/flow-database{RESET}")
+        return code
+
+    return [
+        Action(
+            "Database: tunnel for your own client (30 min)",
+            f"platform database-session … + ssh -L {LOCAL_PORT}",
+            tunnel,
+            "#/flow-database",
+            remote=True,
+        ),
+        Action(
+            "Database: psql on the host",
+            f"ssh -t ops@{target_host or '<host>'} 'sudo -n docker exec -it {container} psql -U app -d app'",
+            psql,
+            "#/flow-database",
+            remote=True,
+        ),
+    ]
+
+
 def retire_action(context: Context, scope, prompts, purge: bool = False) -> Action:
     """Retire keeps every byte; purge is the irreversible half and needs retire first."""
     ident = ["--project", scope.project, "--environment", scope.environment]
@@ -811,6 +960,7 @@ def app_actions(context: Context, scope, prompts=None) -> list:
         secrets_action(context, scope.environment, "pull"),
     ]
     if prompts:
+        actions += database_actions(context, scope, prompts)
         actions += [
             retire_action(context, scope, prompts),
             retire_action(context, scope, prompts, purge=True),
