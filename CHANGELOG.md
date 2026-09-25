@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-25
+
 - Add `platform database-session`: a throwaway login for an operator's own
   client — a role `tunnel_<hex>`, member of `app`, valid for `--minutes`
   (default 30, at most 240) — printed with the container's address; expired
