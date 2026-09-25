@@ -12270,6 +12270,21 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
     </div>
 
     <div class="tabpanel" data-tab="data" role="tabpanel">
+      <article class="card" id="ref-cli-database-session">
+        <h3><code>platform database-session</code></h3>
+        <p>Одноразовый логин в базу для своего клиента. Пароль приложения хост не отдаёт никому.</p>
+        <dl>
+          <dt>Что делает</dt>
+          <dd>Создаёт роль <code>tunnel_&lt;8 hex&gt;</code> — члена <code>app</code> с правом входа и сроком годности (<code>--minutes</code>, по умолчанию 30, не больше 240), печатает пользователя, пароль, адрес контейнера и срок. Заодно удаляет просроченные роли прошлых сессий. <code>--close &lt;роль&gt;</code> обрывает её подключения и удаляет роль сразу.</dd>
+          <dt>Зачем роль, а не пароль <code>app</code></dt>
+          <dd>Пароль, оставшийся в истории терминала, после закрытия сессии не открывает ничего. Сам креденшл приложения хост не покидает никогда.</dd>
+          <dt>Как использовать</dt>
+          <dd>Через консоль: действие «Database: tunnel» открывает сессию, поднимает SSH-туннель на <code>127.0.0.1:15432</code>, показывает поля для pgAdmin или TablePlus и по Enter закрывает и туннель, и роль. Руками — шаг 3 в <a href="#/flow-database">Работе с базой</a>.</dd>
+          <dt>Отказ</dt>
+          <dd><code>database container is not running</code> — приложение не выкачено сюда или база внешняя. <code>not a session role</code> — в <code>--close</code> передано не имя сессии: настоящие роли этой командой не удалить.</dd>
+        </dl>
+      </article>
+
       <article class="card" id="ref-cli-backup">
         <h3><code>platform backup</code></h3>
         <p>Снимает один зашифрованный дамп. Берёт замок.</p>
@@ -13169,6 +13184,10 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
       <article class="step" data-step="connect" data-title="Подключиться" data-when="task=look">
         <button class="step-head"><span class="n">2</span><span class="ttl">Подключиться</span></button>
         <div class="step-body">
+          <div class="note">
+            <span class="label">Из консоли</span>
+            <p><code>platform</code> в репозитории приложения → окружение → <strong>Database: psql on the host</strong> открывает ровно эту сессию после того же предупреждения о полных правах.</p>
+          </div>
           <p>Самый короткий путь — консоль прямо в контейнере:</p>
 <pre><code>ssh ops@{{tailnet}}
 sudo -n docker exec -it platform-db-{{project}}-{{env}}-postgres-1 psql -U app -d app</code></pre>
@@ -13214,6 +13233,10 @@ sudo -n docker exec -it platform-db-{{project}}-{{env}}-postgres-1 psql -U app -
       <article class="step" data-step="tunnel" data-title="Если нужен свой инструмент" data-when="task=look">
         <button class="step-head"><span class="n">3</span><span class="ttl">Если нужен свой инструмент</span></button>
         <div class="step-body">
+          <div class="note">
+            <span class="label">Из консоли, без пароля приложения</span>
+            <p><strong>Database: tunnel</strong> делает всё, что ниже, сам: просит у хоста одноразовую роль (<code>platform database-session</code>, 30 минут), поднимает туннель на <code>127.0.0.1:15432</code>, показывает пользователя и пароль для pgAdmin, TablePlus или psql и по Enter — или по истечении срока — закрывает туннель и удаляет роль. Пароль приложения при этом хост не покидает. В pgAdmin: Host <code>127.0.0.1</code>, Port <code>15432</code>, Database <code>app</code>; «Save password» не ставьте — он одноразовый.</p>
+          </div>
           <p>Подключить графический клиент напрямую нельзя: сеть базы внутренняя,
           портов наружу нет. Это не недоделка, а решение — база не должна быть
           достижима ниоткуда, кроме самого сервера.</p>

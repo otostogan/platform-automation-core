@@ -457,6 +457,31 @@ class PlatformCliTest(unittest.TestCase):
     def report_offsite(self, **kwargs):
         return self.offsite_report
 
+    def open_session(self, project, environment, minutes, **kwargs):
+        self.session_calls = getattr(self, "session_calls", []) + [("open", minutes)]
+        return {
+            "operation": "database-session",
+            "project": project,
+            "environment": environment,
+            "user": "tunnel_0123abcd",
+            "password": "pw",
+            "database": "app",
+            "port": 5432,
+            "address": "172.20.0.5",
+            "expires_at": "2026-09-25T10:00:00Z",
+            "minutes": minutes,
+            "close_with": "platform database-session --close tunnel_0123abcd",
+        }
+
+    def close_session(self, project, environment, role, **kwargs):
+        self.session_calls = getattr(self, "session_calls", []) + [("close", role)]
+        return {
+            "operation": "database-session",
+            "project": project,
+            "environment": environment,
+            "closed": role,
+        }
+
     def disable_timer(self, project, environment, **kwargs):
         self.timer_calls.append({"disable": f"{project}-{environment}"})
         return {
@@ -600,6 +625,8 @@ class PlatformCliTest(unittest.TestCase):
                 backups_root=self.backups_root,
                 timer_reconciler=self.reconcile_timer,
                 timer_disabler=self.disable_timer,
+                session_opener=self.open_session,
+                session_closer=self.close_session,
                 uploader=self.upload_offsite,
                 offsite_reporter=self.report_offsite,
                 systemd_root=self.base / "systemd",
@@ -2016,3 +2043,33 @@ class RetireAndPurgeTest(PlatformCliTest):
         self.assertIn("offsite copies (the host cannot delete them)", document["kept"])
         code, out, _ = self.run_cli("projects")
         self.assertIn("No projects on this host", out)
+
+
+class DatabaseSessionCliTest(PlatformCliTest):
+    def test_open_and_close_are_dispatched_with_the_identity(self) -> None:
+        code, out, err = self.run_cli(
+            "database-session",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--minutes",
+            "15",
+            "--json",
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["user"], "tunnel_0123abcd")
+        code, out, err = self.run_cli(
+            "database-session",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--close",
+            "tunnel_0123abcd",
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("Closed database session tunnel_0123abcd", out)
+        self.assertEqual(
+            self.session_calls, [("open", 15), ("close", "tunnel_0123abcd")]
+        )

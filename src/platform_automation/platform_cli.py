@@ -15,6 +15,12 @@ from .operation_lock import (
 )
 from .nginx_transaction import NginxTransactionError, NginxTransactionManager
 from .retire import RetireError, clear_marker, is_retired, purge, read_marker, retire
+from .database_session import (
+    DEFAULT_MINUTES,
+    DatabaseSessionError,
+    close_session,
+    open_session,
+)
 from .registry_pull import (
     RegistryPullError,
     pull_immutable_image,
@@ -442,6 +448,24 @@ def parse_arguments(
         "--json",
         action="store_true",
         help="Print machine-readable JSON.",
+    )
+
+    session_parser = subparsers.add_parser(
+        "database-session",
+        help="Open a short-lived database login for an operator's own client, or close one.",
+    )
+    add_identity_arguments(session_parser)
+    session_parser.add_argument(
+        "--minutes",
+        type=int,
+        default=DEFAULT_MINUTES,
+        help="How long the login stays valid (1–240).",
+    )
+    session_parser.add_argument(
+        "--close", metavar="ROLE", help="Drop the session role now."
+    )
+    session_parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON."
     )
 
     retire_parser = subparsers.add_parser(
@@ -2513,6 +2537,8 @@ def main(
     offsite_reporter=offsite_status,
     downloader=download_backup,
     timer_disabler=disable_backup_timer,
+    session_opener=open_session,
+    session_closer=close_session,
     token_stream=None,
     compose_runtime_module=compose_runtime,
     nginx_manager=None,
@@ -2600,6 +2626,46 @@ def main(
             systemctl_executable,
             timer_reconciler,
         )
+
+    if arguments.command == "database-session":
+        common = {
+            "databases_root": databases_root,
+            "age_key_file": age_key_file,
+            "sops_executable": sops_executable,
+            "docker_executable": docker_executable,
+        }
+        try:
+            if arguments.close:
+                document = session_closer(
+                    arguments.project, arguments.environment, arguments.close, **common
+                )
+            else:
+                document = session_opener(
+                    arguments.project,
+                    arguments.environment,
+                    arguments.minutes,
+                    **common,
+                )
+        except (DatabaseSessionError, OperationLockError) as error:
+            print(f"database-session error: {error}", file=sys.stderr)
+            return 1
+        if arguments.json:
+            print(json.dumps(document, indent=2, sort_keys=True))
+        elif arguments.close:
+            print(f"Closed database session {document['closed']}")
+        else:
+            print(
+                f"Database session for {document['project']}/{document['environment']}"
+            )
+            print(f"  user      {document['user']}")
+            print(f"  password  {document['password']}")
+            print(f"  database  {document['database']}")
+            print(
+                f"  address   {document['address']}:{document['port']}  (inside the host; tunnel it)"
+            )
+            print(f"  expires   {document['expires_at']}")
+            print(f"  close     {document['close_with']}")
+        return 0
 
     if arguments.command in ("retire", "purge"):
         try:
