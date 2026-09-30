@@ -7,6 +7,15 @@ release.
 
 ## [Unreleased]
 
+- The console gains «Logs». In an application it lists what runs for that
+  environment — every service together, each service, the database, nginx
+  narrowed to the application's own domains, docker-gen and the certificate
+  companion — follows the chosen one from its last 200 lines, and Ctrl-C
+  returns to the list. In an infrastructure the host menu offers every
+  container. Only `docker ps` and `docker logs` reach the host: nothing is
+  installed there, nothing can be removed, and container environments are
+  never printed.
+
 ## [0.19.0] - 2026-09-25
 
 - Add `platform database-session`: a throwaway login for an operator's own
