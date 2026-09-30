@@ -7,6 +7,7 @@ what the console *would* do is never a guess.
 """
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -374,6 +375,8 @@ def host_actions(context: Context, host, prompts=None) -> list:
                 "#/flow-backups",
             ),
         ]
+    if prompts is not None:
+        actions.append(logs_action(context, address, user, identity, prompts))
     actions += [
         Action(
             "Backups: take one now",
@@ -699,6 +702,120 @@ def rollback_action(context: Context, scope, prompts) -> Action:
     )
 
 
+def logs_action(context: Context, host, user, identity, prompts, scope=None) -> Action:
+    """Pick a container, follow it, Ctrl-C back to the list. ps and logs only."""
+    from .logs import (
+        PROXY_CONTAINERS,
+        LogsError,
+        follow_container,
+        follow_nginx_for,
+        follow_project,
+        list_containers,
+        ssh_command,
+    )
+
+    def manifest_domains() -> list:
+        if scope is None:
+            return []
+        document = load_yaml(context.root / scope.manifest)
+        try:
+            return [str(d["host"]) for d in document["domains"]]
+        except (KeyError, TypeError):
+            return []
+
+    def run() -> int:
+        questionary, style = prompts
+        if not host:
+            print(f"{RED}no host to read logs from{RESET}")
+            return 1
+        app = f"{scope.project}-{scope.environment}" if scope else None
+        database = f"platform-db-{scope.project}-{scope.environment}" if scope else None
+        while True:
+            try:
+                containers = list_containers(
+                    host, user, [app, database] if scope else None, identity
+                )
+            except LogsError as error:
+                print(f"{RED}{error}{RESET}")
+                return 1
+            options = []
+            if scope:
+                own = [c for c in containers if c.project == app]
+                if len(own) > 1:
+                    options.append(
+                        (
+                            f"all {len(own)} services of {app}, interleaved",
+                            follow_project(app),
+                        )
+                    )
+                for c in own:
+                    options.append(
+                        (
+                            f"{c.service:<18} {DIM}{c.status}{RESET}",
+                            follow_container(c.name),
+                        )
+                    )
+                for c in containers:
+                    if c.project == database:
+                        options.append(
+                            (
+                                f"{'database':<18} {DIM}{c.status}{RESET}",
+                                follow_container(c.name),
+                            )
+                        )
+                domains = manifest_domains()
+                if domains:
+                    options.append(
+                        (
+                            f"{'nginx':<18} {DIM}only {', '.join(domains)}{RESET}",
+                            follow_nginx_for(domains),
+                        )
+                    )
+                for name, label in PROXY_CONTAINERS[1:]:
+                    options.append((label, follow_container(name)))
+            else:
+                for c in containers:
+                    shown = c.name if not c.service else f"{c.project}/{c.service}"
+                    options.append(
+                        (
+                            f"{shown:<40} {DIM}{c.status}{RESET}",
+                            follow_container(c.name),
+                        )
+                    )
+            if not options:
+                print("nothing is running for this application on the host")
+                return 1
+            answer = questionary.select(
+                "Logs of",
+                choices=[
+                    questionary.Choice(
+                        title=re.sub(r"\x1b\[[0-9;]*m", "", title), value=remote
+                    )
+                    for title, remote in options
+                ]
+                + [questionary.Choice(title="← Back", value=BACK)],
+                style=style,
+                pointer="»",
+                instruction="(enter to follow, Ctrl-C returns here)",
+            ).ask()
+            if answer is None or answer is BACK:
+                return 0
+            print(f"{DIM}→ ssh {user}@{host} '{answer}'   (Ctrl-C to stop){RESET}")
+            try:
+                subprocess.call(ssh_command(host, user, answer, identity, tty=True))
+            except KeyboardInterrupt:
+                pass
+            print()
+
+    return Action(
+        "Logs",
+        "docker logs --follow … (choose a service)",
+        run,
+        "#/flow-incidents",
+        remote=True,
+    )
+
+
 def database_actions(context: Context, scope, prompts) -> list:
     """A tunnel for the operator's own client, or psql on the host. Both leave no door open."""
     import select
@@ -960,6 +1077,9 @@ def app_actions(context: Context, scope, prompts=None) -> list:
         secrets_action(context, scope.environment, "pull"),
     ]
     if prompts:
+        actions.insert(
+            3, logs_action(context, context.target_host, "ops", None, prompts, scope)
+        )
         actions += database_actions(context, scope, prompts)
         actions += [
             retire_action(context, scope, prompts),
