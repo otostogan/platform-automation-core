@@ -7,6 +7,10 @@ release.
 
 ## [Unreleased]
 
+- The console's action menu is grouped: Deploy, Roll back, Status and Logs
+  stay at the top level; «Database & backups», «Secrets & config» and
+  «Retire or purge» open as sub-menus, each with its own ← Back.
+
 - The console gains «Logs». In an application it lists what runs for that
   environment — every service together, each service, the database, nginx
   narrowed to the application's own domains, docker-gen and the certificate

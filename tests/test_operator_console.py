@@ -196,3 +196,58 @@ class RenderBackupsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MenuGroupsTest(unittest.TestCase):
+    def test_daily_actions_stay_on_top_and_the_rest_is_grouped_in_order(self) -> None:
+        from platform_automation.operator.console import Action, group_of, menu_entries
+
+        labels = [
+            "Deploy",
+            "Roll back",
+            "Status on the host",
+            "Logs",
+            "Backups: list",
+            "Validate manifest and Compose",
+            "Secrets: push .env.lab → ciphertext",
+            "Secrets: pull ciphertext → .env.lab (needs a key)",
+            "Database: tunnel for your own client (30 min)",
+            "Database: psql on the host",
+            "Retire: stop and free the domains (data kept)",
+            "Purge: delete data, backups and history (irreversible)",
+        ]
+        entries = menu_entries([Action(label, "cmd") for label in labels])
+
+        shown = [e[0] if isinstance(e, tuple) else e.label for e in entries]
+        self.assertEqual(
+            shown,
+            [
+                "Deploy",
+                "Roll back",
+                "Status on the host",
+                "Logs",
+                "Database & backups",
+                "Secrets & config",
+                "Retire or purge",
+            ],
+        )
+        groups = {
+            e[0]: [a.label.split(":")[0] for a in e[1]]
+            for e in entries
+            if isinstance(e, tuple)
+        }
+        self.assertEqual(
+            groups["Database & backups"], ["Backups", "Database", "Database"]
+        )
+        self.assertEqual(groups["Retire or purge"], ["Retire", "Purge"])
+        self.assertIsNone(group_of("Deploy"))
+
+    def test_a_group_of_one_is_shown_as_the_action_itself(self) -> None:
+        from platform_automation.operator.console import Action, menu_entries
+
+        entries = menu_entries(
+            [Action("Deploy", "x"), Action("Validate manifest and Compose", "y")]
+        )
+        self.assertEqual(
+            [e.label for e in entries], ["Deploy", "Validate manifest and Compose"]
+        )

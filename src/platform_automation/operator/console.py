@@ -744,7 +744,9 @@ def logs_action(context: Context, host, user, identity, prompts, scope=None) -> 
                 if len(own) > 1:
                     options.append(
                         (
-                            f"all {len(own)} services of {app}, interleaved",
+                            "all services together ("
+                            + " + ".join(c.service for c in own)
+                            + ")",
                             follow_project(app),
                         )
                     )
@@ -1164,6 +1166,68 @@ def choose_scope(context: Context, questionary, style):
     return None if answer is EXIT else answer
 
 
+MENU_GROUPS = (
+    # (title, label prefixes) — what is reached for daily stays at the top level
+    ("Database & backups", ("Database:", "Backups:")),
+    ("Secrets & config", ("Secrets:", "Validate ")),
+    ("Retire or purge", ("Retire:", "Purge:")),
+)
+
+
+def group_of(label: str) -> Optional[str]:
+    for title, prefixes in MENU_GROUPS:
+        if label.startswith(prefixes):
+            return title
+    return None
+
+
+def menu_entries(actions: list) -> list:
+    """Top-level entries: an Action, or ``(group title, [actions])`` in MENU_GROUPS order."""
+    grouped: dict = {}
+    entries = []
+    for action in actions:
+        title = group_of(action.label)
+        if title is None:
+            entries.append(action)
+        else:
+            grouped.setdefault(title, []).append(action)
+    for title, _ in MENU_GROUPS:
+        if len(grouped.get(title, [])) == 1:
+            entries.append(grouped[title][0])  # a group of one is just the action
+        elif title in grouped:
+            entries.append((title, grouped[title]))
+    return entries
+
+
+def pick_action(questionary, style, actions: list):
+    """Choose an action, descending into a group and coming back up with ← Back."""
+    entries = menu_entries(actions)
+    while True:
+        chosen = choose(
+            questionary,
+            style,
+            "Action",
+            [*entries, BACK],
+            lambda e: (
+                "← Back"
+                if e is BACK
+                else f"{e[0]} ▸" if isinstance(e, tuple) else e.label
+            ),
+        )
+        if chosen is BACK or not isinstance(chosen, tuple):
+            return chosen
+        title, members = chosen
+        inner = choose(
+            questionary,
+            style,
+            title,
+            [*members, BACK],
+            lambda a: "← Back" if a is BACK else a.label,
+        )
+        if inner is not BACK:
+            return inner
+
+
 def run_menu(context: Context) -> int:
     """Stay in the console: after an action, return to the first question.
 
@@ -1195,19 +1259,11 @@ def run_menu(context: Context) -> int:
         else:
             actions = app_actions(context, scope, prompts=(questionary, style))
 
-        while True:
-            action = choose(
-                questionary,
-                style,
-                "Action",
-                [*actions, BACK],
-                lambda a: "← Back" if a is BACK else a.label,
-            )
-            if action is BACK:
-                break
-            perform(action)
-            print()
-            break  # back to the first question, not to this menu
+        action = pick_action(questionary, style, actions)
+        if action is BACK:
+            continue
+        perform(action)
+        print()
 
 
 NEW_TARGETS = [
