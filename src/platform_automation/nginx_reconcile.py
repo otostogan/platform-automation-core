@@ -9,6 +9,7 @@ import json
 import os
 import stat
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -112,12 +113,52 @@ def reconcile(manager: NginxTransactionManager, certificates: Path) -> bool:
         return False
 
 
+TRANSIENT = "certificates changed while generating config"
+MAX_ATTEMPTS = 10
+
+
+def reconcile_with_retries(
+    manager: NginxTransactionManager,
+    certificates: Path,
+    attempts: int,
+    sleeper=time.sleep,
+    delay: float = 3.0,
+) -> bool:
+    """Retry only the one failure that is transient by definition.
+
+    At proxy start the certificate companion writes its files in the same
+    second the first reconciliation renders the config. The timer shrugs that
+    off — its next tick is the retry — but a unit's start has no next tick, and
+    one lost race failed the whole proxy start and the convergence with it.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return reconcile(manager, certificates)
+        except NginxTransactionError as error:
+            if TRANSIENT not in str(error) or attempt == attempts:
+                raise
+            sleeper(delay)
+    raise NginxTransactionError("reconciliation attempts exhausted")
+
+
+def parse_attempts(arguments: list[str]) -> Optional[int]:
+    """``[]`` → 1; ``["--attempts", "N"]`` with 1 ≤ N ≤ 10 → N; anything else → None."""
+    if not arguments:
+        return 1
+    if len(arguments) == 2 and arguments[0] == "--attempts" and arguments[1].isdigit():
+        value = int(arguments[1])
+        if 1 <= value <= MAX_ATTEMPTS:
+            return value
+    return None
+
+
 def main(arguments: Optional[list[str]] = None) -> int:
     if arguments is None:
         arguments = sys.argv[1:]
-    if arguments or os.geteuid() != 0:
+    attempts = parse_attempts(arguments)
+    if attempts is None or os.geteuid() != 0:
         print(
-            "nginx reconciliation requires root and accepts no arguments",
+            "nginx reconciliation requires root and accepts only --attempts N",
             file=sys.stderr,
         )
         return 2
@@ -132,7 +173,7 @@ def main(arguments: Optional[list[str]] = None) -> int:
         nginx_container="platform-nginx",
     )
     try:
-        changed = reconcile(manager, root / "certs")
+        changed = reconcile_with_retries(manager, root / "certs", attempts)
     except (OSError, NginxTransactionError) as error:
         print(f"nginx reconciliation failed: {error}", file=sys.stderr)
         return 1

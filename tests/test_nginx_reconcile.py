@@ -138,3 +138,79 @@ class NginxReconcileTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReconcileRetryTest(unittest.TestCase):
+    """A unit start has no next tick; the one transient failure is retried there."""
+
+    def test_the_certificate_race_is_retried_and_other_failures_are_not(self) -> None:
+        import platform_automation.nginx_reconcile as module
+        from platform_automation.nginx_transaction import NginxTransactionError
+
+        outcomes = iter(
+            [
+                NginxTransactionError(
+                    "certificates changed while generating config; retry"
+                ),
+                NginxTransactionError(
+                    "certificates changed while generating config; retry"
+                ),
+                True,
+            ]
+        )
+        slept = []
+
+        def fake(manager, certificates):
+            value = next(outcomes)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        original = module.reconcile
+        module.reconcile = fake
+        self.addCleanup(setattr, module, "reconcile", original)
+
+        self.assertTrue(
+            module.reconcile_with_retries(None, None, 5, sleeper=slept.append)
+        )
+        self.assertEqual(len(slept), 2)
+
+        module.reconcile = lambda manager, certificates: (_ for _ in ()).throw(
+            NginxTransactionError("nginx configuration test failed with exit code 1")
+        )
+        slept.clear()
+        with self.assertRaisesRegex(NginxTransactionError, "configuration test"):
+            module.reconcile_with_retries(None, None, 5, sleeper=slept.append)
+        self.assertEqual(slept, [], "a real failure is not retried")
+
+        module.reconcile = lambda manager, certificates: (_ for _ in ()).throw(
+            NginxTransactionError("certificates changed while generating config; retry")
+        )
+        with self.assertRaises(NginxTransactionError):
+            module.reconcile_with_retries(None, None, 2, sleeper=slept.append)
+        self.assertEqual(len(slept), 1, "the last attempt raises instead of sleeping")
+
+    def test_only_a_bounded_attempts_argument_is_accepted(self) -> None:
+        from platform_automation.nginx_reconcile import parse_attempts
+
+        self.assertEqual(parse_attempts([]), 1)
+        self.assertEqual(parse_attempts(["--attempts", "5"]), 5)
+        for bad in (
+            ["--attempts"],
+            ["--attempts", "0"],
+            ["--attempts", "11"],
+            ["--arbitrary-path"],
+            ["--attempts", "5", "x"],
+        ):
+            self.assertIsNone(parse_attempts(bad), bad)
+
+    def test_the_proxy_unit_retries_and_the_timer_does_not(self) -> None:
+        from pathlib import Path
+
+        templates = Path(__file__).resolve().parents[1] / "roles/proxy/templates"
+        unit = (templates / "platform-proxy.service.j2").read_text(encoding="utf-8")
+        self.assertEqual(unit.count("nginx_reconcile --attempts 5"), 2)
+        timer = (templates / "platform-nginx-reconcile.service.j2").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("--attempts", timer)

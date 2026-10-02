@@ -7,6 +7,13 @@ release.
 
 ## [Unreleased]
 
+- A proxy restart no longer fails when the certificate companion writes its
+  files in the same second the first reconciliation renders the config. The
+  reconciliation run from the proxy unit retries that one failure —
+  transient by definition — up to five times; the timer keeps relying on its
+  next tick. Seen live: one lost race failed `platform-proxy.service` and
+  the convergence with it, while the proxy itself kept serving.
+
 ## [0.20.0] - 2026-10-02
 
 - Add the `observability` role, off by default (`observability_enabled`).
