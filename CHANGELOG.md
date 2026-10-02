@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+- Console, in an application's menu: `Database: restore from a dump` and
+  `Database: rotate the password`. Restore keeps the handbook's order and
+  does not let it be shortened: pick a dump by stamp, prove that very dump
+  if it is not proven yet, take a dump of the current state (optional),
+  type `project/environment`, restore. A dump taken on another release is
+  named before the confirmation. Rotation asks once, defaulting to no.
 - Observability no longer mistakes the internet's noise for the application.
   On the dashboard "All" domains now means the application's own domains;
   it used to match every `Host` header sent at the proxy, so scanners asking

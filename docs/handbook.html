@@ -12534,6 +12534,19 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
       <article class="card" id="ref-cli-restore">
         <h3><code>platform restore</code></h3>
         <p>Заменяет содержимое живой базы. Берёт замок.</p>
+        <div class="note">
+          <span class="label">Из консоли</span>
+          <p><code>platform</code> в репозитории приложения → окружение →
+          <strong>Database &amp; backups → Database: restore from a dump</strong>.
+          Консоль ведёт тем же порядком, что и справочник, и не даёт его сократить:
+          выбрать дамп по метке; если он ещё не доказан — доказать именно его; снять дамп
+          текущего состояния (можно отказаться); набрать <code>проект/окружение</code>
+          руками. Для самого старого дампа страховочный не снимается: число хранимых
+          дампов ограничено, и новый вытолкнул бы выбранный до восстановления — консоль
+          говорит об этом прямо. Дамп, снятый на другом релизе, она называет до подтверждения.
+          Восстановление из внешнего хранилища — только командой: ключ на чтение консоль
+          не держит.</p>
+        </div>
         <dl>
           <dt>Флаги</dt>
           <dd><code>--confirm-destructive</code> — обязателен;
@@ -12554,6 +12567,12 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
       <article class="card" id="ref-cli-rotate">
         <h3><code>platform rotate-database-password</code></h3>
         <p>Меняет пароль базы и перезапускает приложение. Берёт замок.</p>
+        <div class="note">
+          <span class="label">Из консоли</span>
+          <p><code>platform</code> в репозитории приложения → окружение →
+          <strong>Database &amp; backups → Database: rotate the password</strong>.
+          Одно подтверждение, по умолчанию «нет»: приложение перезапустится.</p>
+        </div>
         <dl>
           <dt>Флаги</dt><dd><code>--confirm-disruptive</code> — обязателен, потому что приложение перезапускается.</dd>
           <dt>Порядок и почему он такой</dt>
