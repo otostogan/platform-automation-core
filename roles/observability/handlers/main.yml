@@ -1,0 +1,14 @@
+---
+- name: Restart platform observability backend
+  ansible.builtin.systemd_service:
+      name: platform-observability.service
+      state: restarted
+      daemon_reload: true
+  when: observability_backend_enabled | bool
+
+- name: Restart platform observability collector
+  ansible.builtin.systemd_service:
+      name: platform-observability-collector.service
+      state: restarted
+      daemon_reload: true
+  when: observability_collector_enabled | bool

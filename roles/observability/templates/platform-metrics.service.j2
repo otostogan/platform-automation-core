@@ -1,0 +1,17 @@
+[Unit]
+Description=Write platform metrics for the collector
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0022
+Environment=PYTHONPATH=/opt/platform/runtime
+ExecStart=/usr/bin/python3 -m platform_automation.metrics_export --output {{ observability_state_directory }}/textfile/platform.prom
+TimeoutStartSec=60
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths={{ observability_state_directory }}/textfile
+PrivateTmp=yes

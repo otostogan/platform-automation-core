@@ -1,0 +1,180 @@
+---
+- name: Validate observability configuration
+  ansible.builtin.assert:
+      that:
+          - observability_host_label | length > 0
+          - observability_loki_push_url is match("^https?://")
+          - observability_prometheus_write_url is match("^https?://")
+          - >-
+              not (observability_backend_enabled | bool)
+              or observability_grafana_admin_password_source | length > 0
+      fail_msg: >-
+          The observability backend needs observability_grafana_admin_password_source
+          in the ignored local-secrets.yml, and the collector needs both write URLs.
+
+- name: Create observability installation directory
+  ansible.builtin.file:
+      path: "{{ observability_install_directory }}"
+      state: directory
+      owner: root
+      group: root
+      mode: "0755"
+
+- name: Create observability bundle directories
+  ansible.builtin.file:
+      path: "{{ observability_install_directory }}/{{ item }}"
+      state: directory
+      owner: root
+      group: root
+      mode: "0755"
+  loop: "{{ observability_bundle_directories }}"
+
+- name: Create observability state root
+  ansible.builtin.file:
+      path: "{{ observability_state_directory }}"
+      state: directory
+      owner: root
+      group: root
+      mode: "0755"
+
+- name: Create observability state directories
+  ansible.builtin.file:
+      path: "{{ observability_state_directory }}/{{ item.name }}"
+      state: directory
+      owner: "{{ item.owner }}"
+      group: "{{ item.owner }}"
+      mode: "0755"
+  loop: "{{ observability_state_directories }}"
+  loop_control:
+      label: "{{ item.name }}"
+
+- name: Inspect observability network
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/docker
+          - network
+          - inspect
+          - "{{ observability_network }}"
+  register: observability_network_inspect
+  changed_when: false
+  failed_when: false
+
+- name: Create observability network
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/docker
+          - network
+          - create
+          - --driver
+          - bridge
+          - "{{ observability_network }}"
+  when: observability_network_inspect.rc != 0
+  changed_when: true
+
+- name: Install observability bundle files
+  ansible.builtin.copy:
+      src: "{{ observability_bundle_source }}/{{ item }}"
+      dest: "{{ observability_install_directory }}/{{ item }}"
+      owner: root
+      group: root
+      mode: "0644"
+  loop: "{{ observability_bundle_files }}"
+  notify:
+      - Restart platform observability backend
+      - Restart platform observability collector
+
+- name: Install observability environment
+  ansible.builtin.template:
+      src: observability.env.j2
+      dest: "{{ observability_environment_file }}"
+      owner: root
+      group: root
+      mode: "0600"
+  no_log: true
+  notify:
+      - Restart platform observability backend
+      - Restart platform observability collector
+
+- name: Validate installed backend Compose
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/docker
+          - compose
+          - --env-file
+          - "{{ observability_environment_file }}"
+          - --file
+          - "{{ observability_install_directory }}/backend.yml"
+          - config
+          - --quiet
+  changed_when: false
+  when: observability_backend_enabled | bool
+
+- name: Validate installed collector Compose
+  ansible.builtin.command:
+      argv:
+          - /usr/bin/docker
+          - compose
+          - --env-file
+          - "{{ observability_environment_file }}"
+          - --file
+          - "{{ observability_install_directory }}/collector.yml"
+          - config
+          - --quiet
+  changed_when: false
+  when: observability_collector_enabled | bool
+
+- name: Install observability backend service
+  ansible.builtin.template:
+      src: platform-observability.service.j2
+      dest: /etc/systemd/system/platform-observability.service
+      owner: root
+      group: root
+      mode: "0644"
+  notify: Restart platform observability backend
+  when: observability_backend_enabled | bool
+
+- name: Enable observability backend service
+  ansible.builtin.systemd_service:
+      name: platform-observability.service
+      enabled: true
+      state: started
+      daemon_reload: true
+  when: observability_backend_enabled | bool
+
+- name: Install platform metrics export units
+  ansible.builtin.template:
+      src: "{{ item }}.j2"
+      dest: "/etc/systemd/system/{{ item }}"
+      owner: root
+      group: root
+      mode: "0644"
+  loop:
+      - platform-metrics.service
+      - platform-metrics.timer
+  when: observability_collector_enabled | bool
+
+- name: Enable platform metrics export timer
+  ansible.builtin.systemd_service:
+      name: platform-metrics.timer
+      enabled: true
+      state: started
+      daemon_reload: true
+  when: observability_collector_enabled | bool
+
+- name: Install observability collector service
+  ansible.builtin.template:
+      src: platform-observability-collector.service.j2
+      dest: /etc/systemd/system/platform-observability-collector.service
+      owner: root
+      group: root
+      mode: "0644"
+  notify: Restart platform observability collector
+  when: observability_collector_enabled | bool
+
+- name: Enable observability collector service
+  ansible.builtin.systemd_service:
+      name: platform-observability-collector.service
+      enabled: true
+      state: started
+      daemon_reload: true
+  when: observability_collector_enabled | bool

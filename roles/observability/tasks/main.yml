@@ -1,0 +1,4 @@
+---
+- name: Configure platform observability
+  ansible.builtin.include_tasks: configure.yml
+  when: (observability_collector_enabled | bool) or (observability_backend_enabled | bool)

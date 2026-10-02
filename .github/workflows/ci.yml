@@ -97,6 +97,7 @@ jobs:
               run: >-
                   python -m unittest
                   tests.test_nginx_transaction_ansible
+                  tests.test_observability_ansible
                   tests.test_platform_cli_ansible
                   tests.test_reboot_recovery_ansible
                   tests.test_reusable_deploy_workflow
@@ -239,3 +240,6 @@ jobs:
 
             - name: Test nginx activation transaction with real Docker
               run: python tests/integration/nginx_activation.py
+
+            - name: Test the observability bundle with real Docker
+              run: python tests/integration/observability_stack.py

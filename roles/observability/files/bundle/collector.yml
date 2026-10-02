@@ -1,0 +1,100 @@
+name: platform-observability-collector
+
+# The collector: one per host. It reads container logs and metadata through a
+# read-only socket proxy, host and container metrics from /proc and cgroups,
+# and writes to the storage by URL — the same host today, another tomorrow.
+
+x-images:
+    alloy: &alloy_image >-
+        grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
+    socket-proxy: &socket_proxy_image >-
+        ghcr.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+
+x-logging: &logging
+    driver: json-file
+    options:
+        max-size: 10m
+        max-file: "3"
+
+services:
+    docker-socket-collector:
+        image: *socket_proxy_image
+        container_name: platform-docker-socket-collector
+        restart: unless-stopped
+        read_only: true
+        security_opt:
+            - no-new-privileges:true
+        environment:
+            LOG_LEVEL: warning
+            DISABLE_IPV6: "1"
+            SOCKET_PATH: /var/run/docker.sock
+        networks:
+            - collector-control
+        expose:
+            - "2375"
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+            - ./socket-proxy/collector.cfg:/usr/local/etc/haproxy/haproxy.cfg.template:ro
+        tmpfs:
+            - /run
+            - /tmp
+        healthcheck:
+            test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:2375/_ping"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 5s
+        logging: *logging
+
+    alloy:
+        image: *alloy_image
+        container_name: platform-alloy
+        restart: unless-stopped
+        read_only: true
+        user: "0:0"
+        security_opt:
+            - no-new-privileges:true
+        depends_on:
+            docker-socket-collector:
+                condition: service_healthy
+        command:
+            - run
+            - --server.http.listen-addr=0.0.0.0:12345
+            - --storage.path=/var/lib/alloy
+            - --disable-reporting
+            - /etc/alloy/config.alloy
+        environment:
+            PLATFORM_HOST: ${OBSERVABILITY_HOST_LABEL:?}
+            LOKI_PUSH_URL: ${OBSERVABILITY_LOKI_PUSH_URL:-http://loki:3100/loki/api/v1/push}
+            PROMETHEUS_WRITE_URL: ${OBSERVABILITY_PROMETHEUS_WRITE_URL:-http://prometheus:9090/api/v1/write}
+            DOCKER_API: tcp://docker-socket-collector:2375
+        networks:
+            - collector-control
+            - observability
+        expose:
+            - "12345"
+        volumes:
+            - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+            - ${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}/alloy:/var/lib/alloy
+            - ${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}/textfile:/host/textfile:ro
+            - /proc:/host/proc:ro
+            - /sys:/host/sys:ro
+            - /:/host/root:ro
+        tmpfs:
+            - /tmp
+        mem_limit: ${OBSERVABILITY_ALLOY_MEMORY:-512m}
+        healthcheck:
+            test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/12345"]
+            interval: 15s
+            timeout: 5s
+            retries: 20
+            start_period: 15s
+        logging: *logging
+
+networks:
+    collector-control:
+        name: platform-collector-control
+        internal: true
+    observability:
+        name: platform-observability
+        external: true

@@ -18,4 +18,5 @@
       - role: otostogan.platform.firewall
       - role: otostogan.platform.platform_cli
       - role: otostogan.platform.proxy
+      - role: otostogan.platform.observability
       - role: otostogan.platform.reboot_recovery

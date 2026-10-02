@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh platform metrics for the collector
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec={{ observability_metrics_interval }}
+AccuracySec=1s
+Unit=platform-metrics.service
+
+[Install]
+WantedBy=timers.target
