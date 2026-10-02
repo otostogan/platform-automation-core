@@ -140,6 +140,9 @@ class DatabaseComposeTest(unittest.TestCase):
 
     def test_healthcheck_talks_to_the_declared_database(self) -> None:
         self.assertIn("pg_isready", self.service["healthcheck"]["test"])
+        # over TCP: the socket answers during first-run initialisation
+        probe = self.service["healthcheck"]["test"]
+        self.assertEqual(probe[probe.index("--host") + 1], "127.0.0.1")
 
     def test_network_is_internal(self) -> None:
         """No published ports stops inbound; internal stops outbound too."""

@@ -7,6 +7,17 @@ release.
 
 ## [Unreleased]
 
+- Fix a race in `verify-backup`: the readiness probe asked over the Unix
+  socket, which answers while a fresh PostgreSQL container is still running
+  its temporary initialisation server. The restore then met that server's
+  shutdown and the proof failed with "database restore failed" on a good
+  dump — seen live, the same dump passing eighty seconds later. The probe
+  now asks over TCP, which only the real server answers. The same probe in
+  the database's Compose healthcheck is fixed too: on a brand-new volume a
+  deploy could run migrations against the temporary server. The next deploy
+  of each application recreates its database container once to pick the
+  healthcheck up.
+
 ## [0.22.0] - 2026-10-02
 
 - Prove restores on a calendar. `platform verify-backup --all` restores the
