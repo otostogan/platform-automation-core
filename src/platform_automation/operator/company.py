@@ -191,6 +191,9 @@ def write_company(
     ):
         if Path(path).expanduser().exists():
             raise CompanyError(f"refusing to overwrite an existing key: {path}")
+    password = answers.host.grafana_password
+    if Path(password).expanduser().exists():
+        raise CompanyError(f"refusing to overwrite an existing password: {password}")
 
     result = CompanyResult()
     key_path = Path(answers.operator_key).expanduser()
