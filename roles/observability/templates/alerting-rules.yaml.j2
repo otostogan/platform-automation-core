@@ -291,7 +291,7 @@ groups:
             datasourceUid: platform-loki
             model:
                 refId: A
-                expr: sum by (vhost) (count_over_time({container="platform-nginx"} | json | __error__="" | status=~"5.." [5m])) / sum by (vhost) (count_over_time({container="platform-nginx"} | json | __error__="" [5m])) * 100 and sum by (vhost) (count_over_time({container="platform-nginx"} | json | __error__="" [5m])) >= [[ observability_alert_error_min_requests ]]
+                expr: sum by (vhost) (count_over_time({container="platform-nginx"} | json | __error__="" | upstream_addr!="" | status=~"5.." [5m])) / sum by (vhost) (count_over_time({container="platform-nginx"} | json | __error__="" | upstream_addr!="" [5m])) * 100 and sum by (vhost) (count_over_time({container="platform-nginx"} | json | __error__="" | upstream_addr!="" [5m])) >= [[ observability_alert_error_min_requests ]]
                 instant: true
                 queryType: instant
         -   refId: B
@@ -314,7 +314,7 @@ groups:
             severity: warning
         annotations:
             summary: '{{ .Labels.vhost }}: {{ printf "%.0f" .Values.B.Value }}% of responses are 5xx'
-            description: Measured over five minutes at the proxy.
+            description: Measured over five minutes at the proxy, over requests that reached the application.
     -   uid: platform-metrics-stale
         title: Platform metrics stopped
         condition: C

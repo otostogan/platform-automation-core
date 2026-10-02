@@ -71,7 +71,6 @@
         "sort": 1,
         "multi": true,
         "includeAll": true,
-        "allValue": ".*",
         "current": {}
       },
       {

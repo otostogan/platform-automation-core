@@ -170,6 +170,27 @@ class ObservabilityAlertsTest(unittest.TestCase):
         loud = [rule["uid"] for rule in self.rules() if rule["noDataState"] != "OK"]
         self.assertEqual(loud, ["platform-metrics-stale"])
 
+    def test_the_error_rate_counts_only_requests_that_reached_an_application(
+        self,
+    ) -> None:
+        # Scanners asking for the bare address or a made-up name get 503 from
+        # the proxy's default server; that is not an application failing.
+        rules = {rule["uid"]: rule for rule in self.rules()}
+        expression = rules["platform-http-errors"]["data"][0]["model"]["expr"]
+        selectors = expression.count('{container="platform-nginx"}')
+        self.assertEqual(selectors, 3)
+        self.assertEqual(expression.count('upstream_addr!=""'), selectors)
+
+    def test_all_domains_means_the_applications_own_domains(self) -> None:
+        board = json.loads(
+            (BUNDLE / "grafana/dashboards/application.json").read_text(encoding="utf-8")
+        )
+        domain = next(v for v in board["templating"]["list"] if v["name"] == "domain")
+        self.assertIn("platform_domain_info", domain["definition"])
+        self.assertTrue(domain["includeAll"])
+        # a catch-all here drew every Host header the internet sent
+        self.assertNotIn("allValue", domain)
+
     def test_the_blind_rule_also_fires_when_its_query_fails(self) -> None:
         # With Prometheus down the sentinel errors instead of returning no data.
         loud = [rule["uid"] for rule in self.rules() if rule["execErrState"] != "OK"]
