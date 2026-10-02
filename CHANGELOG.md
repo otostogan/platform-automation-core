@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-02
+
 - Add alert rules to the `observability` role: stopped containers, a serving
   release with nothing running, restart loops, memory near the limit, low
   disk, stale dumps, unproven restores, the 5xx share per domain, and a
