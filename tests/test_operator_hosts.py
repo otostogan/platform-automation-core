@@ -281,6 +281,17 @@ class PlanTest(unittest.TestCase):
         self.assertIn(
             f"secrets_age_key_source: {self.home}/keys/platform-host-2.agekey", secrets
         )
+        password = self.home / "keys/platform-host-2-grafana.password"
+        self.assertEqual(password.stat().st_mode & 0o777, 0o600)
+        self.assertGreaterEqual(len(password.read_text().strip()), 32)
+        self.assertIn(
+            f"observability_grafana_admin_password_source: {password}", secrets
+        )
+
+    def test_an_existing_grafana_password_stops_the_plan(self) -> None:
+        write(self.home / "keys/platform-host-2-grafana.password", "old\n")
+        with self.assertRaises(HostError):
+            plan_host(self.root, self.answers)
 
     def test_missing_recipients_file_is_created_from_the_template(self) -> None:
         (self.root / "docs/RECIPIENTS.md").unlink()

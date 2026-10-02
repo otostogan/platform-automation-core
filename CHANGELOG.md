@@ -7,6 +7,11 @@ release.
 
 ## [Unreleased]
 
+- `platform new host` generates the Grafana administrator password next to
+  the host's age key (`<host>-grafana.password`, mode 0600, never printed)
+  and writes `observability_grafana_admin_password_source` into the host's
+  `local-secrets.yml`. Switching observability on for a new host is now one
+  inventory line.
 - A proxy restart no longer fails when the certificate companion writes its
   files in the same second the first reconciliation renders the config. The
   reconciliation run from the proxy unit retries that one failure —

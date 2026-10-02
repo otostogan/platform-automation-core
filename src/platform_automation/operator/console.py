@@ -2101,6 +2101,8 @@ def run_new_host(context: Context, questionary, style) -> int:
         print()
         for label, path in plan.keys:
             print(f"{DIM}→ age-keygen --output {path}{RESET}")
+        for path in plan.passwords:
+            print(f"{DIM}→ random password, mode 0600 → {path}{RESET}")
         recipients = write_host(context.root, answers, plan)
     except HostError as error:
         print(f"{RED}{error}{RESET}")

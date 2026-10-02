@@ -183,6 +183,16 @@ class CompanyTest(unittest.TestCase):
             write_company(self.root, self.answers, runner=fake_runner, home=self.home)
         self.assertFalse((self.root / "requirements.yml").exists())
 
+    def test_an_existing_grafana_password_stops_everything_too(self) -> None:
+        (self.base / "keys").mkdir()
+        password = self.base / f"keys/{self.answers.host.name}-grafana.password"
+        password.write_text("old\n", encoding="utf-8")
+        with self.assertRaises(CompanyError):
+            write_company(self.root, self.answers, runner=fake_runner, home=self.home)
+        self.assertFalse((self.root / "requirements.yml").exists())
+        self.assertFalse(Path(self.answers.operator_key).expanduser().exists())
+        self.assertEqual(password.read_text(encoding="utf-8"), "old\n")
+
 
 class TemplatesMatchHandbookTest(unittest.TestCase):
     """The handbook shows these files on #/ref-layout; the package writes them."""
