@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-10-02
+
 - Fix the metrics exporter rounding every value to six significant digits.
   A Unix timestamp lost its last four digits — up to 2.7 hours — so
   "Platform metrics stopped" fired for most of each such window while
