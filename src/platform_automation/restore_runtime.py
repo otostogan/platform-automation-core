@@ -328,6 +328,13 @@ def wait_until_ready(
                     "exec",
                     container,
                     "pg_isready",
+                    # Over TCP on purpose. A fresh container first runs a
+                    # temporary server for initialisation that listens on the
+                    # socket only, then stops it and starts the real one. A
+                    # socket probe says "ready" to the temporary one, and the
+                    # restore that follows meets the shutdown.
+                    "--host",
+                    "127.0.0.1",
                     "--username",
                     DATABASE_USER,
                     "--dbname",

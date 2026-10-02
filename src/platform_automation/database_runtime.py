@@ -456,6 +456,11 @@ def build_database_compose(
                     "test": [
                         "CMD",
                         "pg_isready",
+                        # TCP, not the socket: on a new volume the socket
+                        # answers during initialisation, before the server
+                        # that will actually serve has started.
+                        "--host",
+                        "127.0.0.1",
                         "--username",
                         DATABASE_USER,
                         "--dbname",

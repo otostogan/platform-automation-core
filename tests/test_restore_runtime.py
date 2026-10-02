@@ -289,6 +289,17 @@ class VerifyTest(BackupDirectoryFixture):
             sleeper=lambda _: None,
         )
 
+    def test_readiness_is_asked_over_tcp_not_the_socket(self) -> None:
+        """The socket answers while a fresh container is still initialising."""
+        self.seed(NEWER)
+
+        self.verify()
+
+        probes = [command for command in self.commands if "pg_isready" in command]
+        self.assertTrue(probes)
+        for probe in probes:
+            self.assertEqual(probe[probe.index("--host") + 1], "127.0.0.1")
+
     def test_never_touches_the_live_database(self) -> None:
         self.seed(NEWER)
 
