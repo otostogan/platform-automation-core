@@ -1,0 +1,27 @@
+[Unit]
+Description=Scheduled proof that platform database backups restore
+Documentation=file://{{ platform_cli_executable }}
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+# Every application that has a dump, newest dump each. One failure does not
+# stop the others; the unit fails if any proof did.
+ExecStart={{ platform_cli_executable }} verify-backup --all --json
+TimeoutStartSec={{ platform_cli_verify_timeout }}
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/var/backups/platform /run/platform
+RestrictRealtime=yes
+RestrictSUIDSGID=yes

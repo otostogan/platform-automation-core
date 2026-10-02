@@ -1,0 +1,15 @@
+[Unit]
+Description=Scheduled proof that platform database backups restore
+Documentation=file://{{ platform_cli_executable }}
+
+[Timer]
+# A dump nobody has restored is a guess. The proof costs a throwaway
+# container for a few minutes, so it runs on a calendar, not on trust.
+OnCalendar={{ platform_cli_verify_schedule }}
+RandomizedDelaySec=1h
+# A host that was off at the appointed hour proves at the next boot.
+Persistent=true
+Unit=platform-verify-backups.service
+
+[Install]
+WantedBy=timers.target

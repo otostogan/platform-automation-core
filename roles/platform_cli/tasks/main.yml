@@ -123,7 +123,32 @@
   loop:
       - platform-backup@.service
       - platform-backup@.timer
+      - platform-verify-backups.service
+      - platform-verify-backups.timer
   notify: Reload systemd after installing backup units
+
+- name: Validate scheduled restore proof settings
+  ansible.builtin.assert:
+      that:
+          - platform_cli_verify_schedule | length > 0
+          - >-
+              platform_cli_verify_timeout | string == "infinity"
+              or platform_cli_verify_timeout | int >= 7200
+      fail_msg: >-
+          platform_cli_verify_schedule is a systemd calendar expression;
+          platform_cli_verify_timeout is "infinity" or at least 7200 seconds,
+          enough for one slow proof.
+
+# One timer for the host, unlike the per-application backup timers: what to
+# prove is read from the ledger at run time, so there is nothing for a deploy
+# to reconcile.
+- name: Schedule the restore proof
+  ansible.builtin.systemd_service:
+      name: platform-verify-backups.timer
+      enabled: "{{ platform_cli_verify_enabled | bool }}"
+      state: "{{ 'started' if platform_cli_verify_enabled | bool else 'stopped' }}"
+      daemon_reload: true
+  when: not ansible_check_mode
 
 - name: Validate installed platform CLI
   ansible.builtin.command:
