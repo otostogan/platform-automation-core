@@ -7,6 +7,13 @@ release.
 
 ## [Unreleased]
 
+- Observability no longer mistakes the internet's noise for the application.
+  On the dashboard "All" domains now means the application's own domains;
+  it used to match every `Host` header sent at the proxy, so scanners asking
+  for the bare address or a made-up name appeared as domains. The "HTTP 5xx
+  rate" alert counts only requests that reached an application: the 503 the
+  proxy's default server gives a scanner could raise it.
+
 ## [0.22.1] - 2026-10-02
 
 - Fix a race in `verify-backup`: the readiness probe asked over the Unix
