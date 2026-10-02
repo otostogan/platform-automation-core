@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-02
+
 - Console, in an application's menu: `Database: restore from a dump` and
   `Database: rotate the password`. Restore keeps the handbook's order and
   does not let it be shortened: pick a dump by stamp, prove that very dump
