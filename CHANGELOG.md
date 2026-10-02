@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-02
+
 - Add the `observability` role, off by default (`observability_enabled`).
   It installs two halves that can later live on different machines: a
   collector (Alloy behind a read-only Docker socket proxy) and a backend
