@@ -232,6 +232,14 @@ def main():
                 ),
                 seconds=150,
             )
+            # The stamp must survive the trip digit for digit: a rounded one
+            # reads as hours old and raises "Platform metrics stopped".
+            age = wait_for(
+                "the export stamp in Prometheus",
+                measured("time()-platform_metrics_export_timestamp_seconds"),
+                seconds=150,
+            )
+            assert -5 < float(age[0]["value"][1]) < 200, age
             wait_for(
                 "host metrics in Prometheus",
                 measured("node_memory_MemTotal_bytes%7Bhost=%22integration-host%22%7D"),

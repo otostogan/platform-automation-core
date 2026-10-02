@@ -136,12 +136,27 @@ class Samples:
                     if val not in (None, "")
                 )
                 lines.append(
-                    f"{name}{{{body}}} {value:.6g}" if body else f"{name} {value:.6g}"
+                    f"{name}{{{body}}} {number(value)}"
+                    if body
+                    else f"{name} {number(value)}"
                 )
         return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------- containers
+
+
+def number(value: float) -> str:
+    """A sample value in full.
+
+    Six significant digits are plenty for a percentage and ruin a Unix
+    timestamp: 1790943672 came out as 1.79094e+09, up to 2.7 hours off, and
+    every rule that subtracts it from the clock was wrong by that much.
+    """
+    value = float(value)
+    if value.is_integer() and abs(value) < 1e15:
+        return str(int(value))
+    return repr(value)
 
 
 def docker_lines(docker: Path, arguments: list, runner=subprocess.run) -> list:
