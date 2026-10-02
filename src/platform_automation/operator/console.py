@@ -2484,6 +2484,7 @@ def run_core_update(context: Context, argv: list) -> int:
         latest_release,
         parse_recap,
         playbook_command,
+        preselected,
         rewrite_pin,
         run_playbook,
         verdict,
@@ -2613,11 +2614,12 @@ def run_core_update(context: Context, argv: list) -> int:
             f"{DIM}  converge needs the tailnet — handbook: {HANDBOOK}#/flow-incidents{RESET}"
         )
         return 1
+    ticked = preselected({h.name: v.version for h, v in versions}, target)
     choices = [
         questionary.Choice(
             f"{h.name}  ({v.version or '?'})",
             value=h.name,
-            checked=(v.version != target),
+            checked=h.name in ticked,
         )
         for h, v in versions
     ]
@@ -2629,6 +2631,7 @@ def run_core_update(context: Context, argv: list) -> int:
     ).ask()
     if not chosen:
         print("no hosts chosen — the pin and the collection are updated, hosts are not")
+        print(f"{DIM}  space ticks a host, Enter confirms the ticked ones{RESET}")
         return 0
 
     try:

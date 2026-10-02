@@ -186,6 +186,17 @@ def install_collection(root: Path, tag: str, runner=subprocess.run) -> str:
     raise CoreUpdateError(f"collection install failed: {last}")
 
 
+def preselected(versions: dict, target: str) -> set:
+    """Which hosts start ticked in "Converge which hosts?".
+
+    Those not on the target. When every host already is, the operator came
+    to converge again — for an inventory change, say — so all of them start
+    ticked; an empty list there turned plain Enter into "do nothing".
+    """
+    behind = {name for name, version in versions.items() if version != target}
+    return behind or set(versions)
+
+
 def parse_recap(output: str) -> dict:
     """Per-host counters from ``PLAY RECAP``; empty when the run never got there."""
     recap = {}

@@ -7,6 +7,11 @@ release.
 
 ## [Unreleased]
 
+- `platform update` in an infrastructure repository: when every host already
+  runs the target version, all hosts start ticked in "Converge which hosts?".
+  Before, none did, and plain Enter ended with "no hosts chosen" — exactly
+  when converging again to apply an inventory change.
+
 ## [0.21.0] - 2026-10-02
 
 - Add alert rules to the `observability` role: stopped containers, a serving
