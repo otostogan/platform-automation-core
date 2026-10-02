@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-10-02
+
 - `platform new host` generates the Grafana administrator password next to
   the host's age key (`<host>-grafana.password`, mode 0600, never printed)
   and writes `observability_grafana_admin_password_source` into the host's
