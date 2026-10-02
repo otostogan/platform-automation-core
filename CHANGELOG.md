@@ -8,7 +8,7 @@ release.
 ## [Unreleased]
 
 - Prove restores on a calendar. `platform verify-backup --all` restores the
-  newest dump of every application whose release asks for scheduled dumps;
+  newest dump of every application that has one and is not retired;
   `platform-verify-backups.timer` runs it weekly (Sunday 04:00 UTC by
   default, `platform_cli_verify_schedule`; off with
   `platform_cli_verify_enabled: false`). Until now nothing ran the proof, so

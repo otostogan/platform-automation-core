@@ -9,8 +9,8 @@ Type=oneshot
 User=root
 Group=root
 UMask=0077
-# Every application that asks for scheduled backups, newest dump each. One
-# failure does not stop the others; the unit fails if any proof did.
+# Every application that has a dump, newest dump each. One failure does not
+# stop the others; the unit fails if any proof did.
 ExecStart={{ platform_cli_executable }} verify-backup --all --json
 TimeoutStartSec={{ platform_cli_verify_timeout }}
 

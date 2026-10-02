@@ -10,11 +10,12 @@ from platform_automation import platform_cli
 from platform_automation.platform_cli import parse_arguments, run_verify_backup
 from platform_automation.restore_runtime import RestoreRuntimeError
 
+# Whether a release schedules dumps does not matter here: a pre-migration
+# dump of one that schedules none is proven all the same.
 SCOPES = [
     ("alpha", "lab"),
     ("bravo", "production"),
     ("retired", "lab"),
-    ("unscheduled", "lab"),
     ("empty", "lab"),
 ]
 
@@ -35,8 +36,6 @@ class VerifyEveryBackupTest(unittest.TestCase):
                     {"name": project},
                     {},
                 ),
-                backups_are_scheduled=lambda manifest: manifest["name"]
-                != "unscheduled",
                 list_backups=lambda directory: (
                     [] if directory.parent.name == "empty" else ["20260101T000000Z-a"]
                 ),
@@ -92,7 +91,6 @@ class VerifyEveryBackupTest(unittest.TestCase):
                 "alpha": ("succeeded", None),
                 "bravo": ("succeeded", None),
                 "retired": ("skipped", "retired"),
-                "unscheduled": ("skipped", "no scheduled backups"),
                 "empty": ("skipped", "no backup yet"),
             },
         )

@@ -448,8 +448,8 @@ def parse_arguments(
         "--all",
         action="store_true",
         help=(
-            "Verify the newest backup of every application whose release asks "
-            "for scheduled backups. This is what the weekly timer runs."
+            "Verify the newest backup of every application that has one and is "
+            "not retired. This is what the weekly timer runs."
         ),
     )
     verify_parser.add_argument(
@@ -2261,12 +2261,11 @@ def run_verify_every_backup(
     minimum_age_recipients: int,
     verifier,
 ) -> int:
-    """Prove the newest dump of every application that asks for dumps.
+    """Prove the newest dump of every application that has one.
 
     One application's failure does not stop the others: each is tried, each
     outcome is reported, and the exit code is non-zero if any proof failed.
-    An application that is retired, asks for no scheduled dumps or has none
-    yet is skipped and says why.
+    An application that is retired or has no dump yet is skipped and says why.
     """
     try:
         scopes = list_project_scopes(projects_root)
@@ -2289,9 +2288,9 @@ def run_verify_every_backup(
                 environment,
                 minimum_age_recipients,
             )
-            if not backups_are_scheduled(manifest):
-                entry.update(outcome="skipped", reason="no scheduled backups")
-                continue
+            # Not narrowed to releases that schedule dumps: a pre-migration
+            # dump of an application that schedules none is still what a
+            # restore would start from, and the alert watches it too.
             if not list_backups(backups_root / project / environment):
                 entry.update(outcome="skipped", reason="no backup yet")
                 continue

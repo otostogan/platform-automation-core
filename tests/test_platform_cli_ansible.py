@@ -104,6 +104,14 @@ class PlatformCliRoleFilesTest(unittest.TestCase):
                 self.assertIn(line, service)
         self.assertIn("OnCalendar={{ platform_cli_verify_schedule }}", timer)
         self.assertIn("Persistent=true", timer)
+        # no limit on the batch: one that fires mid-run skips the rest
+        defaults = yaml.safe_load(
+            (ROOT / "roles" / "platform_cli" / "defaults" / "main.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(defaults["platform_cli_verify_timeout"], "infinity")
+        self.assertIn("TimeoutStartSec={{ platform_cli_verify_timeout }}", service)
 
         tasks = (ROOT / "roles" / "platform_cli" / "tasks" / "main.yml").read_text(
             encoding="utf-8"
