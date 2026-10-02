@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from platform_automation.operator.console import (
     render_backups,
@@ -250,4 +251,70 @@ class MenuGroupsTest(unittest.TestCase):
         )
         self.assertEqual(
             [e.label for e in entries], ["Deploy", "Validate manifest and Compose"]
+        )
+
+
+class WiredHostActionsTest(unittest.TestCase):
+    def test_backup_and_convergence_actions_run_when_prompts_exist(self) -> None:
+        from types import SimpleNamespace
+
+        from platform_automation.operator.console import host_actions
+        from platform_automation.operator.context import Host
+
+        context = SimpleNamespace(root=Path("/nonexistent"), core_pin="v0.0.0")
+        host = Host("platform-host-1", "platform-host-1.tailnet.example.net", "ops")
+        wired = {a.label: a for a in host_actions(context, host, prompts=(None, None))}
+        for label in (
+            "Backups: take one now",
+            "Backups: prove restorable",
+            "Converge (twice)",
+            "Readiness",
+        ):
+            self.assertIsNotNone(wired[label].run, label)
+            self.assertTrue(wired[label].remote, label)
+        self.assertIn("--limit platform-host-1", wired["Converge (twice)"].command)
+        # without prompts the console only shows what it would run
+        shown = {a.label: a for a in host_actions(context, host)}
+        self.assertIsNone(shown["Backups: prove restorable"].run)
+
+    def test_a_verification_says_what_was_proven_and_what_was_not_touched(self) -> None:
+        from platform_automation.operator.console import render_verification
+
+        text = render_verification(
+            {
+                "outcome": "succeeded",
+                "stamp": "20260101T000000Z-aaaaaaaa",
+                "query": "SELECT 1",
+                "result": "1",
+                "verified_at": "2026-01-01T00:01:00Z",
+            }
+        )
+        self.assertIn("restore succeeded", text)
+        self.assertIn("\033[32m", text)
+        self.assertIn("20260101T000000Z", text)
+        self.assertIn("SELECT 1", text)
+        self.assertIn("live database was not touched", text)
+        failed = render_verification({"outcome": "failed"})
+        self.assertIn("restore failed", failed)
+        self.assertIn("\033[31m", failed)
+
+    def test_a_backup_result_reports_a_failed_offsite_copy(self) -> None:
+        from platform_automation.operator.console import render_backup_result
+
+        text = render_backup_result(
+            {
+                "path": "/var/backups/x.dump.age",
+                "bytes": 10,
+                "release_id": "r1",
+                "removed_backups": ["old"],
+                "warnings": ["w"],
+                "offsite": {"state": "failed", "error": "denied"},
+            }
+        )
+        self.assertIn("dump written", text)
+        self.assertIn("removed by retention  1", text)
+        self.assertIn("FAILED — denied", text)
+        self.assertIn(
+            "stays on this host",
+            render_backup_result({"offsite": {"state": "not-configured"}}),
         )

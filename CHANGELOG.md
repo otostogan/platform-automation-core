@@ -7,6 +7,14 @@ release.
 
 ## [Unreleased]
 
+- Fix `platform_backup_restore_proven`: the exporter waited for the outcome
+  `passed` while `verify-backup` records `succeeded`, so the metric stayed 0
+  after a proven restore, the dashboard said "not proven" and the
+  "Restore is not proven" alert could never clear. Both now use one constant.
+- Console: `Backups: take one now`, `Backups: prove restorable`,
+  `Converge (twice)` and `Readiness` on a host now run instead of printing
+  the command; the two backup actions are also in an application's menu.
+
 - `platform update` in an infrastructure repository: when every host already
   runs the target version, all hosts start ticked in "Converge which hosts?".
   Before, none did, and plain Enter ended with "no hosts chosen" — exactly
