@@ -140,7 +140,7 @@ def follow_project(project: str, tail: int = 100) -> str:
 def follow_nginx_for(domains: list, tail: int = 2000) -> str:
     """The shared proxy log, narrowed to one application's hosts.
 
-    The proxy writes JSON access lines with a ``host`` field (core ≥ 0.19.1;
+    The proxy writes JSON access lines with a ``vhost`` field (core ≥ 0.20.0;
     before that the format had no host at all and nothing can be matched).
     Error lines are plain text and name the server.
     """
@@ -150,7 +150,7 @@ def follow_nginx_for(domains: list, tail: int = 2000) -> str:
     # Hosts are [a-z0-9.-] only, so the dot is the one character to escape;
     # re.escape would also write "\\-", which GNU grep warns about.
     escaped = "|".join(host.replace(".", "\\.") for host in hosts)
-    pattern = f'"host":"({escaped})"|server: ({escaped})[,;]'
+    pattern = f'"vhost":"({escaped})"|server: ({escaped})[,;]'
     logs = shlex.join(
         [
             "sudo",

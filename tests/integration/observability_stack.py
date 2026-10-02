@@ -1,0 +1,359 @@
+"""Explicit opt-in real-Docker acceptance of the observability bundle.
+
+Run: .venv/bin/python tests/integration/observability_stack.py
+Brings the collector and the storage up from the role's own Compose files
+under unique names, starts one workload container named the way a deployed
+application is, and proves the three things the role promises: its log
+lines arrive in Loki, its metrics in Prometheus, both under the platform's
+labels, and Grafana serves the provisioned sources and dashboard.
+"""
+
+import json
+import shutil
+import subprocess
+import tempfile
+import time
+import uuid
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+BUNDLE = ROOT / "roles/observability/files/bundle"
+STATE = "${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}"
+PASSWORD = "integration-only"
+
+
+def run(*arguments, check=True, timeout=300):
+    result = subprocess.run(arguments, capture_output=True, text=True, timeout=timeout)
+    if check and result.returncode:
+        raise RuntimeError(
+            f"command failed: {arguments}\n{result.stdout}\n{result.stderr}"
+        )
+    return result
+
+
+def rewrite(source: Path, prefix: str, state: Path, destination: Path) -> None:
+    compose = yaml.safe_load(source.read_text())
+    compose["name"] = prefix + "-" + source.stem
+    for name, spec in compose["services"].items():
+        spec["container_name"] = prefix + "-" + name
+        spec["restart"] = "no"
+        spec["volumes"] = [
+            mount.replace(STATE, str(state)).replace("./", str(BUNDLE) + "/")
+            for mount in spec.get("volumes", [])
+        ]
+    for key, network in compose["networks"].items():
+        network["name"] = prefix + "-" + key
+    destination.write_text(yaml.safe_dump(compose, sort_keys=False))
+
+
+def wait_for(description, probe, seconds=90):
+    deadline = time.monotonic() + seconds
+    last = None
+    while True:
+        try:
+            last = probe()
+            if last:
+                return last
+        except (RuntimeError, ValueError, KeyError, IndexError) as error:
+            last = error
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{description}: never became true; last: {last}")
+        time.sleep(2)
+
+
+def main():
+    docker = shutil.which("docker")
+    if docker is None:
+        raise RuntimeError("Docker is required for the explicit integration test")
+    run(docker, "info")
+    prefix = "platform-obs-test-" + uuid.uuid4().hex[:8]
+    marker = "hello-" + uuid.uuid4().hex
+    with tempfile.TemporaryDirectory(prefix="platform-obs-test-") as temporary:
+        base = Path(temporary)
+        state = base / "state"
+        for name in ("loki", "prometheus", "grafana", "alloy", "textfile"):
+            (state / name).mkdir(parents=True)
+            (state / name).chmod(0o777)
+        backend, collector = base / "backend.yml", base / "collector.yml"
+        rewrite(BUNDLE / "backend.yml", prefix, state, backend)
+        rewrite(BUNDLE / "collector.yml", prefix, state, collector)
+        environment = [
+            "env",
+            f"OBSERVABILITY_GRAFANA_ADMIN_PASSWORD={PASSWORD}",
+            "OBSERVABILITY_HOST_LABEL=integration-host",
+        ]
+        workload = prefix + "-web"
+        network = prefix + "-observability"
+
+        def inside(container, *command):
+            return run(docker, "exec", prefix + "-" + container, *command).stdout
+
+        def fetch(url):
+            # prometheus carries busybox wget and sits on the shared network
+            return inside("prometheus", "wget", "-q", "-O", "-", url)
+
+        try:
+            run(docker, "network", "create", network)
+            run(
+                *environment,
+                docker,
+                "compose",
+                "--file",
+                str(backend),
+                "up",
+                "--detach",
+                "--wait",
+                "--wait-timeout",
+                "180",
+                timeout=400,
+            )
+            run(
+                *environment,
+                docker,
+                "compose",
+                "--file",
+                str(collector),
+                "up",
+                "--detach",
+                "--wait",
+                "--wait-timeout",
+                "180",
+                timeout=400,
+            )
+            print(
+                "PASS: storage and collector start from the role's Compose files",
+                flush=True,
+            )
+
+            run(
+                docker,
+                "run",
+                "--detach",
+                "--name",
+                workload,
+                "--label",
+                "com.docker.compose.project=example-lab",
+                "--label",
+                "com.docker.compose.service=web",
+                "alpine:3.20",
+                "sh",
+                "-c",
+                f'while true; do echo \'{{"level":"info","msg":"{marker}"}}\'; sleep 1; done',
+            )
+
+            selector = '{project="example",environment="lab",service="web",host="integration-host"}'
+
+            def logged():
+                body = fetch(
+                    "http://loki:3100/loki/api/v1/query_range?limit=20&query="
+                    + selector.replace("{", "%7B")
+                    .replace("}", "%7D")
+                    .replace('"', "%22")
+                )
+                streams = json.loads(body)["data"]["result"]
+                return any(
+                    marker in line for stream in streams for _, line in stream["values"]
+                )
+
+            wait_for("the workload's log line in Loki under platform labels", logged)
+            print(
+                "PASS: container logs reach Loki labelled host/project/environment/service",
+                flush=True,
+            )
+
+            def measured(query):
+                def probe():
+                    body = fetch("http://prometheus:9090/api/v1/query?query=" + query)
+                    return json.loads(body)["data"]["result"]
+
+                return probe
+
+            # The platform's own exporter, run for real against this Docker:
+            # the role runs it from a timer, the test runs it once.
+            from platform_automation.metrics_export import main as export
+
+            assert (
+                export(
+                    [
+                        "--output",
+                        str(state / "textfile/platform.prom"),
+                        "--docker",
+                        docker,
+                        "--projects-root",
+                        str(base / "none"),
+                        "--releases-root",
+                        str(base / "none"),
+                        "--backups-root",
+                        str(base / "none"),
+                    ]
+                )
+                == 0
+            )
+            wait_for(
+                "container metrics in Prometheus under platform labels",
+                measured(
+                    "platform_container_memory_bytes%7Bproject=%22example%22,environment=%22lab%22,service=%22web%22,host=%22integration-host%22%7D"
+                ),
+                seconds=150,
+            )
+            wait_for(
+                "host metrics in Prometheus",
+                measured("node_memory_MemTotal_bytes%7Bhost=%22integration-host%22%7D"),
+                seconds=150,
+            )
+            print(
+                "PASS: container and host metrics reach Prometheus by remote write",
+                flush=True,
+            )
+
+            def grafana(path):
+                return json.loads(
+                    inside(
+                        "grafana",
+                        "curl",
+                        "-fsS",
+                        "-u",
+                        f"admin:{PASSWORD}",
+                        "http://127.0.0.1:3000" + path,
+                    )
+                )
+
+            sources = {
+                s["uid"]
+                for s in wait_for("Grafana API", lambda: grafana("/api/datasources"))
+            }
+            assert sources == {"platform-loki", "platform-prometheus"}, sources
+            boards = {d["uid"] for d in grafana("/api/search?type=dash-db")}
+            assert "platform-application" in boards, boards
+            for uid in sorted(sources):
+                health = grafana(f"/api/datasources/uid/{uid}/health")
+                assert health.get("status") == "OK", (uid, health)
+            print(
+                "PASS: Grafana serves the provisioned sources and dashboard, and both sources answer",
+                flush=True,
+            )
+
+            # Every expression of every provisioned dashboard must be accepted
+            # by the engine it is addressed to: a typo in LogQL or PromQL is a
+            # blank panel on the host, found only when someone needs it.
+            from urllib.parse import quote
+
+            checked = 0
+            for board in sorted((BUNDLE / "grafana/dashboards").glob("*.json")):
+                document = json.loads(board.read_text())
+                targets = [
+                    (
+                        panel["datasource"]["type"],
+                        target["expr"],
+                        f"{board.name}: {panel['title']}",
+                    )
+                    for panel in document["panels"]
+                    for target in panel.get("targets", [])
+                ] + [
+                    (
+                        note["datasource"]["type"],
+                        note["expr"],
+                        f"{board.name}: annotation {note['name']}",
+                    )
+                    for note in document["annotations"]["list"]
+                ]
+                for kind, expression, where in targets:
+                    for token, value in (
+                        ("${domain:regex}", ".*"),
+                        ("$project", "example"),
+                        ("$environment", "lab"),
+                        ("$service", ".*"),
+                        ("$search", ""),
+                        ("$__auto", "5m"),
+                        ("$__rate_interval", "5m"),
+                    ):
+                        expression = expression.replace(token, value)
+                    assert (
+                        "$" not in expression
+                    ), f"{where}: unresolved variable in {expression}"
+                    base_url = (
+                        "http://prometheus:9090/api/v1/query?query="
+                        if kind == "prometheus"
+                        else "http://loki:3100/loki/api/v1/query_range?limit=1&query="
+                    )
+                    try:
+                        answer = json.loads(
+                            fetch(base_url + quote(expression, safe=""))
+                        )
+                    except RuntimeError as error:
+                        raise AssertionError(
+                            f"{where}: rejected: {expression}\n{error}"
+                        ) from error
+                    assert answer["status"] == "success", (where, answer)
+                    checked += 1
+            assert checked >= 10, checked
+            print(
+                f"PASS: all {checked} dashboard expressions are accepted by Loki and Prometheus",
+                flush=True,
+            )
+
+            ports = run(
+                docker, "ps", "--filter", f"name={prefix}", "--format", "{{.Ports}}"
+            ).stdout
+            assert "->" not in ports, f"the bundle published a host port: {ports!r}"
+            print("PASS: nothing is published on the host", flush=True)
+        except Exception:
+            for name in (
+                "alloy",
+                "loki",
+                "grafana",
+                "prometheus",
+                "docker-socket-collector",
+            ):
+                logs = run(
+                    docker, "logs", "--tail", "40", prefix + "-" + name, check=False
+                )
+                print(
+                    f"--- {name}\n{logs.stdout[-3000:]}{logs.stderr[-3000:]}",
+                    flush=True,
+                )
+            raise
+        finally:
+            run(docker, "rm", "--force", workload, check=False)
+            run(
+                *environment,
+                docker,
+                "compose",
+                "--file",
+                str(collector),
+                "down",
+                "--volumes",
+                check=False,
+                timeout=180,
+            )
+            run(
+                *environment,
+                docker,
+                "compose",
+                "--file",
+                str(backend),
+                "down",
+                "--volumes",
+                check=False,
+                timeout=180,
+            )
+            run(docker, "network", "rm", network, check=False)
+            # containers wrote as their own users
+            run(
+                docker,
+                "run",
+                "--rm",
+                "--volume",
+                f"{state}:/state",
+                "alpine:3.20",
+                "sh",
+                "-c",
+                "rm -rf /state/*",
+                check=False,
+            )
+
+
+if __name__ == "__main__":
+    main()

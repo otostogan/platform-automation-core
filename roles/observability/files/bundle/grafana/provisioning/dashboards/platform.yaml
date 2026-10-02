@@ -1,0 +1,13 @@
+apiVersion: 1
+
+# Dashboards are files in the collection. What is clicked together in the UI
+# does not survive convergence, on purpose.
+providers:
+    - name: platform
+      folder: Platform
+      type: file
+      disableDeletion: true
+      allowUiUpdates: false
+      updateIntervalSeconds: 60
+      options:
+          path: /etc/grafana/dashboards

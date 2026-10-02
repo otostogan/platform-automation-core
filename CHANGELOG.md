@@ -7,10 +7,26 @@ release.
 
 ## [Unreleased]
 
+- Add the `observability` role, off by default (`observability_enabled`).
+  It installs two halves that can later live on different machines: a
+  collector (Alloy behind a read-only Docker socket proxy) and a backend
+  (Loki, Prometheus, Grafana). The collector writes by URL from the
+  inventory. Logs and metrics carry the platform's own labels — host,
+  project, environment, service. Per-container figures and the platform's
+  state (serving release, newest dump, proven restore, domains) are written
+  by a new host module, `metrics_export`, from a 30-second timer into a text
+  file the collector reads, so the collector never needs the container
+  runtime's socket. Nothing is published on the host: Grafana is reached
+  through the console's «Grafana: open through a tunnel». One provisioned
+  dashboard, «Application», serves every application. Retention and memory
+  limits are inventory variables. A real-Docker test in CI starts the stack
+  from the role's files and proves logs, metrics, provisioning and every
+  dashboard expression.
+
 - The proxy's JSON access log now names the virtual host. nginx-proxy's
   built-in JSON format has no such field, so requests of different
   applications on one host could not be told apart; the format keeps every
-  field it had and adds `host` and `method`. The console's «Logs → nginx»
+  field it had and adds `vhost` and `method`. The console's «Logs → nginx»
   entry filters on that field — it matched nothing before, because it
   expected the plain-text format the proxy was never configured to write.
   Takes effect on a host after convergence restarts the proxy.

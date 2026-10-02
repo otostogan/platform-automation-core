@@ -172,9 +172,9 @@ services:
             LOG_JSON: "true"
             # nginx-proxy's own JSON format carries no field for the virtual
             # host, so one host's requests could not be told from another's.
-            # Same fields, plus host and method. "$$" is Compose's escape.
+            # Same fields, plus vhost and method ("host" is the machine's label). "$$" is Compose's escape.
             LOG_FORMAT: >-
-                {"time_local":"$$time_iso8601","host":"$$host","client_ip":"$$http_x_forwarded_for","remote_addr":"$$remote_addr","method":"$$request_method","request":"$$request","status":"$$status","body_bytes_sent":"$$body_bytes_sent","request_time":"$$request_time","upstream_response_time":"$$upstream_response_time","upstream_addr":"$$upstream_addr","http_referrer":"$$http_referer","http_user_agent":"$$http_user_agent","request_id":"$$request_id"}
+                {"time_local":"$$time_iso8601","vhost":"$$host","client_ip":"$$http_x_forwarded_for","remote_addr":"$$remote_addr","method":"$$request_method","request":"$$request","status":"$$status","body_bytes_sent":"$$body_bytes_sent","request_time":"$$request_time","upstream_response_time":"$$upstream_response_time","upstream_addr":"$$upstream_addr","http_referrer":"$$http_referer","http_user_agent":"$$http_user_agent","request_id":"$$request_id"}
             SSL_POLICY: Mozilla-Intermediate
             HSTS: max-age=31536000; includeSubDomains
             ENABLE_HTTP2: "true"

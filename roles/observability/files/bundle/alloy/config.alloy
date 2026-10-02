@@ -1,0 +1,111 @@
+// Platform collector. Logs and metrics of every container on this host, plus
+// the host itself, labelled the way the platform names things:
+//   host · project · environment · service
+// The application's Compose project is "<project>-<environment>" and its
+// database is "platform-db-<project>-<environment>"; both map to the same
+// project and environment.
+
+// ------------------------------------------------------------------ logs
+
+discovery.docker "containers" {
+	host             = sys.env("DOCKER_API")
+	refresh_interval = "15s"
+}
+
+discovery.relabel "containers" {
+	targets = discovery.docker.containers.targets
+
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*)"
+		target_label  = "container"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "service"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+		regex         = "(.+)-(lab|staging|production)"
+		target_label  = "project"
+		replacement   = "$1"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+		regex         = "(.+)-(lab|staging|production)"
+		target_label  = "environment"
+		replacement   = "$2"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+		regex         = "platform-db-(.+)-(lab|staging|production)"
+		target_label  = "project"
+		replacement   = "$1"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+		regex         = "platform-(proxy|observability|observability-collector)"
+		target_label  = "project"
+		replacement   = "platform"
+	}
+}
+
+loki.source.docker "containers" {
+	host       = sys.env("DOCKER_API")
+	targets    = discovery.relabel.containers.output
+	labels     = {host = sys.env("PLATFORM_HOST")}
+	forward_to = [loki.process.recent.receiver]
+}
+
+// A container that has run for weeks hands over its whole history the first
+// time the collector meets it. Storage refuses week-old lines; drop them here
+// rather than let one old batch be rejected with the fresh lines in it.
+loki.process "recent" {
+	forward_to = [loki.write.backend.receiver]
+
+	stage.drop {
+		older_than          = "6h"
+		drop_counter_reason = "older_than_six_hours"
+	}
+}
+
+loki.write "backend" {
+	endpoint {
+		url = sys.env("LOKI_PUSH_URL")
+	}
+}
+
+// --------------------------------------------------------------- metrics
+// Host figures come from /proc and /sys. Per-container and per-release
+// figures come from the platform itself: it writes them to a text file every
+// thirty seconds, already labelled, so the collector never needs the container
+// runtime's own socket.
+
+prometheus.exporter.unix "host" {
+	procfs_path = "/host/proc"
+	sysfs_path  = "/host/sys"
+	rootfs_path = "/host/root"
+
+	textfile {
+		directory = "/host/textfile"
+	}
+}
+
+prometheus.scrape "host" {
+	targets         = prometheus.exporter.unix.host.targets
+	scrape_interval = "30s"
+	forward_to      = [prometheus.remote_write.backend.receiver]
+}
+
+prometheus.remote_write "backend" {
+	external_labels = {host = sys.env("PLATFORM_HOST")}
+
+	endpoint {
+		url = sys.env("PROMETHEUS_WRITE_URL")
+	}
+}

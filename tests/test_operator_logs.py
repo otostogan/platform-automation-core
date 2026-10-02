@@ -49,9 +49,9 @@ class LogsTest(unittest.TestCase):
         remote = follow_nginx_for(["lab.my-app.example.com", "mail.my-app.example.com"])
         self.assertIn("grep --line-buffered -E", remote)
         pattern = re.search(r"-E '(.*)'$", remote).group(1)
-        mine = '{"time_local":"2026-10-02T10:00:00+00:00","host":"lab.my-app.example.com","status":"200"}'
-        other = '{"time_local":"2026-10-02T10:00:00+00:00","host":"other.example.com","status":"200"}'
-        lookalike = '{"host":"labXmy-app.example.com","status":"200"}'
+        mine = '{"time_local":"2026-10-02T10:00:00+00:00","vhost":"lab.my-app.example.com","status":"200"}'
+        other = '{"time_local":"2026-10-02T10:00:00+00:00","vhost":"other.example.com","status":"200"}'
+        lookalike = '{"vhost":"labXmy-app.example.com","status":"200"}'
         error = '2026/10/02 10:00:00 [error] 12#12: *4 upstream timed out, server: mail.my-app.example.com, request: "GET /"'
         self.assertRegex(mine, pattern)
         self.assertRegex(error, pattern)

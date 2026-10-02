@@ -1,0 +1,128 @@
+name: platform-observability
+
+# Storage and the interface: Loki, Prometheus, Grafana. Nothing is published
+# on the host; operators reach Grafana through an SSH tunnel over the tailnet.
+# Collectors write here by URL, so this half can live on another machine.
+
+x-images:
+    loki: &loki_image >-
+        grafana/loki:3.7.8@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
+    prometheus: &prometheus_image >-
+        prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    grafana: &grafana_image >-
+        grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+
+x-logging: &logging
+    driver: json-file
+    options:
+        max-size: 10m
+        max-file: "3"
+
+services:
+    loki:
+        image: *loki_image
+        container_name: platform-loki
+        restart: unless-stopped
+        read_only: true
+        user: "10001:10001"
+        security_opt:
+            - no-new-privileges:true
+        command:
+            - -config.file=/etc/loki/config.yaml
+            - -config.expand-env=true
+        environment:
+            LOKI_RETENTION: ${OBSERVABILITY_LOGS_RETENTION:-336h}
+        networks:
+            observability:
+                aliases:
+                    - loki
+        expose:
+            - "3100"
+        volumes:
+            - ./loki/config.yaml:/etc/loki/config.yaml:ro
+            - ${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}/loki:/loki
+        tmpfs:
+            - /tmp
+        mem_limit: ${OBSERVABILITY_LOKI_MEMORY:-2g}
+        # The image is distroless: no shell and no client to probe with. The
+        # collector retries its writes, and Grafana tolerates a late source.
+        logging: *logging
+
+    prometheus:
+        image: *prometheus_image
+        container_name: platform-prometheus
+        restart: unless-stopped
+        read_only: true
+        user: "65534:65534"
+        security_opt:
+            - no-new-privileges:true
+        command:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=${OBSERVABILITY_METRICS_RETENTION:-30d}
+            - --web.enable-remote-write-receiver
+            - --log.level=warn
+        networks:
+            observability:
+                aliases:
+                    - prometheus
+        expose:
+            - "9090"
+        volumes:
+            - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+            - ${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}/prometheus:/prometheus
+        mem_limit: ${OBSERVABILITY_PROMETHEUS_MEMORY:-1g}
+        healthcheck:
+            test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9090/-/ready"]
+            interval: 15s
+            timeout: 5s
+            retries: 20
+            start_period: 10s
+        logging: *logging
+
+    grafana:
+        image: *grafana_image
+        container_name: platform-grafana
+        restart: unless-stopped
+        user: "472:472"
+        security_opt:
+            - no-new-privileges:true
+        depends_on:
+            loki:
+                condition: service_started
+            prometheus:
+                condition: service_healthy
+        environment:
+            GF_SECURITY_ADMIN_USER: admin
+            GF_SECURITY_ADMIN_PASSWORD: ${OBSERVABILITY_GRAFANA_ADMIN_PASSWORD:?}
+            GF_USERS_ALLOW_SIGN_UP: "false"
+            GF_AUTH_ANONYMOUS_ENABLED: "false"
+            GF_ANALYTICS_REPORTING_ENABLED: "false"
+            GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+            GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+            GF_NEWS_NEWS_FEED_ENABLED: "false"
+            GF_LOG_LEVEL: warn
+            GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/application.json
+        networks:
+            observability:
+                aliases:
+                    - grafana
+        expose:
+            - "3000"
+        volumes:
+            - ./grafana/provisioning:/etc/grafana/provisioning:ro
+            - ./grafana/dashboards:/etc/grafana/dashboards:ro
+            - ${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}/grafana:/var/lib/grafana
+        mem_limit: ${OBSERVABILITY_GRAFANA_MEMORY:-768m}
+        healthcheck:
+            test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/api/health"]
+            interval: 15s
+            timeout: 5s
+            retries: 20
+            start_period: 20s
+        logging: *logging
+
+networks:
+    observability:
+        name: platform-observability
+        external: true

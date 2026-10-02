@@ -1,0 +1,70 @@
+---
+# One switch per host. The two halves can be split across machines later:
+# the collector stays on every host with applications, the backend moves, and
+# only the two URLs below change.
+observability_enabled: false
+observability_collector_enabled: "{{ observability_enabled }}"
+observability_backend_enabled: "{{ observability_enabled }}"
+
+observability_bundle_source: "{{ role_path }}/files/bundle"
+observability_install_directory: /opt/platform/observability
+observability_state_directory: /var/lib/platform/observability
+observability_environment_file: /etc/platform/observability.env
+observability_network: platform-observability
+
+# How this host is named on every log line and metric.
+observability_host_label: "{{ inventory_hostname }}"
+
+# Where the collector writes. The defaults address the backend on this host.
+observability_loki_push_url: http://loki:3100/loki/api/v1/push
+observability_prometheus_write_url: http://prometheus:9090/api/v1/write
+
+# Logs can carry personal data; keep them only as long as they are useful.
+observability_logs_retention: 336h
+observability_metrics_retention: 30d
+
+# Controller-local file holding the Grafana admin password; set it in the
+# ignored local-secrets.yml. Only the backend half needs it.
+observability_grafana_admin_password_source: ""
+
+observability_loki_memory: 2g
+observability_prometheus_memory: 1g
+observability_grafana_memory: 768m
+observability_alloy_memory: 512m
+
+observability_metrics_interval: 30s
+
+observability_bundle_directories:
+    - alloy
+    - loki
+    - prometheus
+    - socket-proxy
+    - grafana
+    - grafana/provisioning
+    - grafana/provisioning/datasources
+    - grafana/provisioning/dashboards
+    - grafana/dashboards
+
+observability_bundle_files:
+    - backend.yml
+    - collector.yml
+    - alloy/config.alloy
+    - loki/config.yaml
+    - prometheus/prometheus.yml
+    - socket-proxy/collector.cfg
+    - grafana/provisioning/datasources/platform.yaml
+    - grafana/provisioning/dashboards/platform.yaml
+    - grafana/dashboards/application.json
+
+# Each process writes as its own user; the directories belong to them.
+observability_state_directories:
+    - name: loki
+      owner: "10001"
+    - name: prometheus
+      owner: "65534"
+    - name: grafana
+      owner: "472"
+    - name: alloy
+      owner: "0"
+    - name: textfile
+      owner: "0"

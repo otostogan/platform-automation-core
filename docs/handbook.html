@@ -1236,6 +1236,7 @@
 					<a href="#/why">Зачем это всё</a>
 					<a href="#/idea">Главная мысль</a>
 					<a href="#/ref-layout">Раскладка репозиториев</a>
+					<a href="#/ref-observability">Наблюдаемость</a>
 					<a href="#/ref-glossary">Словарь</a>
 					<a href="#/ref-open" id="nav-open-2">Непроверенное</a>
 					<h4>Развернуть</h4>
@@ -1261,6 +1262,7 @@
 					<a href="#/why">Зачем это всё</a>
 					<a href="#/idea">Главная мысль</a>
 					<a href="#/ref-layout">Раскладка репозиториев</a>
+					<a href="#/ref-observability">Наблюдаемость</a>
 					<a href="#/ref-glossary">Словарь</a>
 					<a href="#/ref-keys">Ключи и доверие</a>
 					<a href="#/ref-network">Частная сеть и ACL</a>
@@ -10753,6 +10755,129 @@ inventory/**/*.decrypted.yml</code></pre>
 </section>
 
 				<!-- ============================================================ -->
+<section class="page" id="ref-observability">
+  <h1>Наблюдаемость</h1>
+  <p class="lede">Логи и метрики всего, что живёт на сервере, в одном месте и под
+  теми именами, которыми платформа называет вещи: сервер, проект, окружение, сервис.
+  Приложение для этого не делает ничего.</p>
+
+  <h2>Из чего состоит</h2>
+  <p>Две половины, и это разделение намеренное: первая обязана стоять на каждом сервере
+  с приложениями, вторая может жить где угодно.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Половина</th><th>Что в ней</th><th>Что делает</th></tr></thead>
+    <tbody>
+      <tr><td>Сборщик</td><td>Alloy и прокси сокета Docker только на чтение</td><td>Читает вывод контейнеров и метрики сервера, отправляет дальше по адресу из инвентаря</td></tr>
+      <tr><td>Хранилище</td><td>Loki, Prometheus, Grafana</td><td>Хранит логи и метрики, показывает дашборды</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Метрики контейнеров и состояние платформы — что выкачено, когда снят последний
+  дамп, доказана ли восстановимость, какие домены обслуживает релиз — пишет сама
+  платформа: таймер раз в 30 секунд кладёт их в текстовый файл, сборщик его читает.
+  Так сборщику не нужен сокет контейнерной среды, а это права root на сервере.</p>
+
+  <h2>Включить</h2>
+  <p>По умолчанию выключено. В инвентаре хоста или группы:</p>
+<pre><code>observability_enabled: true</code></pre>
+  <p>И путь к паролю администратора Grafana — в игнорируемом
+  <code>local-secrets.yml</code> этого хоста, рядом с путём к age-ключу:</p>
+<pre><code>umask 077
+openssl rand -base64 24 &gt; {{keydir}}/{{host}}-grafana.password</code></pre>
+<pre><code># inventory/host_vars/{{host}}/local-secrets.yml
+observability_grafana_admin_password_source: {{keydir}}/{{host}}-grafana.password</code></pre>
+  <p>Затем конвергенция — <code>platform update</code> в репозитории инфраструктуры или
+  шаги 3–4 <a href="#/flow-core-update">Обновления ядра</a>.</p>
+  <div class="expect">
+    <span class="label">Как понять, что получилось</span>
+    <p><code>systemctl is-active platform-observability platform-observability-collector platform-metrics.timer</code>
+    отвечает <code>active</code> трижды. <code>docker ps</code> показывает
+    <code>platform-loki</code>, <code>platform-prometheus</code>, <code>platform-grafana</code>,
+    <code>platform-alloy</code> — и ни у одного нет опубликованного порта.</p>
+  </div>
+
+  <h2>Открыть Grafana</h2>
+  <p>Наружу не опубликовано ничего: открыты по-прежнему только 80 и 443, и проверка
+  готовности отвергнет любой другой порт. Войти можно только через SSH оператора по
+  частной сети. Из консоли: <code>platform</code> в репозитории инфраструктуры → хост →
+  <strong>Grafana: open through a tunnel</strong>. Консоль поднимет туннель, напечатает
+  <code>http://127.0.0.1:13000</code> и закроет его по Enter. Пользователь
+  <code>admin</code>, пароль — содержимое файла из шага выше.</p>
+  <p>Руками то же самое:</p>
+<pre><code>ssh ops@{{tailnet}} "sudo -n docker inspect --format '{{ range .NetworkSettings.Networks }}{{ .IPAddress }}{{ end }}' platform-grafana"
+ssh -N -L 13000:&lt;адрес&gt;:3000 ops@{{tailnet}}</code></pre>
+
+  <h2>Что на дашборде</h2>
+  <p>Дашборд <strong>Application</strong> один на все приложения. Наверху проект,
+  окружение, домены и сервисы. Запросы в секунду, доля ответов 5xx и время ответа
+  берутся из лога прокси; процессор, память и перезапуски контейнеров, текущий релиз,
+  возраст последнего дампа и доказанность восстановления — из метрик платформы;
+  внизу логи с поиском. Выкатки отмечены на графиках.</p>
+  <p>Дашборды лежат файлами в коллекции. Накликанное руками в Grafana не переживает
+  конвергенцию, и это намеренно: иначе появляется состояние, которое знает один
+  человек.</p>
+
+  <h2>Метки</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Метка</th><th>Откуда</th></tr></thead>
+    <tbody>
+      <tr><td><code>host</code></td><td>имя хоста в инвентаре</td></tr>
+      <tr><td><code>project</code>, <code>environment</code></td><td>имя compose-проекта: <code>&lt;проект&gt;-&lt;окружение&gt;</code>, у базы <code>platform-db-&lt;проект&gt;-&lt;окружение&gt;</code></td></tr>
+      <tr><td><code>service</code></td><td>имя сервиса в compose; у базы — <code>postgres</code></td></tr>
+      <tr><td><code>container</code></td><td>имя контейнера</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Домен в логе прокси — поле <code>vhost</code> в каждой строке доступа, рядом с
+  <code>status</code>, <code>request_time</code> и <code>request_id</code>.</p>
+
+  <h2>Что от приложения</h2>
+  <p>Сейчас — одно, и оно необязательное: писать логи в stdout, по одной JSON-строке на
+  событие, с полями <code>level</code> и <code>msg</code>. Строка не в JSON тоже будет
+  собрана, но без уровня и полей. Секреты, токены и содержимое медицинских записей в логи
+  не пишутся.</p>
+  <div class="note">
+    <span class="label">Ещё не реализовано</span>
+    <p>Свои метрики приложения через блок <code>service.metrics</code> в манифесте,
+    трейсы через <code>PLATFORM_OTLP_ENDPOINT</code>, свои дашборды в пакете выкатки и
+    алерты. Имена зарезервированы, кода за ними пока нет.</p>
+  </div>
+
+  <h2>Сколько хранится и сколько весит</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Переменная</th><th>По умолчанию</th><th>Что задаёт</th></tr></thead>
+    <tbody>
+      <tr><td><code>observability_logs_retention</code></td><td><code>336h</code></td><td>Срок хранения логов. Короткий намеренно: в логах бывают персональные данные</td></tr>
+      <tr><td><code>observability_metrics_retention</code></td><td><code>30d</code></td><td>Срок хранения метрик</td></tr>
+      <tr><td><code>observability_loki_memory</code></td><td><code>2g</code></td><td>Предел памяти Loki — самой тяжёлой части</td></tr>
+      <tr><td><code>observability_prometheus_memory</code></td><td><code>1g</code></td><td>Предел памяти Prometheus</td></tr>
+      <tr><td><code>observability_grafana_memory</code></td><td><code>768m</code></td><td>Предел памяти Grafana</td></tr>
+      <tr><td><code>observability_alloy_memory</code></td><td><code>512m</code></td><td>Предел памяти сборщика</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Данные лежат в <code>/var/lib/platform/observability</code> и в offsite-бэкап не
+  идут. Строки старше шести часов сборщик при первом знакомстве с контейнером
+  не забирает.</p>
+
+  <h2>Перенести хранилище на другой сервер</h2>
+  <p>Сборщик не знает, где хранилище: он пишет по двум адресам из инвентаря.</p>
+<pre><code>observability_backend_enabled: false
+observability_loki_push_url: http://&lt;сервер-наблюдаемости&gt;:3100/loki/api/v1/push
+observability_prometheus_write_url: http://&lt;сервер-наблюдаемости&gt;:9090/api/v1/write</code></pre>
+  <div class="note">
+    <span class="label">Готово наполовину</span>
+    <p>Сторона сборщика готова и проверена: адреса — параметры. Сторона хранилища на
+    отдельной машине ещё не сделана: ему нужно слушать в частной сети, а политике
+    тейлнета — правило, пускающее серверы приложений на эти два порта. Сегодня
+    хранилище ничего не публикует вообще.</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
 				<section class="page" id="ref-open">
 					<h1>Непроверенное</h1>
 					<p class="lede">

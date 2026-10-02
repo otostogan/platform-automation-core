@@ -377,6 +377,7 @@ def host_actions(context: Context, host, prompts=None) -> list:
         ]
     if prompts is not None:
         actions.append(logs_action(context, address, user, identity, prompts))
+        actions.append(grafana_action(context, host, prompts))
     actions += [
         Action(
             "Backups: take one now",
@@ -698,6 +699,119 @@ def rollback_action(context: Context, scope, prompts) -> Action:
         "platform rollback … (target chosen from the ledger)",
         run,
         "#/flow-rollback",
+        remote=True,
+    )
+
+
+def grafana_action(context: Context, host, prompts) -> Action:
+    """Grafana publishes nothing on the host; the operator's SSH carries it for a while."""
+    import select
+    import shlex
+    import socket
+
+    from .doctor import host_secret_path
+    from .logs import ssh_command
+
+    address, user, identity = host_connection(host)
+    LOCAL_PORT = 13000
+    inspect = shlex.join(
+        [
+            "sudo",
+            "-n",
+            "docker",
+            "inspect",
+            "--format",
+            "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+            "platform-grafana",
+        ]
+    )
+
+    def password_hint() -> str:
+        key = "observability_grafana_admin_password_source"
+        path = host_secret_path(context.root, host, key)
+        if path is None:
+            shared = load_yaml(
+                context.root / "inventory/group_vars/all/local-secrets.yml"
+            )
+            value = shared.get(key) if isinstance(shared, dict) else None
+            path = Path(str(value)).expanduser() if value else None
+        return (
+            f"the content of {path}"
+            if path
+            else "the file named by observability_grafana_admin_password_source"
+        )
+
+    def run() -> int:
+        probe = socket.socket()
+        try:
+            probe.bind(("127.0.0.1", LOCAL_PORT))
+        except OSError:
+            print(
+                f"{RED}127.0.0.1:{LOCAL_PORT} is busy — another tunnel is still open{RESET}"
+            )
+            return 1
+        finally:
+            probe.close()
+        print(f"{DIM}→ ssh {user}@{address} '{inspect}'{RESET}")
+        found = subprocess.run(
+            ssh_command(address, user, inspect, identity),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=30,
+        )
+        container = found.stdout.decode("utf-8", "replace").strip()
+        if found.returncode != 0 or not container:
+            print(f"{RED}Grafana is not running on {host.name}{RESET}")
+            print(
+                f"{DIM}  set observability_enabled: true for the host and converge —"
+                f" handbook: {HANDBOOK}#/ref-observability{RESET}"
+            )
+            return 1
+        command = ["ssh", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes"]
+        if identity is not None:
+            command += ["-i", str(identity)]
+        command += [
+            "-L",
+            f"127.0.0.1:{LOCAL_PORT}:{container}:3000",
+            f"{user}@{address}",
+        ]
+        tunnel = subprocess.Popen(command, stdin=subprocess.DEVNULL)
+        try:
+            print()
+            print(f"{GREEN}Grafana is at http://127.0.0.1:{LOCAL_PORT}{RESET}")
+            print("  user      admin")
+            print(f"  password  {password_hint()}")
+            print(
+                f"{DIM}  nothing is published on the host; this tunnel is the only way in{RESET}"
+            )
+            print()
+            print("Press Enter to close the tunnel.")
+            while tunnel.poll() is None:
+                ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+                if ready:
+                    sys.stdin.readline()
+                    break
+            else:
+                print(f"{RED}the ssh tunnel exited (code {tunnel.returncode}){RESET}")
+        except KeyboardInterrupt:
+            print()
+        finally:
+            if tunnel.poll() is None:
+                tunnel.terminate()
+                try:
+                    tunnel.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    tunnel.kill()
+        print(f"{GREEN}tunnel closed{RESET}")
+        return 0
+
+    return Action(
+        "Grafana: open through a tunnel",
+        f"ssh -N -L {LOCAL_PORT}:<grafana>:3000 {user}@{address}",
+        run,
+        "#/ref-observability",
         remote=True,
     )
 

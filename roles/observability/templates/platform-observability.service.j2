@@ -1,0 +1,21 @@
+[Unit]
+Description=Platform observability storage and Grafana
+Requires=docker.service
+After=docker.service network-online.target platform-docker-firewall.service 
+Wants=network-online.target
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ observability_install_directory }}
+EnvironmentFile={{ observability_environment_file }}
+ExecStartPre=/usr/bin/docker compose --env-file {{ observability_environment_file }} --file {{ observability_install_directory }}/backend.yml config --quiet
+ExecStart=/usr/bin/docker compose --env-file {{ observability_environment_file }} --file {{ observability_install_directory }}/backend.yml up --detach --remove-orphans --wait --wait-timeout 180
+ExecReload=/usr/bin/docker compose --env-file {{ observability_environment_file }} --file {{ observability_install_directory }}/backend.yml up --detach --remove-orphans --wait --wait-timeout 180
+ExecStop=/usr/bin/docker compose --env-file {{ observability_environment_file }} --file {{ observability_install_directory }}/backend.yml stop --timeout 30
+TimeoutStartSec=240
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
