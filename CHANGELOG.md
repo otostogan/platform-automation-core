@@ -7,6 +7,13 @@ release.
 
 ## [Unreleased]
 
+- Console, in an application's menu: `Database: restore from a dump` and
+  `Database: rotate the password`. Restore keeps the handbook's order and
+  does not let it be shortened: pick a dump by stamp, prove that very dump
+  if it is not proven yet, take a dump of the current state (optional),
+  type `project/environment`, restore. A dump taken on another release is
+  named before the confirmation. Rotation asks once, defaulting to no.
+
 ## [0.22.1] - 2026-10-02
 
 - Fix a race in `verify-backup`: the readiness probe asked over the Unix

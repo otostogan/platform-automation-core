@@ -1478,6 +1478,186 @@ def retire_action(context: Context, scope, prompts, purge: bool = False) -> Acti
     return Action(label, f"platform {verb} …", run, "#/flow-retire", remote=True)
 
 
+def restore_action(context: Context, scope, prompts, remote=None) -> Action:
+    """Replace the live database with a dump — after the dump is proven to restore.
+
+    The handbook's order, enforced rather than recommended: choose a dump by
+    name, prove that very dump, keep a copy of what is about to be replaced,
+    type the application's name, restore.
+    """
+    remote = remote or run_platform
+    ident = ["--project", scope.project, "--environment", scope.environment]
+    target_host = context.target_host
+    name = f"{scope.project}/{scope.environment}"
+
+    def call(arguments, timeout=None):
+        shown = f"ssh ops@{target_host} 'sudo -n platform {' '.join(arguments)} --json'"
+        print(f"{DIM}→ {shown}{RESET}")
+        patience = {} if timeout is None else {"timeout": timeout}
+        return remote(target_host, "ops", arguments, **patience)
+
+    def run() -> int:
+        questionary, style = prompts
+        if not target_host:
+            print(f"{RED}deploy.yml names no target_host{RESET}")
+            return 1
+
+        listing = call(["backups", *ident])
+        if not listing.ok:
+            return report_failure(listing.error, context.core_pin)
+        # Newest first, whatever order the host lists them in: a stamp
+        # begins with its UTC time, so it sorts as text.
+        entries = sorted(
+            listing.document.get("backups") or [],
+            key=lambda entry: str(entry.get("stamp", "")),
+            reverse=True,
+        )
+        if not entries:
+            print(f"No dump of {name} on the host; there is nothing to restore from.")
+            print(f"{DIM}  offsite copies: handbook {HANDBOOK}#/flow-database{RESET}")
+            return 1
+        status = call(["status", *ident])
+        current = (
+            (status.document.get("current") or {}).get("release_tag")
+            if status.ok
+            else None
+        )
+
+        def describe(entry):
+            stamp = str(entry.get("stamp", ""))
+            proven = "proven" if entry.get("verified") else "not proven"
+            return (
+                f"{stamp.split('-', 1)[0]}  {entry.get('reason') or '-':<14}"
+                f" {entry.get('release_tag') or '-':<16} {entry.get('bytes')} B  {proven}"
+            )
+
+        chosen = choose(
+            questionary,
+            style,
+            "Dump to restore",
+            [*entries, BACK],
+            lambda e: ("← Back" if e is BACK else describe(e)),
+        )
+        if chosen is BACK:
+            print("cancelled — nothing changed on the host")
+            return 130
+        stamp = chosen["stamp"]
+
+        print()
+        print(f"{BOLD}Restore {name} on {target_host} from {stamp}:{RESET}")
+        print("  the live database is replaced by the dump. Everything written after")
+        print("  the dump was taken is lost. The application is not restarted.")
+        if current and chosen.get("release_tag") != current:
+            print(
+                f"  {RED}this dump was taken on {chosen.get('release_tag')};"
+                f" {current} is deployed now.{RESET}"
+            )
+            print(
+                "  The schema is inside the dump: a newer application may fail on the"
+                " first query for a column the dump lacks."
+            )
+
+        if not chosen.get("verified"):
+            print()
+            print("This dump has not been proven to restore; proving it first.")
+            proof = call(
+                ["verify-backup", *ident, "--from", stamp], BACKUP_TIMEOUT_SECONDS
+            )
+            if not proof.ok:
+                print(
+                    f"{RED}the dump does not restore; the live database was not touched{RESET}"
+                )
+                return report_failure(proof.error, context.core_pin)
+            print(render_verification(proof.document))
+
+        print()
+        if questionary.confirm(
+            "Take a dump of the current state first? It is the only way back.",
+            default=True,
+            style=style,
+        ).ask():
+            safety = call(["backup", *ident], BACKUP_TIMEOUT_SECONDS)
+            if not safety.ok:
+                print(f"{RED}no safety dump; the live database was not touched{RESET}")
+                return report_failure(safety.error, context.core_pin)
+            print(render_backup_result(safety.document))
+
+        print()
+        typed = questionary.text(f"Type {name} to restore", style=style).ask()
+        if typed != name:
+            print("cancelled — nothing changed in the live database")
+            return 130
+
+        result = call(
+            ["restore", *ident, "--from", stamp, "--confirm-destructive"],
+            BACKUP_TIMEOUT_SECONDS,
+        )
+        if not result.ok:
+            return report_failure(result.error, context.core_pin)
+        document = result.document
+        print(f"{GREEN}restored{RESET}  {document.get('stamp')}")
+        print(f"  taken on release  {document.get('release_tag')}")
+        if document.get("revision_gap"):
+            print(f"  {RED}{document['revision_gap']}{RESET}")
+        print("Next: Status on the host, then open the application and check it.")
+        return 0
+
+    return Action(
+        "Database: restore from a dump (replaces live data)",
+        f"platform restore {' '.join(ident)} --from <stamp> --confirm-destructive",
+        run,
+        "#/ref-cli",
+        remote=True,
+    )
+
+
+def rotate_action(context: Context, scope, prompts, remote=None) -> Action:
+    remote = remote or run_platform
+    ident = ["--project", scope.project, "--environment", scope.environment]
+    target_host = context.target_host
+    name = f"{scope.project}/{scope.environment}"
+    arguments = ["rotate-database-password", *ident, "--confirm-disruptive"]
+
+    def run() -> int:
+        questionary, style = prompts
+        if not target_host:
+            print(f"{RED}deploy.yml names no target_host{RESET}")
+            return 1
+        print()
+        print(f"{BOLD}Rotate the database password of {name} on {target_host}:{RESET}")
+        print("  a new password is set in the database, stored encrypted on the host,")
+        print(
+            "  and the application is restarted to pick it up — a short interruption."
+        )
+        print(
+            "  Open database tunnels keep working; their roles have their own passwords."
+        )
+        if not questionary.confirm(
+            "Rotate and restart now?", default=False, style=style
+        ).ask():
+            print("cancelled — nothing changed on the host")
+            return 130
+        shown = f"ssh ops@{target_host} 'sudo -n platform {' '.join(arguments)} --json'"
+        print(f"{DIM}→ {shown}{RESET}")
+        result = remote(target_host, "ops", arguments, timeout=900)
+        if not result.ok:
+            return report_failure(result.error, context.core_pin)
+        document = result.document
+        print(f"{GREEN}rotated{RESET}  {document.get('rotated_at')}")
+        print(f"  encrypted to {document.get('recipients')} recipient(s)")
+        print("  application restarted with the new credential")
+        print("Next: Status on the host.")
+        return 0
+
+    return Action(
+        "Database: rotate the password (restarts the application)",
+        f"platform {' '.join(arguments)}",
+        run,
+        "#/ref-cli",
+        remote=True,
+    )
+
+
 def app_actions(context: Context, scope, prompts=None) -> list:
     target = context.target_host or "<target host>"
     ident = ["--project", scope.project, "--environment", scope.environment]
@@ -1541,6 +1721,8 @@ def app_actions(context: Context, scope, prompts=None) -> list:
         )
         actions += database_actions(context, scope, prompts)
         actions += [
+            restore_action(context, scope, prompts),
+            rotate_action(context, scope, prompts),
             retire_action(context, scope, prompts),
             retire_action(context, scope, prompts, purge=True),
         ]
