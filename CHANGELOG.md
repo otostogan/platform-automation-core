@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-10-02
+
 - Fix a race in `verify-backup`: the readiness probe asked over the Unix
   socket, which answers while a fresh PostgreSQL container is still running
   its temporary initialisation server. The restore then met that server's
