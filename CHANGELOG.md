@@ -7,6 +7,14 @@ release.
 
 ## [Unreleased]
 
+- The proxy's JSON access log now names the virtual host. nginx-proxy's
+  built-in JSON format has no such field, so requests of different
+  applications on one host could not be told apart; the format keeps every
+  field it had and adds `host` and `method`. The console's «Logs → nginx»
+  entry filters on that field — it matched nothing before, because it
+  expected the plain-text format the proxy was never configured to write.
+  Takes effect on a host after convergence restarts the proxy.
+
 - The console's action menu is grouped: Deploy, Roll back, Status and Logs
   stay at the top level; «Database & backups», «Secrets & config» and
   «Retire or purge» open as sub-menus, each with its own ← Back.

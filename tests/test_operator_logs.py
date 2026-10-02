@@ -48,15 +48,15 @@ class LogsTest(unittest.TestCase):
     def test_the_proxy_log_is_narrowed_to_the_application_hosts(self) -> None:
         remote = follow_nginx_for(["lab.my-app.example.com", "mail.my-app.example.com"])
         self.assertIn("grep --line-buffered -E", remote)
-        self.assertIn("lab\\.my-app\\.example\\.com", remote)
         pattern = re.search(r"-E '(.*)'$", remote).group(1)
-        self.assertRegex(
-            'lab.my-app.example.com 203.0.113.9 - - [x] "GET / HTTP/2.0" 200', pattern
-        )
-        self.assertNotRegex(
-            'other.example.com 203.0.113.9 - - [x] "GET /" 200', pattern
-        )
-        self.assertNotRegex("labXmy-app.example.com 203.0.113.9", pattern)
+        mine = '{"time_local":"2026-10-02T10:00:00+00:00","host":"lab.my-app.example.com","status":"200"}'
+        other = '{"time_local":"2026-10-02T10:00:00+00:00","host":"other.example.com","status":"200"}'
+        lookalike = '{"host":"labXmy-app.example.com","status":"200"}'
+        error = '2026/10/02 10:00:00 [error] 12#12: *4 upstream timed out, server: mail.my-app.example.com, request: "GET /"'
+        self.assertRegex(mine, pattern)
+        self.assertRegex(error, pattern)
+        self.assertNotRegex(other, pattern)
+        self.assertNotRegex(lookalike, pattern)
         with self.assertRaises(LogsError):
             follow_nginx_for(["bad host; rm -rf /"])
 
