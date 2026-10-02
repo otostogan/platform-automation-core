@@ -7,6 +7,13 @@ release.
 
 ## [Unreleased]
 
+- Fix the metrics exporter rounding every value to six significant digits.
+  A Unix timestamp lost its last four digits — up to 2.7 hours — so
+  "Platform metrics stopped" fired for most of each such window while
+  metrics were arriving, and the age of the newest dump, of the proven
+  restore and of the deploy were wrong by the same amount. Present since
+  v0.20.0.
+
 ## [0.21.1] - 2026-10-02
 
 - Fix `platform_backup_restore_proven`: the exporter waited for the outcome

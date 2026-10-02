@@ -116,6 +116,33 @@ class MetricsExportTest(unittest.TestCase):
         self.assertIn('m{a="x\\"y\\\\z"} 1', samples.render())
 
 
+class ValuePrecisionTest(unittest.TestCase):
+    def test_a_timestamp_keeps_every_digit(self) -> None:
+        samples = Samples()
+        samples.add("t", "gauge", "h", {}, 1790943672.0)
+        samples.add("f", "gauge", "h", {"a": "b"}, 1790943672.25)
+        samples.add("p", "gauge", "h", {}, 3.1)
+        text = samples.render()
+
+        self.assertIn("t 1790943672\n", text)
+        self.assertIn('f{a="b"} 1790943672.25\n', text)
+        self.assertIn("p 3.1\n", text)
+        self.assertNotIn("e+", text)
+
+    def test_the_export_stamp_is_the_clock_not_a_rounding_of_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            none = Path(directory) / "none"
+            text = collect(
+                Path("/usr/bin/docker"),
+                none,
+                none,
+                none,
+                runner=runner,
+                now=1790943672.0,
+            )
+        self.assertIn("platform_metrics_export_timestamp_seconds 1790943672\n", text)
+
+
 class ReleaseSamplesTest(unittest.TestCase):
     def render(self, records, manifest) -> str:
         """Two scopes: ``good`` reads through ``records``, ``bad`` cannot be read."""
