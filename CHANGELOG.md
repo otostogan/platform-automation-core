@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-10-02
+
 - Fix `platform_backup_restore_proven`: the exporter waited for the outcome
   `passed` while `verify-backup` records `succeeded`, so the metric stayed 0
   after a proven restore, the dashboard said "not proven" and the
