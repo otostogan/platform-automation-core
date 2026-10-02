@@ -7,10 +7,18 @@ from types import SimpleNamespace
 from platform_automation.operator.console import restore_action, rotate_action
 from platform_automation.operator.remote import RemoteResult
 
+OLDEST = "20251231T000000Z-schedule"
 OLD = "20260101T000000Z-schedule"
 NEW = "20260102T000000Z-schedule"
 BACKUPS = {
     "backups": [
+        {
+            "stamp": OLDEST,
+            "reason": "schedule",
+            "release_tag": "lab-v1.1.0",
+            "bytes": 9,
+            "verified": True,
+        },
         {"stamp": OLD, "reason": "schedule", "release_tag": "lab-v1.0.0", "bytes": 10},
         {
             "stamp": NEW,
@@ -155,6 +163,66 @@ class RestoreFlowTest(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertNotIn("restore", host.verbs())
+
+    def test_the_oldest_dump_gets_no_safety_dump_that_could_prune_it(self) -> None:
+        host = Host()
+        code, output = self.run_restore(
+            [
+                ("select", lambda options: options[2]),  # the oldest
+                ("text", NAME),  # no question about a safety dump
+            ],
+            host,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertNotIn("backup", host.verbs())
+        self.assertIn("No dump of the current state will be taken", output)
+        restore = host.calls[-1]
+        self.assertEqual(restore[restore.index("--from") + 1], OLDEST)
+
+    def test_a_dump_beyond_the_manifests_limit_is_at_risk_too(self) -> None:
+        from platform_automation.operator.console import safety_dump_would_prune
+
+        entries = [{"stamp": name} for name in ("d", "c", "b", "a")]  # newest first
+        self.assertTrue(safety_dump_would_prune(entries, entries[3], None))
+        self.assertFalse(safety_dump_would_prune(entries, entries[2], None))
+        # three kept: one more dump leaves room for the two newest only
+        self.assertTrue(safety_dump_would_prune(entries, entries[2], 3))
+        self.assertFalse(safety_dump_would_prune(entries, entries[1], 3))
+        # one kept: the new dump would be the only survivor
+        self.assertTrue(safety_dump_would_prune(entries, entries[0], 1))
+        self.assertFalse(safety_dump_would_prune(entries, entries[0], 2))
+
+    def test_an_unreadable_current_release_stops_before_anything(self) -> None:
+        host = Host(failing={"status"})
+        code, output = self.run_restore([], host)
+
+        self.assertEqual(code, 1)
+        self.assertEqual(host.verbs(), ["backups", "status"])
+        self.assertIn("cannot tell which release is deployed", output)
+
+    def test_the_console_outwaits_the_hosts_own_limits(self) -> None:
+        from platform_automation.operator.console import BACKUP_TIMEOUT_SECONDS
+
+        # thirty minutes to decrypt plus an hour to restore, with room to spare
+        self.assertGreaterEqual(BACKUP_TIMEOUT_SECONDS, 1800 + 3600 + 600)
+        host = Host()
+        seen = {}
+
+        def remote(target, user, arguments, **options):
+            seen[arguments[0]] = options.get("timeout")
+            return host(target, user, arguments, **options)
+
+        self.run_restore(
+            [
+                ("select", lambda options: options[1]),
+                ("confirm", True),
+                ("text", NAME),
+            ],
+            remote,
+        )
+        for verb in ("verify-backup", "backup", "restore"):
+            self.assertEqual(seen[verb], BACKUP_TIMEOUT_SECONDS, verb)
 
     def test_a_mistyped_name_restores_nothing(self) -> None:
         host = Host()

@@ -382,8 +382,11 @@ def scoped_action(
     return Action(label, shown, run, anchor, remote=True)
 
 
-# A dump or a trial restore of a real database outlasts the default patience.
-BACKUP_TIMEOUT_SECONDS = 1800
+# A dump or a restore of a real database outlasts the default patience. The
+# host allows thirty minutes to decrypt and an hour to restore; giving up
+# before the host does would report a failure while a restore is still
+# rewriting the live database.
+BACKUP_TIMEOUT_SECONDS = 7200
 
 
 def converge_hosts(root: Path, hosts: list, confirm=None) -> int:
@@ -1478,6 +1481,32 @@ def retire_action(context: Context, scope, prompts, purge: bool = False) -> Acti
     return Action(label, f"platform {verb} …", run, "#/flow-retire", remote=True)
 
 
+def safety_dump_would_prune(entries: list, chosen: dict, retain: Optional[int]) -> bool:
+    """Would one more dump push ``chosen`` out of retention?
+
+    ``entries`` are newest first. A new dump keeps the newest ``retain`` and
+    drops the rest, so the oldest dump is always the first to go; the console
+    does not know the host's limit for certain, so the oldest is treated as
+    at risk whatever the manifest here says, and the manifest's limit — when
+    it can be read — widens that, never narrows it.
+    """
+    position = entries.index(chosen)
+    if position == len(entries) - 1:
+        return True
+    return retain is not None and position >= retain - 1
+
+
+def local_retain(root: Path, manifest_path) -> Optional[int]:
+    from .context import load_yaml as read_document
+
+    document = read_document(root / manifest_path) if manifest_path else None
+    try:
+        retain = (document["database"].get("backup") or {}).get("retain")
+    except (KeyError, TypeError, AttributeError):
+        return None
+    return retain if isinstance(retain, int) and not isinstance(retain, bool) else None
+
+
 def restore_action(context: Context, scope, prompts, remote=None) -> Action:
     """Replace the live database with a dump — after the dump is proven to restore.
 
@@ -1516,12 +1545,15 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
             print(f"No dump of {name} on the host; there is nothing to restore from.")
             print(f"{DIM}  offsite copies: handbook {HANDBOOK}#/flow-database{RESET}")
             return 1
+        # Without the deployed release there is nothing to compare a dump
+        # against, and the warning about a foreign schema could not be given.
         status = call(["status", *ident])
-        current = (
-            (status.document.get("current") or {}).get("release_tag")
-            if status.ok
-            else None
-        )
+        if not status.ok:
+            print(
+                f"{RED}cannot tell which release is deployed; nothing was changed{RESET}"
+            )
+            return report_failure(status.error, context.core_pin)
+        current = (status.document.get("current") or {}).get("release_tag")
 
         def describe(entry):
             stamp = str(entry.get("stamp", ""))
@@ -1571,7 +1603,22 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
             print(render_verification(proof.document))
 
         print()
-        if questionary.confirm(
+        retain = local_retain(context.root, getattr(scope, "manifest", None))
+        if safety_dump_would_prune(entries, chosen, retain):
+            print(
+                f"{RED}No dump of the current state will be taken.{RESET} The host keeps a"
+                " limited number of dumps,"
+            )
+            print(
+                "  and one more could push this one — among the oldest — out before it is"
+                " restored."
+            )
+            print(
+                "  There will be no way back to the current data. To have one, restore a"
+                " newer dump,"
+            )
+            print("  or raise database.backup.retain and deploy first.")
+        elif questionary.confirm(
             "Take a dump of the current state first? It is the only way back.",
             default=True,
             style=style,
@@ -1581,6 +1628,12 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
                 print(f"{RED}no safety dump; the live database was not touched{RESET}")
                 return report_failure(safety.error, context.core_pin)
             print(render_backup_result(safety.document))
+            if stamp in (safety.document.get("removed_backups") or []):
+                print(
+                    f"{RED}retention removed {stamp} while taking the safety dump;"
+                    f" the live database was not touched{RESET}"
+                )
+                return 1
 
         print()
         typed = questionary.text(f"Type {name} to restore", style=style).ask()
