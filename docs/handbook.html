@@ -10781,8 +10781,10 @@ inventory/**/*.decrypted.yml</code></pre>
   <h2>Включить</h2>
   <p>По умолчанию выключено. В инвентаре хоста или группы:</p>
 <pre><code>observability_enabled: true</code></pre>
-  <p>И путь к паролю администратора Grafana — в игнорируемом
-  <code>local-secrets.yml</code> этого хоста, рядом с путём к age-ключу:</p>
+  <p>Пароль администратора Grafana лежит в файле на рабочей машине, а путь к
+  нему — в игнорируемом <code>local-secrets.yml</code> этого хоста, рядом с путём
+  к age-ключу. <code>platform new host</code> создаёт и файл, и строку сам. Для
+  хоста, заведённого раньше, — вручную:</p>
 <pre><code>umask 077
 openssl rand -base64 24 &gt; {{keydir}}/{{host}}-grafana.password</code></pre>
 <pre><code># inventory/host_vars/{{host}}/local-secrets.yml

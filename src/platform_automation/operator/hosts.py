@@ -9,6 +9,7 @@ anything is written, so a wrong indentation cannot reach the disk.
 
 import os
 import re
+import secrets as random_secrets
 import subprocess
 from dataclasses import dataclass, field
 from importlib import resources
@@ -53,6 +54,10 @@ class HostAnswers:
     @property
     def recovery_key(self) -> str:
         return f"{self.keys_dir}/recovery.agekey"
+
+    @property
+    def grafana_password(self) -> str:
+        return f"{self.keys_dir}/{self.name}-grafana.password"
 
 
 def validate_host_answers(answers: HostAnswers) -> list:
@@ -220,6 +225,18 @@ def generate_age_key(path: Path, runner=subprocess.run) -> str:
     return match.group(1)
 
 
+def generate_password(path: Path) -> None:
+    """A random password in a 0600 file; it is never printed or returned."""
+    if path.exists():
+        raise HostError(f"refusing to overwrite an existing password: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(random_secrets.token_urlsafe(24) + "\n")
+    path.chmod(0o600)
+
+
 # ---------------------------------------------------------------------- plan
 
 
@@ -227,6 +244,7 @@ def generate_age_key(path: Path, runner=subprocess.run) -> str:
 class HostPlan:
     files: dict = field(default_factory=dict)  # relative path → full new text
     keys: list = field(default_factory=list)  # (label, Path) to generate
+    passwords: list = field(default_factory=list)  # Path of each password file
     recipients_missing: bool = False
 
 
@@ -327,6 +345,10 @@ def plan_host(root: Path, answers: HostAnswers) -> HostPlan:
     for label, path in plan.keys:
         if path.exists():
             raise HostError(f"refusing to overwrite an existing key: {path}")
+    plan.passwords.append(Path(answers.grafana_password).expanduser())
+    for path in plan.passwords:
+        if path.exists():
+            raise HostError(f"refusing to overwrite an existing password: {path}")
     return plan
 
 
@@ -337,6 +359,8 @@ def write_host(
     recipients = {}
     for label, path in plan.keys:
         recipients[label] = generate_age_key(path, runner)
+    for path in plan.passwords:
+        generate_password(path)
 
     recipients_path = root / RECIPIENTS_RELATIVE
     if plan.recipients_missing:
