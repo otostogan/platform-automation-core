@@ -13,6 +13,12 @@ release.
   if it is not proven yet, take a dump of the current state (optional),
   type `project/environment`, restore. A dump taken on another release is
   named before the confirmation. Rotation asks once, defaulting to no.
+- Observability no longer mistakes the internet's noise for the application.
+  On the dashboard "All" domains now means the application's own domains;
+  it used to match every `Host` header sent at the proxy, so scanners asking
+  for the bare address or a made-up name appeared as domains. The "HTTP 5xx
+  rate" alert counts only requests that reached an application: the 503 the
+  proxy's default server gives a scanner could raise it.
 
 ## [0.22.1] - 2026-10-02
 

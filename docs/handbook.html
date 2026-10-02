@@ -10863,7 +10863,7 @@ ssh -N -L 13000:&lt;адрес&gt;:3000 ops@{{tailnet}}</code></pre>
       <tr><td>Backup is stale</td><td>последний дамп старше стольких часов</td><td><code>observability_alert_backup_age_hours</code>, 26</td></tr>
       <tr><td>No backup yet</td><td>релиз просит дампы по расписанию, а за столько же часов не появилось ни одного</td><td>тот же</td></tr>
       <tr><td>Restore is not proven</td><td>дампы есть, а доказанного восстановления нет или оно старше стольких дней</td><td><code>observability_alert_restore_proof_age_days</code>, 30</td></tr>
-      <tr><td>HTTP 5xx rate</td><td>доля ответов 5xx по домену за 5 минут; при меньшем числе запросов вердикта нет</td><td><code>observability_alert_error_percent</code>, 5; <code>observability_alert_error_min_requests</code>, 20</td></tr>
+      <tr><td>HTTP 5xx rate</td><td>доля ответов 5xx по домену за 5 минут среди запросов, дошедших до приложения; при меньшем числе запросов вердикта нет. Запросы сканеров на голый адрес или выдуманное имя получают 503 от заглушки прокси и в счёт не идут</td><td><code>observability_alert_error_percent</code>, 5; <code>observability_alert_error_min_requests</code>, 20</td></tr>
       <tr><td>Platform metrics stopped</td><td>метрики платформы не приходят 5 минут — остальные правила слепы</td><td>—</td></tr>
       <tr><td>Release ledger unreadable</td><td>журнал релизов не читается</td><td>—</td></tr>
     </tbody>
