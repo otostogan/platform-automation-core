@@ -1,0 +1,11 @@
+apiVersion: 1
+
+# Installed as grafana/provisioning/alerting/notifications.yaml when no
+# channel is configured: the rules still evaluate and show in Grafana, and a
+# channel that was provisioned earlier is taken away again.
+resetPolicies:
+    - 1
+
+deleteContactPoints:
+    - orgId: 1
+      uid: platform-telegram

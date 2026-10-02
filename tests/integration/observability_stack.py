@@ -5,10 +5,14 @@ Brings the collector and the storage up from the role's own Compose files
 under unique names, starts one workload container named the way a deployed
 application is, and proves the three things the role promises: its log
 lines arrive in Loki, its metrics in Prometheus, both under the platform's
-labels, and Grafana serves the provisioned sources and dashboard.
+labels, and Grafana serves the provisioned sources and dashboard. Then the
+alert rules: every one evaluates without an error, a stopped container raises
+its alert with the annotation filled in, and the notification channel can be
+provisioned and taken away again.
 """
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -19,7 +23,9 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-BUNDLE = ROOT / "roles/observability/files/bundle"
+ROLE = ROOT / "roles/observability"
+BUNDLE = ROLE / "files/bundle"
+ALERTING = ROLE / "files/alerting"
 STATE = "${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}"
 PASSWORD = "integration-only"
 
@@ -46,6 +52,17 @@ def rewrite(source: Path, prefix: str, state: Path, destination: Path) -> None:
     for key, network in compose["networks"].items():
         network["name"] = prefix + "-" + key
     destination.write_text(yaml.safe_dump(compose, sort_keys=False))
+
+
+def render_rules() -> str:
+    """The role's template with its defaults, the way Ansible renders it."""
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    text = (ROLE / "templates/alerting-rules.yaml.j2").read_text()
+    rendered = re.sub(
+        r"\[\[ (\w+) \]\]", lambda match: str(defaults[match.group(1)]), text
+    )
+    assert "[[" not in rendered
+    return rendered
 
 
 def wait_for(description, probe, seconds=90):
@@ -79,10 +96,27 @@ def main():
         backend, collector = base / "backend.yml", base / "collector.yml"
         rewrite(BUNDLE / "backend.yml", prefix, state, backend)
         rewrite(BUNDLE / "collector.yml", prefix, state, collector)
+        # The role installs the bundle's provisioning plus one notification
+        # file chosen by the inventory; do the same in a private copy.
+        provisioning = base / "provisioning"
+        shutil.copytree(BUNDLE / "grafana/provisioning", provisioning)
+        notifications = provisioning / "alerting/notifications.yaml"
+        notifications.parent.mkdir()
+        shutil.copy(ALERTING / "telegram.yaml", notifications)
+        rules_text = render_rules()
+        (provisioning / "alerting/rules.yaml").write_text(rules_text)
+        backend.write_text(
+            backend.read_text().replace(
+                str(BUNDLE) + "/grafana/provisioning", str(provisioning)
+            )
+        )
+        assert str(provisioning) in backend.read_text()
         environment = [
             "env",
             f"OBSERVABILITY_GRAFANA_ADMIN_PASSWORD={PASSWORD}",
             "OBSERVABILITY_HOST_LABEL=integration-host",
+            "OBSERVABILITY_ALERTS_TELEGRAM_TOKEN=1:integration-only",
+            "OBSERVABILITY_ALERTS_TELEGRAM_CHAT_ID=-1000000000001",
         ]
         workload = prefix + "-web"
         network = prefix + "-observability"
@@ -291,6 +325,109 @@ def main():
             assert checked >= 10, checked
             print(
                 f"PASS: all {checked} dashboard expressions are accepted by Loki and Prometheus",
+                flush=True,
+            )
+
+            # ---------------------------------------------------- alerts
+            expected = {
+                rule["uid"]
+                for group in yaml.safe_load(rules_text)["groups"]
+                for rule in group["rules"]
+            }
+            provisioned = grafana("/api/v1/provisioning/alert-rules")
+            assert {rule["uid"] for rule in provisioned} == expected, provisioned
+            for rule in provisioned:
+                for query in rule["data"]:
+                    text = json.dumps(query["model"])
+                    assert "[[" not in text, text
+            points = grafana("/api/v1/provisioning/contact-points")
+            telegram = [p for p in points if p["uid"] == "platform-telegram"]
+            # the chat comes from the environment; the token is never echoed
+            assert (
+                telegram and str(telegram[0]["settings"]["chatid"]) == "-1000000000001"
+            ), points
+            assert "integration-only" not in json.dumps(points), points
+            assert (
+                grafana("/api/v1/provisioning/policies")["receiver"]
+                == "platform-telegram"
+            )
+
+            def evaluated():
+                groups = grafana("/api/prometheus/grafana/api/v1/rules")["data"][
+                    "groups"
+                ]
+                rules = [rule for group in groups for rule in group["rules"]]
+                bad = [
+                    (rule["name"], rule.get("lastError"))
+                    for rule in rules
+                    if rule["health"] == "error"
+                ]
+                assert not bad, f"alert rules fail to evaluate: {bad}"
+                done = all(
+                    rule.get("lastEvaluation", "")[:4] > "0001" for rule in rules
+                )
+                return rules if done and len(rules) == len(expected) else None
+
+            wait_for("every alert rule to evaluate once", evaluated, seconds=180)
+            print(
+                f"PASS: all {len(expected)} alert rules are provisioned and evaluate without error",
+                flush=True,
+            )
+
+            run(docker, "stop", "--time", "1", workload)
+            assert (
+                export(
+                    [
+                        "--output",
+                        str(state / "textfile/platform.prom"),
+                        "--docker",
+                        docker,
+                        "--projects-root",
+                        str(base / "none"),
+                        "--releases-root",
+                        str(base / "none"),
+                        "--backups-root",
+                        str(base / "none"),
+                    ]
+                )
+                == 0
+            )
+
+            def raised():
+                for rule in evaluated() or []:
+                    for alert in rule.get("alerts", []):
+                        if alert["labels"].get("container") == workload:
+                            return alert
+                return None
+
+            alert = wait_for("the stopped container's alert", raised, seconds=240)
+            assert alert["labels"]["alertname"] == "Container down", alert
+            assert alert["labels"]["severity"] == "critical", alert
+            assert (
+                alert["annotations"]["summary"]
+                == f"integration-host: {workload} is not running"
+            ), alert
+            print(
+                "PASS: a stopped container raises its alert with the annotation filled in",
+                flush=True,
+            )
+
+            shutil.copy(ALERTING / "none.yaml", notifications)
+            run(docker, "restart", prefix + "-grafana")
+            # an empty list is the expected answer, so wrap it to stay truthy
+            (points,) = wait_for(
+                "Grafana after the channel is removed",
+                lambda: (grafana("/api/v1/provisioning/contact-points"),),
+            )
+            assert all(point["uid"] != "platform-telegram" for point in points), points
+            assert grafana("/api/v1/provisioning/policies")["receiver"] != (
+                "platform-telegram"
+            )
+            assert {
+                rule["uid"] for rule in grafana("/api/v1/provisioning/alert-rules")
+            } == expected
+            print(
+                "PASS: the notification channel can be taken away and the rules stay",
                 flush=True,
             )
 

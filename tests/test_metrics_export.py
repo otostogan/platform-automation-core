@@ -3,15 +3,19 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from platform_automation import metrics_export
 from platform_automation.metrics_export import (
     Samples,
     collect,
     parse_percent,
     parse_size,
     parse_stamp,
+    release_samples,
     scope_labels,
 )
+from platform_automation.release_ledger import ReleaseLedgerError
 
 PS = (
     "aaa|my-app-lab-web-1|my-app-lab|web|running\n"
@@ -110,3 +114,69 @@ class MetricsExportTest(unittest.TestCase):
         samples = Samples()
         samples.add("m", "gauge", "h", {"a": 'x"y\\z'}, 1)
         self.assertIn('m{a="x\\"y\\\\z"} 1', samples.render())
+
+
+class ReleaseSamplesTest(unittest.TestCase):
+    def render(self, records, manifest) -> str:
+        """Two scopes: ``good`` reads through ``records``, ``bad`` cannot be read."""
+
+        def listing(root, project, environment):
+            if project == "bad":
+                raise ReleaseLedgerError("corrupt record")
+            return records
+
+        samples = Samples()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.multiple(
+                metrics_export,
+                list_project_scopes=lambda root: [("bad", "lab"), ("good", "lab")],
+                list_release_records=listing,
+                is_retired=lambda *_: False,
+                resolve_release_bundle=lambda record, root: Path(directory),
+                load_staged_manifest=lambda bundle: manifest,
+            ),
+        ):
+            none = Path(directory) / "none"
+            release_samples(samples, none, none, none)
+        return samples.render()
+
+    RECORD = {
+        "release_tag": "lab-v1.0.0",
+        "status": "deployed",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "release_id": "20260101T000000Z-aaaaaaaa",
+    }
+
+    def test_one_unreadable_scope_is_reported_beside_a_healthy_walk(self) -> None:
+        text = self.render([], {})
+
+        self.assertIn("platform_ledger_readable 1", text)
+        self.assertIn(
+            'platform_ledger_readable{environment="lab",project="bad"} 0', text
+        )
+        self.assertIn(
+            'platform_ledger_readable{environment="lab",project="good"} 1', text
+        )
+
+    def test_a_release_that_asks_for_dumps_says_so_even_with_none_taken(self) -> None:
+        manifest = {
+            "database": {"mode": "docker", "backup_enabled": True},
+            "domains": [],
+        }
+        text = self.render([self.RECORD], manifest)
+
+        self.assertIn(
+            'platform_backup_scheduled{environment="lab",project="good"} 1', text
+        )
+        self.assertIn('platform_backup_count{environment="lab",project="good"} 0', text)
+        self.assertNotIn("platform_backup_latest_timestamp_seconds{", text)
+
+    def test_a_release_without_scheduled_dumps_says_that_too(self) -> None:
+        manifest = {"database": {"mode": "docker"}, "domains": []}
+        text = self.render([self.RECORD], manifest)
+
+        self.assertIn(
+            'platform_backup_scheduled{environment="lab",project="good"} 0', text
+        )
