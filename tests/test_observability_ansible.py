@@ -179,7 +179,8 @@ class ObservabilityAlertsTest(unittest.TestCase):
         expression = rules["platform-http-errors"]["data"][0]["model"]["expr"]
         selectors = expression.count('{container="platform-nginx"}')
         self.assertEqual(selectors, 3)
-        self.assertEqual(expression.count('upstream_addr!=""'), selectors)
+        # empty with escape=json, a hyphen without it: neither is an upstream
+        self.assertEqual(expression.count('upstream_addr!~"-?"'), selectors)
 
     def test_all_domains_means_the_applications_own_domains(self) -> None:
         board = json.loads(
