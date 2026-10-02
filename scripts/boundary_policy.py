@@ -110,6 +110,7 @@ ALLOWED_FQDNS = {
     "letsencrypt.org",
     "pypi.org",
     "tailscale.com",
+    "telegram.org",
 }
 
 FORBIDDEN_PATH_PARTS = {

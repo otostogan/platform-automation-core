@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .backup_runtime import DEFAULT_BACKUPS_ROOT, list_backups
+from .backup_schedule import backups_are_scheduled
 from .compose_runtime import ComposeRuntimeError, load_staged_manifest
 from .domains import domain_service
 from .release_ledger import (
@@ -281,7 +282,22 @@ def release_samples(
         try:
             records = list_release_records(projects_root, project, environment)
         except (ReleaseLedgerError, OSError):
+            # One scope's damaged record must not hide behind a healthy walk.
+            samples.add(
+                "platform_ledger_readable",
+                "gauge",
+                "0 when the release ledger could not be walked.",
+                scope,
+                0.0,
+            )
             continue
+        samples.add(
+            "platform_ledger_readable",
+            "gauge",
+            "0 when the release ledger could not be walked.",
+            scope,
+            1.0,
+        )
         samples.add(
             "platform_release_records",
             "gauge",
@@ -326,6 +342,13 @@ def release_samples(
             try:
                 manifest = load_staged_manifest(
                     resolve_release_bundle(current, releases_root)
+                )
+                samples.add(
+                    "platform_backup_scheduled",
+                    "gauge",
+                    "1 when the serving release asks for scheduled dumps.",
+                    scope,
+                    1.0 if backups_are_scheduled(manifest) else 0.0,
                 )
                 for domain in manifest["domains"]:
                     samples.add(

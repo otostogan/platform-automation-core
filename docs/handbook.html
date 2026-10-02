@@ -10861,6 +10861,7 @@ ssh -N -L 13000:&lt;адрес&gt;:3000 ops@{{tailnet}}</code></pre>
       <tr><td>Container memory near its limit</td><td>память выше доли предела 10 минут</td><td><code>observability_alert_memory_percent</code>, 90</td></tr>
       <tr><td>Disk space low</td><td>свободного места на разделе меньше доли</td><td><code>observability_alert_disk_free_percent</code>, 15</td></tr>
       <tr><td>Backup is stale</td><td>последний дамп старше стольких часов</td><td><code>observability_alert_backup_age_hours</code>, 26</td></tr>
+      <tr><td>No backup yet</td><td>релиз просит дампы по расписанию, а за столько же часов не появилось ни одного</td><td>тот же</td></tr>
       <tr><td>Restore is not proven</td><td>дампы есть, а доказанного восстановления нет или оно старше стольких дней</td><td><code>observability_alert_restore_proof_age_days</code>, 30</td></tr>
       <tr><td>HTTP 5xx rate</td><td>доля ответов 5xx по домену за 5 минут; при меньшем числе запросов вердикта нет</td><td><code>observability_alert_error_percent</code>, 5; <code>observability_alert_error_min_requests</code>, 20</td></tr>
       <tr><td>Platform metrics stopped</td><td>метрики платформы не приходят 5 минут — остальные правила слепы</td><td>—</td></tr>
@@ -10868,9 +10869,12 @@ ssh -N -L 13000:&lt;адрес&gt;:3000 ops@{{tailnet}}</code></pre>
     </tbody>
   </table>
   </div>
-  <p>Первые два, диск, дамп и два последних — <code>critical</code>, повтор раз в 4 часа,
-  пока не починено. Остальные — <code>warning</code>, повтор раз в сутки. Отключённое
-  (retired) приложение алертов по дампам и релизу не поднимает.</p>
+  <p>Первые два, диск, оба правила о дампах и два последних — <code>critical</code>,
+  повтор раз в 4 часа, пока не починено. Остальные — <code>warning</code>, повтор раз в
+  сутки. Правила о дампах смотрят только на релизы, где в манифесте
+  <code>database.backup_enabled</code>. Отключённое (retired) приложение алертов по
+  дампам и релизу не поднимает. «Platform metrics stopped» срабатывает и тогда, когда
+  не отвечает сам Prometheus.</p>
 
   <h3>Подключить Telegram</h3>
   <ol>

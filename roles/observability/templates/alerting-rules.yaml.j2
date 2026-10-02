@@ -189,7 +189,7 @@ groups:
             datasourceUid: platform-prometheus
             model:
                 refId: A
-                expr: (time() - platform_backup_latest_timestamp_seconds) / 3600 and on (project, environment) platform_retired == 0
+                expr: (time() - platform_backup_latest_timestamp_seconds) / 3600 and on (project, environment) platform_backup_scheduled == 1 and on (project, environment) platform_retired == 0
                 instant: true
         -   refId: B
             datasourceUid: __expr__
@@ -212,6 +212,40 @@ groups:
         annotations:
             summary: '{{ .Labels.host }}: newest dump of {{ .Labels.project }}/{{ .Labels.environment }} is {{ printf "%.0f" .Values.B.Value }} hours old'
             description: 'The backup timer has not produced a dump. Handbook: #/flow-database.'
+    -   uid: platform-backup-missing
+        title: No backup yet
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: platform_backup_count and on (project, environment) platform_backup_scheduled == 1 and on (project, environment) platform_retired == 0
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B < 1
+        for: '[[ observability_alert_backup_age_hours ]]h'
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: critical
+        annotations:
+            summary: '{{ .Labels.host }}: {{ .Labels.project }}/{{ .Labels.environment }} has no dump at all'
+            description: 'The release asks for scheduled dumps and none exists. Handbook: #/flow-database.'
     -   uid: platform-restore-unproven
         title: Restore is not proven
         condition: C
@@ -309,7 +343,7 @@ groups:
                 expression: $B > 300
         for: 5m
         noDataState: Alerting
-        execErrState: OK
+        execErrState: Alerting
         labels:
             severity: critical
         annotations:
@@ -347,5 +381,5 @@ groups:
         labels:
             severity: critical
         annotations:
-            summary: '{{ .Labels.host }}: the release ledger cannot be read'
+            summary: '{{ .Labels.host }}: the release ledger cannot be read{{ if .Labels.project }} for {{ .Labels.project }}/{{ .Labels.environment }}{{ end }}'
             description: 'Deploys and rollbacks depend on it. Run: platform status.'

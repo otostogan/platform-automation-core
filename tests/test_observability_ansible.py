@@ -170,6 +170,23 @@ class ObservabilityAlertsTest(unittest.TestCase):
         loud = [rule["uid"] for rule in self.rules() if rule["noDataState"] != "OK"]
         self.assertEqual(loud, ["platform-metrics-stale"])
 
+    def test_the_blind_rule_also_fires_when_its_query_fails(self) -> None:
+        # With Prometheus down the sentinel errors instead of returning no data.
+        loud = [rule["uid"] for rule in self.rules() if rule["execErrState"] != "OK"]
+        self.assertEqual(loud, ["platform-metrics-stale"])
+
+    def test_backup_rules_follow_what_the_release_asks_for(self) -> None:
+        rules = {rule["uid"]: rule for rule in self.rules()}
+        for uid in ("platform-backup-stale", "platform-backup-missing"):
+            expression = rules[uid]["data"][0]["model"]["expr"]
+            self.assertIn("platform_backup_scheduled == 1", expression, uid)
+            self.assertIn("platform_retired == 0", expression, uid)
+        # a release with no dump gets the same grace as an old dump
+        self.assertEqual(
+            rules["platform-backup-missing"]["for"],
+            f"{DEFAULTS['observability_alert_backup_age_hours']}h",
+        )
+
     def test_the_channel_reads_its_secret_from_the_environment(self) -> None:
         channel = yaml.safe_load(
             (ROLE / "files/alerting/telegram.yaml").read_text(encoding="utf-8")
