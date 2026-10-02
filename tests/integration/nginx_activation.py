@@ -192,6 +192,18 @@ def main():
                 flush=True,
             )
 
+            # The access log is what tells one application's traffic from
+            # another's: every line must be JSON and must name its host.
+            access = [
+                json.loads(line)
+                for line in run(docker, "logs", prefix + "-nginx").stdout.splitlines()
+                if line.startswith("{")
+            ]
+            assert access, "nginx wrote no JSON access line"
+            assert access[-1]["host"] == "example.test", access[-1]
+            assert access[-1]["status"] == "200" and "request_time" in access[-1]
+            print("PASS: access log is JSON and carries the virtual host", flush=True)
+
             old = build_fragment_plan(
                 "example",
                 "lab",
