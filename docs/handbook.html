@@ -10877,6 +10877,14 @@ ssh -N -L 13000:&lt;адрес&gt;:3000 ops@{{tailnet}}</code></pre>
   не отвечает сам Prometheus.</p>
 
   <h3>Подключить Telegram</h3>
+  <div class="note">
+    <span class="label">Из консоли</span>
+    <p><code>platform</code> в репозитории инфраструктуры → хост →
+    <strong>Observability → Alerts: set up Telegram</strong>. Консоль спросит токен бота
+    (ввод скрыт), проверит его, покажет чаты, которые писали боту, отправит пробное
+    сообщение и сама запишет файл токена и две строки в <code>local-secrets.yml</code>.
+    Останется конвергенция. Шаги ниже — то же самое руками.</p>
+  </div>
   <ol>
     <li>В Telegram откройте чат с <strong>@BotFather</strong> → <code>/newbot</code> →
     имя и логин бота. В ответе — токен вида <code>123456:AA…</code>.</li>

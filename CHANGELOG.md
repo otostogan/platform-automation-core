@@ -15,6 +15,10 @@ release.
   to Telegram once `observability_alerts_telegram_token_source` and
   `observability_alerts_telegram_chat_id` are set. The token stays in a
   controller-local file and reaches Grafana only through its environment.
+- Console: `Observability → Alerts: set up Telegram` on a host asks for the
+  bot token (hidden) and the chat, proves both against the Bot API, sends a
+  test message, then writes the 0600 token file beside the host's keys and
+  the two keys in its `local-secrets.yml`. The token is never printed.
 
 ## [0.20.1] - 2026-10-02
 

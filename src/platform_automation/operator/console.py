@@ -378,6 +378,7 @@ def host_actions(context: Context, host, prompts=None) -> list:
     if prompts is not None:
         actions.append(logs_action(context, address, user, identity, prompts))
         actions.append(grafana_action(context, host, prompts))
+        actions.append(alerts_action(context, host, prompts))
     actions += [
         Action(
             "Backups: take one now",
@@ -709,6 +710,7 @@ def grafana_action(context: Context, host, prompts) -> Action:
     import shlex
     import socket
 
+    from .context import load_yaml as read_document
     from .doctor import host_secret_path
     from .logs import ssh_command
 
@@ -730,7 +732,7 @@ def grafana_action(context: Context, host, prompts) -> Action:
         key = "observability_grafana_admin_password_source"
         path = host_secret_path(context.root, host, key)
         if path is None:
-            shared = load_yaml(
+            shared = read_document(
                 context.root / "inventory/group_vars/all/local-secrets.yml"
             )
             value = shared.get(key) if isinstance(shared, dict) else None
@@ -813,6 +815,160 @@ def grafana_action(context: Context, host, prompts) -> Action:
         run,
         "#/ref-observability",
         remote=True,
+    )
+
+
+def alerts_action(context: Context, host, prompts, opener=None) -> Action:
+    """Ask for the bot and the chat, prove both, then write a file and two lines."""
+    from . import alerts
+    from .context import load_yaml as read_document
+
+    questionary, style = prompts
+    relative = f"inventory/host_vars/{host.name}/local-secrets.yml"
+    secrets_path = context.root / relative
+    REFRESH, MANUAL = object(), object()
+
+    def ask_token(location: Path) -> Optional[str]:
+        """The token to use, or None when the operator backs out."""
+        existing = alerts.read_token(location)
+        if (
+            existing
+            and questionary.confirm(
+                f"Keep the bot token already in {location}?", default=True, style=style
+            ).ask()
+        ):
+            return existing
+        answer = questionary.password(
+            "Bot token (Telegram → @BotFather → /newbot)",
+            validate=lambda value: alerts.valid_token(value)
+            or "a token looks like 123456789:AA… — paste it whole",
+            style=style,
+        ).ask()
+        return answer.strip() if answer else None
+
+    def ask_chat(token: str, current: str) -> Optional[str]:
+        while True:
+            print(f"{DIM}→ GET {alerts.masked('getUpdates')}{RESET}")
+            try:
+                chats = alerts.recent_chats(token, opener=opener)
+            except alerts.AlertsError as error:
+                print(f"{RED}{error}{RESET}")
+                chats = []
+            if not chats:
+                print(
+                    "No chat has written to the bot yet. Send it any message — or add it"
+                    " to a group and write there — then refresh."
+                )
+            options = [*chats, REFRESH, MANUAL]
+            chosen = choose(
+                questionary,
+                style,
+                "Chat to send alerts to",
+                options,
+                lambda o: (
+                    "↻ Refresh the list"
+                    if o is REFRESH
+                    else (
+                        f"Type a chat id{f' (now {current})' if current else ''}"
+                        if o is MANUAL
+                        else f"{o.title}  ({o.kind} {o.id})"
+                    )
+                ),
+            )
+            if chosen is REFRESH:
+                continue
+            if chosen is not MANUAL:
+                return chosen.id
+            answer = questionary.text(
+                "Chat id",
+                default=current,
+                validate=lambda value: alerts.valid_chat(value)
+                or "a number; a group's id is negative",
+                style=style,
+            ).ask()
+            return answer.strip() if answer else None
+
+    def run() -> int:
+        document = read_document(secrets_path)  # None when missing or broken
+        location = alerts.token_location(document)
+        if location is None:
+            location = questionary.text(
+                "Where to keep the bot token (a file outside any repository)",
+                validate=lambda value: bool(value.strip()) or "a path is required",
+                style=style,
+            ).ask()
+            if not location:
+                print("cancelled — nothing written")
+                return 130
+            location = location.strip()
+        token_path = Path(location).expanduser()
+        current = (
+            str(document.get(alerts.CHAT_KEY) or "")
+            if isinstance(document, dict)
+            else ""
+        )
+
+        token = ask_token(token_path)
+        if token is None:
+            print("cancelled — nothing written")
+            return 130
+        try:
+            print(f"{DIM}→ GET {alerts.masked('getMe')}{RESET}")
+            name = alerts.bot_name(token, opener=opener)
+        except alerts.AlertsError as error:
+            print(f"{RED}{error}{RESET}")
+            return 1
+        print(f"{GREEN}bot: {name}{RESET}")
+
+        chat = ask_chat(token, current)
+        if chat is None:
+            print("cancelled — nothing written")
+            return 130
+
+        if questionary.confirm(
+            f"Send a test message to {chat}?", default=True, style=style
+        ).ask():
+            print(f"{DIM}→ POST {alerts.masked('sendMessage')} chat_id={chat}{RESET}")
+            try:
+                alerts.send_test(token, chat, host.name, opener=opener)
+                print(f"{GREEN}sent — check the chat{RESET}")
+            except alerts.AlertsError as error:
+                print(f"{RED}{error}{RESET}")
+                if not questionary.confirm(
+                    "Save these settings anyway?", default=False, style=style
+                ).ask():
+                    print("cancelled — nothing written")
+                    return 130
+
+        try:
+            text = secrets_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        try:
+            updated = alerts.set_values(text, location, chat)
+        except alerts.AlertsError as error:
+            print(f"{RED}{error}{RESET}")
+            return 1
+        if alerts.read_token(token_path) != token:
+            print(f"{DIM}→ write {token_path} (mode 0600){RESET}")
+            alerts.write_token(token_path, token)
+        print(
+            f"{DIM}→ set {alerts.TOKEN_KEY} and {alerts.CHAT_KEY} in {relative}{RESET}"
+        )
+        secrets_path.parent.mkdir(parents=True, exist_ok=True)
+        secrets_path.write_text(updated, encoding="utf-8")
+        print(f"{GREEN}saved — {relative} is ignored by git, nothing to commit{RESET}")
+        print(
+            "Next: converge this host so Grafana picks the channel up —"
+            " platform update → current pin."
+        )
+        return 0
+
+    return Action(
+        "Alerts: set up Telegram",
+        f"write <keys>/{alerts.TOKEN_FILE} (0600) and two keys in {relative}",
+        run,
+        "#/ref-observability",
     )
 
 
@@ -1282,6 +1438,7 @@ def choose_scope(context: Context, questionary, style):
 
 MENU_GROUPS = (
     # (title, label prefixes) — what is reached for daily stays at the top level
+    ("Observability", ("Grafana:", "Alerts:")),
     ("Database & backups", ("Database:", "Backups:")),
     ("Secrets & config", ("Secrets:", "Validate ")),
     ("Retire or purge", ("Retire:", "Purge:")),
