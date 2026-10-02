@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-02
+
 - Prove restores on a calendar. `platform verify-backup --all` restores the
   newest dump of every application that has one and is not retired;
   `platform-verify-backups.timer` runs it weekly (Sunday 04:00 UTC by
