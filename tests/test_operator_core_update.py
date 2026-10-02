@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from platform_automation.operator.core_update import (
+    preselected,
     CoreUpdateError,
     artifact_url,
     host_version,
@@ -77,6 +78,18 @@ class HostVersionTest(unittest.TestCase):
         found = host_version("platform-host-1", "ops", None, runner)
         self.assertIsNone(found.version)
         self.assertIn("no route", found.error)
+
+
+class PreselectionTest(unittest.TestCase):
+    def test_hosts_behind_the_target_start_ticked(self) -> None:
+        versions = {"a": "v0.20.0", "b": "v0.21.0", "c": None}
+        self.assertEqual(preselected(versions, "v0.21.0"), {"a", "c"})
+
+    def test_when_none_is_behind_all_start_ticked(self) -> None:
+        # converging again on the same pin: plain Enter must do something
+        versions = {"a": "v0.21.0", "b": "v0.21.0"}
+        self.assertEqual(preselected(versions, "v0.21.0"), {"a", "b"})
+        self.assertEqual(preselected({}, "v0.21.0"), set())
 
 
 class RecapTest(unittest.TestCase):

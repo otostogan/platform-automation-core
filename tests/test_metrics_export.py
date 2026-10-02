@@ -180,3 +180,25 @@ class ReleaseSamplesTest(unittest.TestCase):
         self.assertIn(
             'platform_backup_scheduled{environment="lab",project="good"} 0', text
         )
+
+    def test_a_restore_the_runtime_recorded_as_proven_counts_as_proven(self) -> None:
+        # The word comes from the runtime that writes the log, not from here.
+        from platform_automation.restore_runtime import VERIFICATION_SUCCEEDED
+
+        proven = {
+            "outcome": VERIFICATION_SUCCEEDED,
+            "stamp": "20260101T000000Z-aaaaaaaa",
+        }
+        with mock.patch.object(metrics_export, "last_verification", lambda _: proven):
+            text = self.render([], {})
+        self.assertIn(
+            'platform_backup_restore_proven{environment="lab",project="good"} 1', text
+        )
+        self.assertIn("platform_backup_verified_dump_timestamp_seconds{", text)
+
+        failed = {"outcome": "failed", "stamp": "20260101T000000Z-aaaaaaaa"}
+        with mock.patch.object(metrics_export, "last_verification", lambda _: failed):
+            text = self.render([], {})
+        self.assertIn(
+            'platform_backup_restore_proven{environment="lab",project="good"} 0', text
+        )

@@ -45,6 +45,9 @@ DEFAULT_AGE_EXECUTABLE = Path("/usr/local/bin/age")
 DEFAULT_DOCKER_EXECUTABLE = Path("/usr/bin/docker")
 
 VERIFICATION_LOG = "verifications.json"
+# The word a proven restore is recorded with. Readers of the log import it
+# rather than spell it: the metrics exporter once waited for a different word.
+VERIFICATION_SUCCEEDED = "succeeded"
 MAX_VERIFICATION_ENTRIES = 50
 VERIFY_READY_TIMEOUT_SECONDS = 120
 
@@ -577,7 +580,7 @@ def verify_backup(
                     docker_executable,
                     runner=runner,
                 )
-                entry["outcome"] = "succeeded"
+                entry["outcome"] = VERIFICATION_SUCCEEDED
             finally:
                 remove_container(container, docker_executable, runner=runner)
     except (RestoreRuntimeError, BackupRuntimeError, OSError) as error:

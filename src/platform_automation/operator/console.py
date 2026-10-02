@@ -237,6 +237,42 @@ def render_backups(document: dict) -> str:
     return "\n".join(lines)
 
 
+def render_backup_result(document: dict) -> str:
+    lines = [
+        f"{GREEN}dump written{RESET}  {document.get('path')}",
+        f"  size       {document.get('bytes')} bytes",
+        f"  release    {document.get('release_tag') or document.get('release_id')}",
+        f"  removed by retention  {len(document.get('removed_backups') or [])}",
+    ]
+    for warning in document.get("warnings") or []:
+        lines.append(f"  warning    {warning}")
+    offsite = document.get("offsite") or {}
+    state = offsite.get("state")
+    if state == "not-configured":
+        lines.append("  offsite    not configured; the dump stays on this host")
+    elif state == "failed":
+        lines.append(f"  {RED}offsite    FAILED — {offsite.get('error')}{RESET}")
+    elif state:
+        lines.append(
+            f"  offsite    {len(offsite.get('uploaded') or [])} object(s) uploaded"
+        )
+    return "\n".join(lines)
+
+
+def render_verification(document: dict) -> str:
+    colour = GREEN if document.get("outcome") == "succeeded" else RED
+    stamp = str(document.get("stamp", "")).split("-", 1)[0]
+    return "\n".join(
+        [
+            f"{colour}restore {document.get('outcome')}{RESET}  dump {stamp}",
+            f"  query      {document.get('query')}",
+            f"  result     {document.get('result')}",
+            f"  verified   {document.get('verified_at')}",
+            "  restored into a throwaway container; the live database was not touched",
+        ]
+    )
+
+
 # -------------------------------------------------------------------- actions
 
 
@@ -259,11 +295,13 @@ def remote_action(
     anchor: str,
     identity=None,
     core_pin=None,
+    timeout: Optional[int] = None,
 ) -> Action:
     shown = f"ssh {user}@{host} 'sudo -n platform {' '.join(arguments)} --json'"
+    patience = {} if timeout is None else {"timeout": timeout}
 
     def run() -> int:
-        result = run_platform(host, user, arguments, identity=identity)
+        result = run_platform(host, user, arguments, identity=identity, **patience)
         if not result.ok:
             return report_failure(result.error, core_pin)
         print(render(result.document))
@@ -315,10 +353,13 @@ def fetch_scopes(host, core_pin=None) -> list:
     ]
 
 
-def scoped_action(host, prompts, label, verb, render, anchor, core_pin=None) -> Action:
+def scoped_action(
+    host, prompts, label, verb, render, anchor, core_pin=None, timeout=None
+) -> Action:
     """A host action that first asks which project and environment it is about."""
     address, user, identity = host_connection(host)
     questionary, style = prompts
+    patience = {} if timeout is None else {"timeout": timeout}
 
     def run() -> int:
         scopes = fetch_scopes(host, core_pin)
@@ -331,7 +372,7 @@ def scoped_action(host, prompts, label, verb, render, anchor, core_pin=None) -> 
         arguments = [verb, "--project", project, "--environment", environment]
         shown = f"ssh {user}@{address} 'sudo -n platform {' '.join(arguments)} --json'"
         print(f"{DIM}→ running:{RESET}  {shown}")
-        result = run_platform(address, user, arguments, identity=identity)
+        result = run_platform(address, user, arguments, identity=identity, **patience)
         if not result.ok:
             return report_failure(result.error, core_pin)
         print(render(result.document))
@@ -339,6 +380,110 @@ def scoped_action(host, prompts, label, verb, render, anchor, core_pin=None) -> 
 
     shown = f"ssh {user}@{address} 'sudo -n platform {verb} --project … --environment … --json'"
     return Action(label, shown, run, anchor, remote=True)
+
+
+# A dump or a trial restore of a real database outlasts the default patience.
+BACKUP_TIMEOUT_SECONDS = 1800
+
+
+def converge_hosts(root: Path, hosts: list, confirm=None) -> int:
+    """Converge twice, then readiness; the second pass must change nothing.
+
+    ``confirm`` is asked once, after the first command is shown and before
+    anything runs. Returns 0, 1 on a failure, 130 when declined.
+    """
+    from .core_update import (
+        CoreUpdateError,
+        parse_recap,
+        playbook_command,
+        run_playbook,
+        verdict,
+    )
+
+    try:
+        for attempt in (1, 2):
+            command = playbook_command(root, "converge", hosts)
+            print()
+            print(f"{DIM}→ converge #{attempt}: {' '.join(command)}{RESET}")
+            if attempt == 1 and confirm is not None and not confirm():
+                print("cancelled before converge")
+                return 130
+            code, output = run_playbook(root, command)
+            problems = verdict(parse_recap(output), hosts, second=(attempt == 2))
+            if code != 0 or problems:
+                print()
+                for problem in problems or [f"ansible-playbook exited {code}"]:
+                    print(f"{RED}{problem}{RESET}")
+                print(f"{DIM}  handbook: {HANDBOOK}#/flow-core-update{RESET}")
+                return 1
+            print(f"{GREEN}converge #{attempt}: clean{RESET}")
+        return check_readiness(root, hosts)
+    except CoreUpdateError as error:
+        print(f"{RED}{error}{RESET}")
+        return 1
+
+
+def check_readiness(root: Path, hosts: list) -> int:
+    from .core_update import (
+        CoreUpdateError,
+        parse_recap,
+        playbook_command,
+        run_playbook,
+        verdict,
+    )
+
+    command = playbook_command(root, "readiness", hosts)
+    print()
+    print(f"{DIM}→ readiness: {' '.join(command)}{RESET}")
+    try:
+        code, output = run_playbook(root, command)
+    except CoreUpdateError as error:
+        print(f"{RED}{error}{RESET}")
+        return 1
+    problems = verdict(parse_recap(output), hosts, second=False)
+    if code != 0 or problems:
+        for problem in problems or [f"ansible-playbook exited {code}"]:
+            print(f"{RED}{problem}{RESET}")
+        return 1
+    print(f"{GREEN}readiness: passed{RESET}")
+    return 0
+
+
+def converge_action(context: Context, host, prompts) -> Action:
+    questionary, style = prompts
+
+    def run() -> int:
+        code = converge_hosts(
+            context.root,
+            [host.name],
+            confirm=lambda: questionary.confirm(
+                f"Run converge twice on {host.name}?", default=True, style=style
+            ).ask(),
+        )
+        if code == 0:
+            print()
+            print(
+                f"{GREEN}{host.name}: second converge changed nothing, readiness passed{RESET}"
+            )
+        return code
+
+    return Action(
+        "Converge (twice)",
+        f".venv/bin/ansible-playbook otostogan.platform.converge --inventory inventory/hosts.yml --limit {host.name}",
+        run,
+        "#/flow-core-update",
+        remote=True,
+    )
+
+
+def readiness_action(context: Context, host) -> Action:
+    return Action(
+        "Readiness",
+        f".venv/bin/ansible-playbook otostogan.platform.readiness --inventory inventory/hosts.yml --limit {host.name}",
+        lambda: check_readiness(context.root, [host.name]),
+        "#/flow-new-host",
+        remote=True,
+    )
 
 
 def host_actions(context: Context, host, prompts=None) -> list:
@@ -379,6 +524,30 @@ def host_actions(context: Context, host, prompts=None) -> list:
         actions.append(logs_action(context, address, user, identity, prompts))
         actions.append(grafana_action(context, host, prompts))
         actions.append(alerts_action(context, host, prompts))
+    if prompts is not None:
+        actions += [
+            scoped_action(
+                host,
+                prompts,
+                "Backups: take one now",
+                "backup",
+                render_backup_result,
+                "#/flow-backups",
+                timeout=BACKUP_TIMEOUT_SECONDS,
+            ),
+            scoped_action(
+                host,
+                prompts,
+                "Backups: prove restorable",
+                "verify-backup",
+                render_verification,
+                "#/flow-backups",
+                timeout=BACKUP_TIMEOUT_SECONDS,
+            ),
+            converge_action(context, host, prompts),
+            readiness_action(context, host),
+        ]
+        return actions
     actions += [
         Action(
             "Backups: take one now",
@@ -1343,6 +1512,24 @@ def app_actions(context: Context, scope, prompts=None) -> list:
             ["backups", *ident],
             render_backups,
             "#/flow-backups",
+        ),
+        remote_action(
+            "Backups: take one now",
+            target,
+            "ops",
+            ["backup", *ident],
+            render_backup_result,
+            "#/flow-backups",
+            timeout=BACKUP_TIMEOUT_SECONDS,
+        ),
+        remote_action(
+            "Backups: prove restorable",
+            target,
+            "ops",
+            ["verify-backup", *ident],
+            render_verification,
+            "#/flow-backups",
+            timeout=BACKUP_TIMEOUT_SECONDS,
         ),
         validate_action(context.root, scope.manifest),
         secrets_action(context, scope.environment, "push"),
@@ -2482,11 +2669,8 @@ def run_core_update(context: Context, argv: list) -> int:
         host_version,
         install_collection,
         latest_release,
-        parse_recap,
-        playbook_command,
+        preselected,
         rewrite_pin,
-        run_playbook,
-        verdict,
     )
     from .doctor import default_collections_root, installed_collection
 
@@ -2613,11 +2797,12 @@ def run_core_update(context: Context, argv: list) -> int:
             f"{DIM}  converge needs the tailnet — handbook: {HANDBOOK}#/flow-incidents{RESET}"
         )
         return 1
+    ticked = preselected({h.name: v.version for h, v in versions}, target)
     choices = [
         questionary.Choice(
             f"{h.name}  ({v.version or '?'})",
             value=h.name,
-            checked=(v.version != target),
+            checked=h.name in ticked,
         )
         for h, v in versions
     ]
@@ -2629,44 +2814,18 @@ def run_core_update(context: Context, argv: list) -> int:
     ).ask()
     if not chosen:
         print("no hosts chosen — the pin and the collection are updated, hosts are not")
+        print(f"{DIM}  space ticks a host, Enter confirms the ticked ones{RESET}")
         return 0
 
-    try:
-        for attempt in (1, 2):
-            command = playbook_command(root, "converge", chosen)
-            print()
-            print(f"{DIM}→ converge #{attempt}: {' '.join(command)}{RESET}")
-            if (
-                attempt == 1
-                and not questionary.confirm(
-                    "Run converge twice on these hosts?", default=True, style=style
-                ).ask()
-            ):
-                print("cancelled before converge")
-                return 130
-            code, output = run_playbook(root, command)
-            problems = verdict(parse_recap(output), chosen, second=(attempt == 2))
-            if code != 0 or problems:
-                print()
-                for problem in problems or [f"ansible-playbook exited {code}"]:
-                    print(f"{RED}{problem}{RESET}")
-                print(f"{DIM}  handbook: {HANDBOOK}#/flow-core-update{RESET}")
-                return 1
-            print(f"{GREEN}converge #{attempt}: clean{RESET}")
-
-        command = playbook_command(root, "readiness", chosen)
-        print()
-        print(f"{DIM}→ readiness: {' '.join(command)}{RESET}")
-        code, output = run_playbook(root, command)
-        problems = verdict(parse_recap(output), chosen, second=False)
-        if code != 0 or problems:
-            for problem in problems or [f"ansible-playbook exited {code}"]:
-                print(f"{RED}{problem}{RESET}")
-            return 1
-        print(f"{GREEN}readiness: passed{RESET}")
-    except CoreUpdateError as error:
-        print(f"{RED}{error}{RESET}")
-        return 1
+    code = converge_hosts(
+        root,
+        chosen,
+        confirm=lambda: questionary.confirm(
+            "Run converge twice on these hosts?", default=True, style=style
+        ).ask(),
+    )
+    if code != 0:
+        return code
 
     print()
     print(

@@ -30,7 +30,7 @@ from .release_ledger import (
     list_release_records,
     resolve_release_bundle,
 )
-from .restore_runtime import last_verification
+from .restore_runtime import VERIFICATION_SUCCEEDED, last_verification
 from .retire import is_retired
 
 DEFAULT_OUTPUT = Path("/var/lib/platform/observability/textfile/platform.prom")
@@ -398,7 +398,7 @@ def release_samples(
             verification = None
         proven = (
             parse_stamp((verification or {}).get("stamp", ""))
-            if (verification or {}).get("outcome") == "passed"
+            if (verification or {}).get("outcome") == VERIFICATION_SUCCEEDED
             else None
         )
         samples.add(
