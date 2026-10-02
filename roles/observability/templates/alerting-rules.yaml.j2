@@ -1,0 +1,351 @@
+# Alert rules, as files: what is clicked together in the UI does not survive
+# convergence. Rendered by the role with doubled square brackets as variable markers,
+# because the double braces below belong to Grafana's own templates.
+apiVersion: 1
+groups:
+-   orgId: 1
+    name: platform
+    folder: Platform
+    interval: 1m
+    rules:
+    -   uid: platform-container-down
+        title: Container down
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: platform_container_up
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B < 1
+        for: 2m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: critical
+        annotations:
+            summary: '{{ .Labels.host }}: {{ .Labels.container }} is not running'
+            description: 'The container exists but is stopped. Logs: platform console → Logs.'
+    -   uid: platform-release-not-running
+        title: Release not running
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: (platform_release_info * on (project, environment) group_left () (platform_retired == bool 0)) unless on (project, environment) (platform_container_up{service!="postgres"} == 1)
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B > 0
+        for: 2m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: critical
+        annotations:
+            summary: '{{ .Labels.host }}: {{ .Labels.project }}/{{ .Labels.environment }} has no running container'
+            description: The ledger says release {{ .Labels.release }} is serving, but none of its containers is up.
+    -   uid: platform-container-restarting
+        title: Container restarting
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: increase(platform_container_restarts_total[15m])
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B >= [[ observability_alert_restarts ]]
+        for: 0s
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: warning
+        annotations:
+            summary: '{{ .Labels.host }}: {{ .Labels.container }} keeps restarting'
+            description: '{{ printf "%.0f" .Values.B.Value }} restarts in 15 minutes.'
+    -   uid: platform-container-memory
+        title: Container memory near its limit
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: platform_container_memory_bytes / platform_container_memory_limit_bytes * 100
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B > [[ observability_alert_memory_percent ]]
+        for: 10m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: warning
+        annotations:
+            summary: '{{ .Labels.host }}: {{ .Labels.container }} is at {{ printf "%.0f" .Values.B.Value }}% of its memory limit'
+            description: Above the limit the kernel kills the container.
+    -   uid: platform-disk-space
+        title: Disk space low
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: min by (host, mountpoint) (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|vfat|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|vfat|squashfs"} * 100)
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B < [[ observability_alert_disk_free_percent ]]
+        for: 10m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: critical
+        annotations:
+            summary: '{{ .Labels.host }}: {{ printf "%.0f" .Values.B.Value }}% free on {{ .Labels.mountpoint }}'
+            description: Deploys, dumps and the database stop when the disk fills.
+    -   uid: platform-backup-stale
+        title: Backup is stale
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: (time() - platform_backup_latest_timestamp_seconds) / 3600 and on (project, environment) platform_retired == 0
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B > [[ observability_alert_backup_age_hours ]]
+        for: 10m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: critical
+        annotations:
+            summary: '{{ .Labels.host }}: newest dump of {{ .Labels.project }}/{{ .Labels.environment }} is {{ printf "%.0f" .Values.B.Value }} hours old'
+            description: 'The backup timer has not produced a dump. Handbook: #/flow-database.'
+    -   uid: platform-restore-unproven
+        title: Restore is not proven
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: ((time() - platform_backup_verified_dump_timestamp_seconds) / 86400 or on (project, environment) (platform_backup_count > 0) * 0 + 9999) and on (project, environment) platform_retired == 0
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B > [[ observability_alert_restore_proof_age_days ]]
+        for: 1h
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: warning
+        annotations:
+            summary: '{{ .Labels.host }}: no recent proven restore for {{ .Labels.project }}/{{ .Labels.environment }}'
+            description: 'Dumps exist, but none was restored and checked within the allowed age. Run: platform verify-backup.'
+    -   uid: platform-http-errors
+        title: HTTP 5xx rate
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-loki
+            model:
+                refId: A
+                expr: sum by (vhost) (count_over_time({container="platform-nginx"} | json | __error__="" | status=~"5.." [5m])) / sum by (vhost) (count_over_time({container="platform-nginx"} | json | __error__="" [5m])) * 100 and sum by (vhost) (count_over_time({container="platform-nginx"} | json | __error__="" [5m])) >= [[ observability_alert_error_min_requests ]]
+                instant: true
+                queryType: instant
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B > [[ observability_alert_error_percent ]]
+        for: 5m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: warning
+        annotations:
+            summary: '{{ .Labels.vhost }}: {{ printf "%.0f" .Values.B.Value }}% of responses are 5xx'
+            description: Measured over five minutes at the proxy.
+    -   uid: platform-metrics-stale
+        title: Platform metrics stopped
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: time() - platform_metrics_export_timestamp_seconds
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B > 300
+        for: 5m
+        noDataState: Alerting
+        execErrState: OK
+        labels:
+            severity: critical
+        annotations:
+            summary: '{{ .Labels.host }}: platform metrics are not arriving'
+            description: The exporter timer or the collector is down; every other alert is blind until this clears.
+    -   uid: platform-ledger-unreadable
+        title: Release ledger unreadable
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: platform_ledger_readable
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B < 1
+        for: 5m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: critical
+        annotations:
+            summary: '{{ .Labels.host }}: the release ledger cannot be read'
+            description: 'Deploys and rollbacks depend on it. Run: platform status.'

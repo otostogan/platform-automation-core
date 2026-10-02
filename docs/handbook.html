@@ -10843,8 +10843,60 @@ ssh -N -L 13000:&lt;адрес&gt;:3000 ops@{{tailnet}}</code></pre>
   <div class="note">
     <span class="label">Ещё не реализовано</span>
     <p>Свои метрики приложения через блок <code>service.metrics</code> в манифесте,
-    трейсы через <code>PLATFORM_OTLP_ENDPOINT</code>, свои дашборды в пакете выкатки и
-    алерты. Имена зарезервированы, кода за ними пока нет.</p>
+    трейсы через <code>PLATFORM_OTLP_ENDPOINT</code> и свои дашборды в пакете выкатки.
+    Имена зарезервированы, кода за ними пока нет.</p>
+  </div>
+
+  <h2>Алерты</h2>
+  <p>Правила ставятся вместе с хранилищем и проверяются раз в минуту. Они видны в
+  Grafana: <strong>Alerting → Alert rules</strong>, папка <strong>Platform</strong>.
+  Пока канал не назван, правила считаются, но никуда не пишут.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Алерт</th><th>Когда срабатывает</th><th>Порог в инвентаре</th></tr></thead>
+    <tbody>
+      <tr><td>Container down</td><td>контейнер существует, но остановлен 2 минуты</td><td>—</td></tr>
+      <tr><td>Release not running</td><td>журнал говорит, что релиз обслуживает, а ни один его контейнер не работает</td><td>—</td></tr>
+      <tr><td>Container restarting</td><td>перезапуски одного контейнера за 15 минут</td><td><code>observability_alert_restarts</code>, 3</td></tr>
+      <tr><td>Container memory near its limit</td><td>память выше доли предела 10 минут</td><td><code>observability_alert_memory_percent</code>, 90</td></tr>
+      <tr><td>Disk space low</td><td>свободного места на разделе меньше доли</td><td><code>observability_alert_disk_free_percent</code>, 15</td></tr>
+      <tr><td>Backup is stale</td><td>последний дамп старше стольких часов</td><td><code>observability_alert_backup_age_hours</code>, 26</td></tr>
+      <tr><td>Restore is not proven</td><td>дампы есть, а доказанного восстановления нет или оно старше стольких дней</td><td><code>observability_alert_restore_proof_age_days</code>, 30</td></tr>
+      <tr><td>HTTP 5xx rate</td><td>доля ответов 5xx по домену за 5 минут; при меньшем числе запросов вердикта нет</td><td><code>observability_alert_error_percent</code>, 5; <code>observability_alert_error_min_requests</code>, 20</td></tr>
+      <tr><td>Platform metrics stopped</td><td>метрики платформы не приходят 5 минут — остальные правила слепы</td><td>—</td></tr>
+      <tr><td>Release ledger unreadable</td><td>журнал релизов не читается</td><td>—</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Первые два, диск, дамп и два последних — <code>critical</code>, повтор раз в 4 часа,
+  пока не починено. Остальные — <code>warning</code>, повтор раз в сутки. Отключённое
+  (retired) приложение алертов по дампам и релизу не поднимает.</p>
+
+  <h3>Подключить Telegram</h3>
+  <ol>
+    <li>В Telegram откройте чат с <strong>@BotFather</strong> → <code>/newbot</code> →
+    имя и логин бота. В ответе — токен вида <code>123456:AA…</code>.</li>
+    <li>Положите токен в файл на рабочей машине:
+<pre><code>umask 077
+pbpaste &gt; {{keydir}}/telegram-alerts.token</code></pre></li>
+    <li>Напишите боту любое сообщение — или добавьте его в группу и напишите там. Затем
+    узнайте номер чата: поле <code>chat.id</code> в ответе. У группы он отрицательный.
+<pre><code>curl -s "https://api.telegram.org/bot$(cat {{keydir}}/telegram-alerts.token)/getUpdates"</code></pre></li>
+    <li>В игнорируемом <code>inventory/host_vars/{{host}}/local-secrets.yml</code>:
+<pre><code>observability_alerts_telegram_token_source: {{keydir}}/telegram-alerts.token
+observability_alerts_telegram_chat_id: "&lt;chat.id&gt;"</code></pre></li>
+    <li>Конвергенция.</li>
+  </ol>
+  <div class="expect">
+    <span class="label">Как понять, что получилось</span>
+    <p>В Grafana: <strong>Alerting → Contact points → platform-telegram → Test</strong> —
+    в чат приходит пробное сообщение. Токена в файлах на сервере нет: он лежит только в
+    <code>/etc/platform/observability.env</code> с правами <code>0600</code>.</p>
+  </div>
+  <div class="note">
+    <span class="label">Чего алерты не увидят</span>
+    <p>Grafana живёт на том же сервере, за которым следит. Если сервер недоступен
+    целиком, писать будет некому. Это ловит только проверка снаружи.</p>
   </div>
 
   <h2>Сколько хранится и сколько весит</h2>

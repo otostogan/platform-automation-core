@@ -1,0 +1,38 @@
+apiVersion: 1
+
+# Installed as grafana/provisioning/alerting/notifications.yaml when the
+# inventory names a Telegram bot token and a chat. The token never appears
+# here: Grafana reads it from its environment.
+contactPoints:
+    - orgId: 1
+      name: platform-telegram
+      receivers:
+          - uid: platform-telegram
+            type: telegram
+            disableResolveMessage: false
+            settings:
+                bottoken: $OBSERVABILITY_ALERTS_TELEGRAM_TOKEN
+                chatid: "$OBSERVABILITY_ALERTS_TELEGRAM_CHAT_ID"
+                parse_mode: "None"
+                message: |
+                    {{ range .Alerts }}{{ if eq .Status "firing" }}🔴{{ else }}🟢 resolved:{{ end }} {{ .Annotations.summary }}
+                    {{ .Annotations.description }}
+
+                    {{ end }}
+
+policies:
+    - orgId: 1
+      receiver: platform-telegram
+      group_by:
+          - alertname
+          - host
+          - project
+          - environment
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+          - receiver: platform-telegram
+            object_matchers:
+                - ["severity", "=", "warning"]
+            repeat_interval: 24h

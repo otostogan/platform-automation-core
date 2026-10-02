@@ -27,6 +27,22 @@ observability_metrics_retention: 30d
 # ignored local-secrets.yml. Only the backend half needs it.
 observability_grafana_admin_password_source: ""
 
+# Alerts. The rules are always installed and evaluated; they are delivered
+# only when a channel is named. The bot token is a controller-local file, set
+# in the ignored local-secrets.yml like the Grafana password; the chat is the
+# numeric id of the person or group the bot writes to.
+observability_alerts_telegram_token_source: ""
+observability_alerts_telegram_chat_id: ""
+
+# Thresholds of the provisioned rules.
+observability_alert_restarts: 3 # restarts of one container in 15 minutes
+observability_alert_memory_percent: 90 # of the container's memory limit
+observability_alert_disk_free_percent: 15 # free space, per filesystem
+observability_alert_backup_age_hours: 26 # age of the newest dump
+observability_alert_restore_proof_age_days: 30 # age of the last proven restore
+observability_alert_error_percent: 5 # share of 5xx responses per domain
+observability_alert_error_min_requests: 20 # in 5 minutes, below this no verdict
+
 observability_loki_memory: 2g
 observability_prometheus_memory: 1g
 observability_grafana_memory: 768m
@@ -43,6 +59,7 @@ observability_bundle_directories:
     - grafana/provisioning
     - grafana/provisioning/datasources
     - grafana/provisioning/dashboards
+    - grafana/provisioning/alerting
     - grafana/dashboards
 
 observability_bundle_files:

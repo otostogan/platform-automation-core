@@ -103,6 +103,9 @@ services:
             GF_NEWS_NEWS_FEED_ENABLED: "false"
             GF_LOG_LEVEL: warn
             GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/application.json
+            # Read by the provisioned notification channel.
+            OBSERVABILITY_ALERTS_TELEGRAM_TOKEN: ${OBSERVABILITY_ALERTS_TELEGRAM_TOKEN:-}
+            OBSERVABILITY_ALERTS_TELEGRAM_CHAT_ID: ${OBSERVABILITY_ALERTS_TELEGRAM_CHAT_ID:-}
         networks:
             observability:
                 aliases:

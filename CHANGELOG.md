@@ -7,6 +7,15 @@ release.
 
 ## [Unreleased]
 
+- Add alert rules to the `observability` role: stopped containers, a serving
+  release with nothing running, restart loops, memory near the limit, low
+  disk, stale dumps, unproven restores, the 5xx share per domain, and a
+  platform that stopped reporting. Thresholds are inventory variables
+  (`observability_alert_*`). Rules are always installed; they are delivered
+  to Telegram once `observability_alerts_telegram_token_source` and
+  `observability_alerts_telegram_chat_id` are set. The token stays in a
+  controller-local file and reaches Grafana only through its environment.
+
 ## [0.20.1] - 2026-10-02
 
 - `platform new host` generates the Grafana administrator password next to

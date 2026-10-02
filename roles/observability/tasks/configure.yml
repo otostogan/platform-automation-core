@@ -12,6 +12,27 @@
           The observability backend needs observability_grafana_admin_password_source
           in the ignored local-secrets.yml, and the collector needs both write URLs.
 
+- name: Validate alert delivery configuration
+  ansible.builtin.assert:
+      that:
+          - >-
+              (observability_alerts_telegram_token_source | length > 0)
+              == (observability_alerts_telegram_chat_id | string | length > 0)
+          - >-
+              observability_alerts_telegram_chat_id | string | length == 0
+              or observability_alerts_telegram_chat_id | string is match("^-?[0-9]+$")
+          - observability_alert_restarts | int > 0
+          - observability_alert_memory_percent | int > 0
+          - observability_alert_disk_free_percent | int > 0
+          - observability_alert_backup_age_hours | int > 0
+          - observability_alert_restore_proof_age_days | int > 0
+          - observability_alert_error_percent | int > 0
+          - observability_alert_error_min_requests | int > 0
+      fail_msg: >-
+          Telegram alerts need both observability_alerts_telegram_token_source and
+          a numeric observability_alerts_telegram_chat_id, or neither; every
+          observability_alert_* threshold is a positive number.
+
 - name: Create observability installation directory
   ansible.builtin.file:
       path: "{{ observability_install_directory }}"
@@ -82,6 +103,29 @@
   notify:
       - Restart platform observability backend
       - Restart platform observability collector
+
+- name: Install alert rules
+  ansible.builtin.template:
+      src: alerting-rules.yaml.j2
+      dest: "{{ observability_install_directory }}/grafana/provisioning/alerting/rules.yaml"
+      owner: root
+      group: root
+      mode: "0644"
+      variable_start_string: "[["
+      variable_end_string: "]]"
+  notify: Restart platform observability backend
+  when: observability_backend_enabled | bool
+
+- name: Install alert notification channel
+  ansible.builtin.copy:
+      src: >-
+          alerting/{{ 'telegram' if observability_alerts_telegram_token_source | length > 0 else 'none' }}.yaml
+      dest: "{{ observability_install_directory }}/grafana/provisioning/alerting/notifications.yaml"
+      owner: root
+      group: root
+      mode: "0644"
+  notify: Restart platform observability backend
+  when: observability_backend_enabled | bool
 
 - name: Install observability environment
   ansible.builtin.template:
