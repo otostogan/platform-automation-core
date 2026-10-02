@@ -30,6 +30,12 @@ platform_cli_offsite_credentials: /etc/platform/keys/s3.env
 platform_cli_backup_timeout: 3600
 platform_cli_backup_default_interval: 360
 
+# Restoring the newest dump of every application into a throwaway container,
+# on a calendar. The alert "Restore is not proven" watches the result.
+platform_cli_verify_enabled: true
+platform_cli_verify_schedule: "Sun *-*-* 04:00:00"
+platform_cli_verify_timeout: 7200
+
 platform_cli_tool_files:
     - __init__.py
     - backup_offsite.py

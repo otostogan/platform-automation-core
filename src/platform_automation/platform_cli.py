@@ -438,7 +438,20 @@ def parse_arguments(
         "verify-backup",
         help="Restore a backup into a throwaway container and query it.",
     )
-    add_identity_arguments(verify_parser)
+    verify_parser.add_argument("--project", help="Application project name.")
+    verify_parser.add_argument(
+        "--environment",
+        choices=("lab", "staging", "production"),
+        help="Deployment environment. Required with --project.",
+    )
+    verify_parser.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "Verify the newest backup of every application whose release asks "
+            "for scheduled backups. This is what the weekly timer runs."
+        ),
+    )
     verify_parser.add_argument(
         "--from",
         dest="stamp",
@@ -2234,6 +2247,106 @@ def run_restore(
         return 1
 
 
+def run_verify_every_backup(
+    arguments: argparse.Namespace,
+    projects_root: Path,
+    releases_root: Path,
+    databases_root: Path,
+    backups_root: Path,
+    runtime_secrets_root: Path,
+    age_key_file: Path,
+    sops_executable: Path,
+    age_executable: Path,
+    docker_executable: Path,
+    minimum_age_recipients: int,
+    verifier,
+) -> int:
+    """Prove the newest dump of every application that asks for dumps.
+
+    One application's failure does not stop the others: each is tried, each
+    outcome is reported, and the exit code is non-zero if any proof failed.
+    An application that is retired, asks for no scheduled dumps or has none
+    yet is skipped and says why.
+    """
+    try:
+        scopes = list_project_scopes(projects_root)
+    except (ReleaseLedgerError, OSError) as error:
+        print(f"verify-backup error: {error}", file=sys.stderr)
+        return 1
+
+    results = []
+    for project, environment in scopes:
+        entry: dict[str, Any] = {"project": project, "environment": environment}
+        results.append(entry)
+        try:
+            if is_retired(projects_root, project, environment):
+                entry.update(outcome="skipped", reason="retired")
+                continue
+            manifest, _ = load_current_manifest(
+                projects_root,
+                releases_root,
+                project,
+                environment,
+                minimum_age_recipients,
+            )
+            if not backups_are_scheduled(manifest):
+                entry.update(outcome="skipped", reason="no scheduled backups")
+                continue
+            if not list_backups(backups_root / project / environment):
+                entry.update(outcome="skipped", reason="no backup yet")
+                continue
+            document = verifier(
+                manifest=manifest,
+                project=project,
+                environment=environment,
+                stamp=None,
+                databases_root=databases_root,
+                backups_root=backups_root,
+                runtime_secrets_root=runtime_secrets_root,
+                age_key_file=age_key_file,
+                sops_executable=sops_executable,
+                age_executable=age_executable,
+                docker_executable=docker_executable,
+            )
+            entry.update(
+                outcome=document["outcome"],
+                stamp=document["stamp"],
+                result=document["result"],
+            )
+        except (
+            RestoreRuntimeError,
+            DatabaseRuntimeError,
+            ReleaseLedgerError,
+            OSError,
+            KeyError,
+        ) as error:
+            entry.update(outcome="failed", error=str(error)[:2048])
+
+    failed = [entry for entry in results if entry["outcome"] == "failed"]
+    if arguments.json:
+        print(
+            json.dumps(
+                {"operation": "verify-backup", "scopes": results},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    else:
+        for entry in results:
+            detail = entry.get("reason") or entry.get("error") or entry.get("stamp")
+            print(
+                f"{entry['project']}/{entry['environment']}: "
+                f"{entry['outcome']} ({detail})"
+            )
+    for entry in failed:
+        print(
+            f"verify-backup error: {entry['project']}/{entry['environment']}: "
+            f"{entry['error']}",
+            file=sys.stderr,
+        )
+    return 1 if failed else 0
+
+
 def run_verify_backup(
     arguments: argparse.Namespace,
     projects_root: Path,
@@ -2249,6 +2362,35 @@ def run_verify_backup(
     minimum_age_recipients: int,
     verifier=verify_backup,
 ) -> int:
+    everything = getattr(arguments, "all", False)
+    if everything and (arguments.project or arguments.environment or arguments.stamp):
+        print(
+            "verify-backup error: --all takes no --project, --environment or --from",
+            file=sys.stderr,
+        )
+        return 2
+    if not everything and not (arguments.project and arguments.environment):
+        print(
+            "verify-backup error: name --project and --environment, or pass --all",
+            file=sys.stderr,
+        )
+        return 2
+    if everything:
+        return run_verify_every_backup(
+            arguments,
+            projects_root,
+            releases_root,
+            databases_root,
+            backups_root,
+            runtime_secrets_root,
+            age_key_file,
+            sops_executable,
+            age_executable,
+            docker_executable,
+            minimum_age_recipients,
+            verifier,
+        )
+
     try:
         manifest, _ = load_current_manifest(
             projects_root,

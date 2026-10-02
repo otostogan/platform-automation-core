@@ -82,6 +82,39 @@ class PlatformCliRoleFilesTest(unittest.TestCase):
 
                     self.assertNotIn("${", line, unit.name)
 
+    def test_the_restore_proof_runs_on_a_calendar_for_every_application(self) -> None:
+        templates = ROOT / "roles" / "platform_cli" / "templates"
+        service = (templates / "platform-verify-backups.service.j2").read_text(
+            encoding="utf-8"
+        )
+        timer = (templates / "platform-verify-backups.timer.j2").read_text(
+            encoding="utf-8"
+        )
+        backup = (templates / "platform-backup@.service.j2").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "ExecStart={{ platform_cli_executable }} verify-backup --all --json",
+            service,
+        )
+        # the same confinement as the backup it proves
+        for line in backup.splitlines():
+            if line.startswith(
+                ("Protect", "Restrict", "NoNew", "ReadWrite", "Private")
+            ):
+                self.assertIn(line, service)
+        self.assertIn("OnCalendar={{ platform_cli_verify_schedule }}", timer)
+        self.assertIn("Persistent=true", timer)
+
+        tasks = (ROOT / "roles" / "platform_cli" / "tasks" / "main.yml").read_text(
+            encoding="utf-8"
+        )
+        for name in (
+            "platform-verify-backups.service",
+            "platform-verify-backups.timer",
+        ):
+            self.assertIn(f"- {name}", tasks)
+        self.assertIn('enabled: "{{ platform_cli_verify_enabled | bool }}"', tasks)
+
     def test_every_contract_is_installed(self) -> None:
         contracts = {
             path.name for path in (RUNTIME_PACKAGE / "contracts").glob("*.json")

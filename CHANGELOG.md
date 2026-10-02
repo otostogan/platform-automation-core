@@ -7,6 +7,14 @@ release.
 
 ## [Unreleased]
 
+- Prove restores on a calendar. `platform verify-backup --all` restores the
+  newest dump of every application whose release asks for scheduled dumps;
+  `platform-verify-backups.timer` runs it weekly (Sunday 04:00 UTC by
+  default, `platform_cli_verify_schedule`; off with
+  `platform_cli_verify_enabled: false`). Until now nothing ran the proof, so
+  "Restore is not proven" would come back thirty days after the last manual
+  run.
+
 ## [0.21.2] - 2026-10-02
 
 - Fix the metrics exporter rounding every value to six significant digits.
