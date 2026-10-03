@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-03
+
 - Applications can publish their own metrics. A manifest may declare
   `service.metrics` with a `path` and a `port`; the platform scrapes that
   endpoint every thirty seconds on each web container of the serving
