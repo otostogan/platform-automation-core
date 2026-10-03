@@ -548,6 +548,13 @@ def bootstrap_action(
                 return 130
         else:
             state, key_path = bootstrap.auth_key_state(root)
+            if state == "symlink":
+                print(
+                    f"{RED}{key_path} is a symbolic link; the tailnet auth key must be"
+                    f" a regular file{RESET}"
+                )
+                print(f"{DIM}  handbook: {HANDBOOK}#/flow-new-host{RESET}")
+                return 1
             if state == "missing-file":
                 print(f"{RED}the tailnet auth key is not at {key_path}{RESET}")
                 print(
@@ -638,6 +645,10 @@ def bootstrap_action(
         f".venv/bin/ansible-playbook otostogan.platform.bootstrap --inventory inventory/bootstrap.yml --limit {host.name}",
         run,
         "#/flow-new-host",
+        # The first step goes over the public address, but the run cannot end
+        # without this workstation on the tailnet — and a stopped client here
+        # would read as "a new host" and spend the one-off key for nothing.
+        remote=True,
     )
 
 

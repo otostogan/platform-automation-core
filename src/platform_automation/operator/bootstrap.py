@@ -20,7 +20,8 @@ from .context import load_yaml
 BOOTSTRAP_INVENTORY = "inventory/bootstrap.yml"
 SHARED_SECRETS = "inventory/group_vars/all/local-secrets.yml"
 AUTH_KEY = "tailscale_auth_key_source"
-HANDOVER = "id && hostname && sudo -n true && tailscale ip"
+# printenv, not $SSH_CONNECTION: nothing here is left for a shell to expand.
+HANDOVER = "id && hostname && sudo -n true && printenv SSH_CONNECTION && tailscale ip"
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,7 @@ def bootstrap_entry(root: Path, name: str) -> Optional[Entry]:
 
 
 def auth_key_state(root: Path) -> tuple:
-    """``("ok" | "missing-file" | "not-configured", path or None)``.
+    """``("ok" | "missing-file" | "symlink" | "not-configured", path or None)``.
 
     Without the setting the role installs Tailscale and prints a
     ``tailscale up`` command for a human; that is a supported path, just not
@@ -66,6 +67,10 @@ def auth_key_state(root: Path) -> tuple:
     if not isinstance(value, str) or not value:
         return "not-configured", None
     path = Path(value).expanduser()
+    # The role refuses a symlink, and only after earlier roles have already
+    # changed the host; refuse it here, before anything has.
+    if path.is_symlink():
+        return "symlink", path
     return ("ok" if path.is_file() else "missing-file"), path
 
 
@@ -126,21 +131,46 @@ def wait_for_handover(
 ) -> tuple:
     """The tailnet needs a moment to learn the new machine; ask a few times.
 
-    Success needs a tailnet address in the answer: SSH that works while
-    ``tailscale ip`` prints nothing means the host is reachable some other
-    way, and convergence would then close that way.
+    Success needs this very session to have arrived at one of the host's
+    tailnet addresses. SSH that works some other way — the public interface,
+    a stale address in the inventory — proves nothing: convergence checks the
+    same thing and would refuse, or would close the way that did work.
     """
     reason = "never tried"
     for attempt in range(attempts):
         ok, output = answers(command, runner)
-        if ok and any(is_address(line) for line in output.splitlines()):
-            return True, output
-        reason = (
-            output if not ok else "ops answers, but tailscale ip printed no address"
-        )
+        if ok:
+            problem = handover_problem(output)
+            if problem is None:
+                return True, output
+            reason = problem
+        else:
+            reason = output
         if attempt + 1 < attempts:
             sleeper(pause)
     return False, reason
+
+
+def handover_problem(output: str) -> Optional[str]:
+    """Why the probe's answer is not a handover; ``None`` when it is one."""
+    lines = [line.strip() for line in output.splitlines()]
+    addresses = {line for line in lines if is_address(line)}
+    if not addresses:
+        return "ops answers, but tailscale ip printed no address"
+    # SSH_CONNECTION: client address, client port, server address, server port
+    arrived = [
+        fields[2]
+        for fields in (line.split() for line in lines)
+        if len(fields) == 4 and is_address(fields[0]) and is_address(fields[2])
+    ]
+    if not arrived:
+        return "ops answers, but the session did not report where it arrived"
+    if arrived[0] not in addresses:
+        return (
+            f"ops answers at {arrived[0]}, which is not a tailnet address of the host"
+            " — the inventory address does not go through the tailnet"
+        )
+    return None
 
 
 def is_address(line: str) -> bool:

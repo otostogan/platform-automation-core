@@ -48,7 +48,10 @@ class World:
             return subprocess.CompletedProcess(command, code, out.encode(), b"denied")
         if self.on_tailnet:
             return subprocess.CompletedProcess(
-                command, 0, b"uid=1000(ops)\nhost\n192.0.2.7\n", b""
+                command,
+                0,
+                b"uid=1000(ops)\nhost\n198.51.100.4 50000 192.0.2.7 22\n192.0.2.7\n",
+                b"",
             )
         return subprocess.CompletedProcess(command, 255, b"", b"timed out")
 
@@ -179,6 +182,22 @@ class BootstrapFlowTest(unittest.TestCase):
         self.assertNotIn(f"root@{PUBLIC}", world.ssh)
         self.assertIn("tailnet auth key is not at", output)
 
+    def test_a_symlinked_tailnet_key_stops_before_touching_the_host(self) -> None:
+        real = self.key.with_name("real.key")
+        self.key.rename(real)
+        self.key.symlink_to(real)
+        world = World()
+        code, output = self.run_action(world, [])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(world.plays, [])
+        self.assertNotIn(f"root@{PUBLIC}", world.ssh)
+        self.assertIn("symbolic link", output)
+
+    def test_the_action_waits_for_this_workstation_to_be_on_the_tailnet(self) -> None:
+        action = bootstrap_action(self.context, self.host, (Prompts([]), None))
+        self.assertTrue(action.remote)
+
     def test_without_the_key_setting_the_console_does_not_start(self) -> None:
         self.write("inventory/group_vars/all/local-secrets.yml", "other: 1\n")
         world = World()
@@ -223,6 +242,24 @@ class HandoverTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("no address", reason)
 
+    def test_a_session_that_arrived_elsewhere_is_not_a_handover(self) -> None:
+        # the host has a tailnet address, but this SSH came in by another one
+        answer = "uid=1000(ops)\nhost\n198.51.100.4 50000 203.0.113.11 22\n192.0.2.7\n"
+        self.assertIn("not a tailnet address", bootstrap.handover_problem(answer))
+        self.assertIsNone(
+            bootstrap.handover_problem(
+                "uid=1000(ops)\nhost\n198.51.100.4 50000 192.0.2.7 22\n192.0.2.7\n"
+            )
+        )
+        self.assertIn(
+            "did not report where it arrived",
+            bootstrap.handover_problem("uid=1000(ops)\nhost\n192.0.2.7\n"),
+        )
+
+    def test_the_probe_reports_where_the_session_arrived(self) -> None:
+        self.assertIn("printenv SSH_CONNECTION", bootstrap.HANDOVER)
+        self.assertNotIn("$", bootstrap.HANDOVER)
+
     def test_the_tailnet_is_asked_again_while_it_learns_the_machine(self) -> None:
         answers = iter([255, 255, 0])
         slept = []
@@ -230,7 +267,14 @@ class HandoverTest(unittest.TestCase):
         def runner(command, **_):
             code = next(answers)
             return subprocess.CompletedProcess(
-                command, code, b"2001:db8::9\n" if code == 0 else b"", b"no route"
+                command,
+                code,
+                (
+                    b"2001:db8::1 50000 2001:db8::9 22\n2001:db8::9\n"
+                    if code == 0
+                    else b""
+                ),
+                b"no route",
             )
 
         ok, _ = bootstrap.wait_for_handover(
