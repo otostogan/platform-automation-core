@@ -280,7 +280,9 @@ def parse_arguments(
         "infra",
         help="List, register or forget infrastructure repositories on this workstation.",
     )
-    infra_parser.add_argument("action", choices=("list", "add", "forget"))
+    infra_parser.add_argument(
+        "action", nargs="?", default="list", choices=("list", "add", "forget")
+    )
     infra_parser.add_argument(
         "path", nargs="?", help="Repository path for add and forget."
     )

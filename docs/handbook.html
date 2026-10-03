@@ -1299,6 +1299,7 @@
 					<h4>Справка</h4>
 					<a href="#/ref-host-map">Карта хоста</a>
 					<a href="#/ref-releases">Реестр релизов</a>
+					<a href="#/ref-console">Операторская консоль</a>
 					<a href="#/ref-cli">Справочник CLI</a>
 </div>
 			</nav>
@@ -12284,6 +12285,242 @@ After=platform-secrets-recovery.service</code></pre>
 				</section>
 
 				<!-- ============================================================ -->
+<section class="page" id="ref-console">
+  <h1>Операторская консоль</h1>
+  <p class="lede">Та же команда <code>platform</code>, но на рабочей машине. Она ведёт
+  по шагам этого справочника и сама запускает то, что в нём написано: выкатку, откат,
+  обновление ядра, работу с бэкапами и базой, заведение нового хоста и приложения.
+  Ничего сверх справочника она не умеет, и это намеренно.</p>
+
+  <h2>Что она обещает</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Правило</th><th>Что из него следует</th></tr></thead>
+    <tbody>
+      <tr><td>Одна команда, смысл по месту</td><td>В репозитории инфраструктуры она говорит о серверах, в репозитории приложения — об окружениях. Запоминать подкоманды не нужно</td></tr>
+      <tr><td>Не хранит секретов</td><td>В её настройках только пути к файлам. Ключи и токены лежат там, где лежали, с правами <code>0600</code></td></tr>
+      <tr><td>Показывает команду до запуска</td><td>Каждое действие сначала печатает, что именно будет выполнено. Эту строку можно повторить руками</td></tr>
+      <tr><td>Ничего не коммитит</td><td>Она пишет файлы и говорит, какие. Коммит — ваш</td></tr>
+      <tr><td>Не нуждается в root на рабочей машине</td><td>Привилегии есть только на сервере, через <code>sudo -n platform</code> у пользователя <code>ops</code>. Запускайте консоль от своего пользователя: под <code>sudo</code> она не откажет, но ключи, репозитории и настройки достанутся root</td></tr>
+      <tr><td>Разрушительное не проще, чем в справочнике</td><td>Восстановление, очистка и bootstrap проходят те же проверки в том же порядке, а имя проекта набирается руками</td></tr>
+      <tr><td>Ссылается на справочник</td><td>После действия и при отказе печатается раздел, где это объяснено</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>Поставить</h2>
+  <p>Консоль — часть того же пакета, что и серверная команда; ей нужно дополнение
+  <code>operator</code>. Версия берётся та же, что закреплена в
+  <code>requirements.yml</code> инфраструктуры.</p>
+<pre><code>python3 -m venv ~/.local/share/platform-console
+~/.local/share/platform-console/bin/pip install \
+  "platform-automation-runtime[operator] @ https://github.com/otostogan/platform-automation-core/releases/download/v0.23.0/platform_automation_runtime-0.23.0-py3-none-any.whl"
+mkdir -p ~/.local/bin
+ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform</code></pre>
+  <p>Папка <code>~/.local/bin</code> должна быть в <code>PATH</code>; если
+  <code>which platform</code> ничего не находит, добавьте её в профиль оболочки.</p>
+  <div class="expect">
+    <span class="label">Как понять, что получилось</span>
+    <p><code>platform doctor</code> в любой папке печатает первой строкой версию и
+    заканчивается <code>all checks passed</code> либо числом несошедшихся проверок.</p>
+  </div>
+  <div class="note">
+    <span class="label">Одна консоль на машину</span>
+    <p>Если в терминале активно виртуальное окружение со своей копией пакета, запустится
+    она, а не та, что в <code>~/.local/bin</code>. Версию видно в первой строке любого
+    запуска; <code>which platform</code> показывает, какая именно отвечает.</p>
+  </div>
+
+  <h2>Где её запускать</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Где вы стоите</th><th>Что открывает <code>platform</code></th></tr></thead>
+    <tbody>
+      <tr><td>Репозиторий инфраструктуры</td><td>Список серверов из <code>inventory/hosts.yml</code>, затем действия с выбранным</td></tr>
+      <tr><td>Репозиторий приложения</td><td>Список окружений из <code>deploy/platform.&lt;окружение&gt;.yml</code>, затем действия с выбранным</td></tr>
+      <tr><td>Любая другая папка</td><td>«Nothing to operate here» — начать можно с <code>platform new</code></td></tr>
+      <tr><td>Сервер платформы</td><td>Консоль не запускается: там <code>platform</code> — серверная команда из <a href="#/ref-cli">Справочника CLI</a></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Корень репозитория ищется вверх от текущей папки, так что запускать можно из
+  любой вложенной. Папка с ключами репозиторием не является — оттуда консоль ничего
+  не откроет.</p>
+
+  <h2>Команды</h2>
+  <p class="jumplist">
+    <a data-goto="ref-console-menu">platform</a>
+    <a data-goto="ref-console-new">new</a>
+    <a data-goto="ref-console-update">update</a>
+    <a data-goto="ref-console-doctor">doctor</a>
+    <a data-goto="ref-console-secrets">secrets</a>
+    <a data-goto="ref-console-infra">infra</a>
+  </p>
+
+  <article class="card" id="ref-console-menu">
+    <h3><code>platform</code></h3>
+    <p>Меню. Выбираете сервер или окружение, затем действие; после действия консоль
+    возвращается к первому вопросу. Выход — пункт Exit, Esc или Ctrl-C.</p>
+    <dl>
+      <dt>Нужен терминал</dt>
+      <dd>Меню интерактивное. Без терминала работают только <code>doctor</code>,
+      <code>secrets</code>, <code>infra</code> и <code>update</code> с
+      <code>--check</code> или <code>--yes</code>.</dd>
+      <dt>Нужна частная сеть</dt>
+      <dd>Действия, которые ходят на сервер, сначала проверяют Tailscale на вашей
+      машине и при выключенном клиенте останавливаются, ничего не запустив.</dd>
+    </dl>
+  </article>
+
+  <article class="card" id="ref-console-new">
+    <h3><code>platform new [app | host | company-infra]</code></h3>
+    <p>Заводит новое по вопросам. Каждый вопрос можно пройти назад (<code>&lt;</code>),
+    перед записью показываются все ответы. Существующие файлы не перезаписываются.</p>
+    <dl>
+      <dt><code>company-infra</code></dt>
+      <dd>В пустой папке: репозиторий инфраструктуры с первым хостом. Сама создаёт
+      SSH-ключ оператора, age-ключи хоста и восстановления, пароль Grafana.
+      Спрашивает только то, что знает компания: имя, контакт для Let's Encrypt, адрес
+      первого сервера. Дальше — <a href="#/flow-new-host">Новый хост</a>.</dd>
+      <dt><code>host</code></dt>
+      <dd>В репозитории инфраструктуры: хост в оба инвентаря, его age-ключ, пароль
+      Grafana, строка в <code>docs/RECIPIENTS.md</code>. Инвентари правятся как текст,
+      комментарии в них сохраняются.</dd>
+      <dt><code>app</code></dt>
+      <dd>В репозитории приложения: <code>deploy/</code>, три workflow, три хука,
+      <code>.sops.yaml</code>. Версию ядра и получателей берёт из зарегистрированной
+      инфраструктуры. Дальше — <a href="#/flow-new-app">Новое приложение</a>.</dd>
+    </dl>
+  </article>
+
+  <article class="card" id="ref-console-update">
+    <h3><code>platform update [--check | --yes]</code></h3>
+    <p>Приводит к актуальной версии то, чем владеет платформа. Что именно — зависит от
+    репозитория.</p>
+    <dl>
+      <dt>В репозитории приложения</dt>
+      <dd>Заново отрисовывает workflow, хуки и <code>.sops.yaml</code> из шаблонов
+      консоли и показывает разницу. Файл платформы помечен первой строкой
+      <code>platform-managed</code>; уберите её — и файл ваш, <code>update</code> его
+      больше не тронет. Манифесты, compose и <code>.env.*</code> не трогаются никогда.</dd>
+      <dt>В репозитории инфраструктуры</dt>
+      <dd>Обновление ядра: показывает версию каждого хоста, переносит пин, ставит
+      коллекцию, прогоняет конвергенцию дважды и проверку готовности. Подробно —
+      <a href="#/flow-core-update">Обновление ядра</a>.</dd>
+      <dt>Флаги</dt>
+      <dd><code>--check</code> — только отчёт, код возврата 1, если что-то отстало;
+      годится для CI. <code>--yes</code> — записать без вопроса (в приложении).</dd>
+    </dl>
+  </article>
+
+  <article class="card" id="ref-console-doctor">
+    <h3><code>platform doctor</code></h3>
+    <p>Отвечает на вопрос «почему не заработает» до того, как что-то запущено. Ничего не
+    спрашивает, поэтому работает из скрипта, и ничего не меняет ни в репозитории, ни на
+    серверах. Одно исключение — как у любой команды консоли: первый запуск в репозитории
+    инфраструктуры записывает его путь в <code>~/.config/platform/config.yml</code>.</p>
+    <dl>
+      <dt>В инфраструктуре проверяет</dt>
+      <dd>Tailscale на этой машине; коллекция установлена и совпадает с пином;
+      версия ansible-core; у каждого хоста — пользователь, файл age-ключа и его права,
+      виден ли хост в частной сети.</dd>
+      <dt>В приложении проверяет</dt>
+      <dd>Манифест и compose по контракту; секреты зашифрованы и нужному числу
+      получателей; хуки включены; шифротекст не отстал от <code>.env</code>; в
+      workflow заданы тег частной сети и целевой хост; версия ядра и получатели
+      совпадают с инфраструктурой; файлы платформы не отстали от шаблонов.</dd>
+      <dt>Чем заканчивается</dt>
+      <dd>У каждой несошедшейся проверки — раздел справочника. Код возврата 1, если
+      есть хоть одна.</dd>
+    </dl>
+  </article>
+
+  <article class="card" id="ref-console-secrets">
+    <h3><code>platform secrets push [окружение] [--stale] [--stage]</code><br>
+    <code>platform secrets pull &lt;окружение&gt;</code></h3>
+    <p>Вы правите обычный <code>.env.&lt;окружение&gt;</code>; в git уходит только
+    шифротекст <code>deploy/secrets.&lt;окружение&gt;.sops.yaml</code>.</p>
+    <dl>
+      <dt><code>push</code></dt>
+      <dd>Шифрует <code>.env</code> в шифротекст. Нужны только публичные получатели из
+      <code>.sops.yaml</code>. <code>--stale</code> — только отставшие окружения,
+      <code>--stage</code> — сразу добавить результат в индекс git. Это вызывает хук
+      перед коммитом, руками обычно не нужно.</dd>
+      <dt><code>pull</code></dt>
+      <dd>Расшифровывает шифротекст обратно в <code>.env</code>. Единственный шаг,
+      которому нужен приватный ключ.</dd>
+      <dt>Когда секрет начинает действовать</dt>
+      <dd>Только после выкатки. Горячей подмены нет: значение приезжает с релизом.</dd>
+    </dl>
+  </article>
+
+  <article class="card" id="ref-console-infra">
+    <h3><code>platform infra [list | add &lt;путь&gt; | forget &lt;путь&gt;]</code></h3>
+    <p>Какие репозитории инфраструктуры знает эта машина. Запись появляется сама при
+    первом запуске консоли в таком репозитории; <code>add</code> и
+    <code>forget</code> нужны редко.</p>
+    <dl>
+      <dt>Зачем</dt>
+      <dd>Репозиторий приложения не знает, где на вашей машине лежит инфраструктура.
+      По этой записи <code>new app</code>, <code>update</code> и <code>doctor</code>
+      находят версию ядра и получателей.</dd>
+      <dt>Где хранится</dt>
+      <dd><code>~/.config/platform/config.yml</code> — пути и ничего больше.</dd>
+    </dl>
+  </article>
+
+  <h2>Меню сервера</h2>
+  <p>В репозитории инфраструктуры, после выбора хоста.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Пункт</th><th>Что делает</th><th>Раздел</th></tr></thead>
+    <tbody>
+      <tr><td>Status of every project</td><td>Все приложения на хосте и их релизы</td><td><a href="#/ref-cli">CLI</a></td></tr>
+      <tr><td>Project: status</td><td>Состояние одного приложения: релиз, проверки, бэкапы</td><td><a href="#/flow-deploy">Выкатка</a></td></tr>
+      <tr><td>Project: backups</td><td>Список дампов и что о них известно</td><td><a href="#/flow-backups">Бэкапы</a></td></tr>
+      <tr><td>Logs</td><td>Логи контейнера, приложения целиком или прокси по его доменам</td><td><a href="#/flow-incidents">Инциденты</a></td></tr>
+      <tr><td>Observability → Grafana</td><td>Туннель к Grafana на <code>127.0.0.1:13000</code>, закрывается по Enter</td><td><a href="#/ref-observability">Наблюдаемость</a></td></tr>
+      <tr><td>Observability → Alerts</td><td>Настройка доставки алертов в Telegram</td><td><a href="#/ref-observability">Наблюдаемость</a></td></tr>
+      <tr><td>Converge &amp; readiness → Converge (twice)</td><td>Конвергенция хоста дважды, затем готовность</td><td><a href="#/flow-core-update">Обновление ядра</a></td></tr>
+      <tr><td>Converge &amp; readiness → Readiness</td><td>Только проверка готовности, ничего не меняет</td><td><a href="#/flow-new-host">Новый хост</a></td></tr>
+      <tr><td>Converge &amp; readiness → Bootstrap</td><td>Первый запуск на новой машине и всё до готовности</td><td><a href="#/flow-new-host">Новый хост</a></td></tr>
+      <tr><td>Database &amp; backups → take one now</td><td>Снять дамп приложения сейчас</td><td><a href="#/flow-backups">Бэкапы</a></td></tr>
+      <tr><td>Database &amp; backups → prove restorable</td><td>Восстановить свежий дамп во временный контейнер</td><td><a href="#/flow-backups">Бэкапы</a></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>Меню приложения</h2>
+  <p>В репозитории приложения, после выбора окружения. Список окружений берётся из
+  манифестов в <code>deploy/</code>, а не с сервера.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Пункт</th><th>Что делает</th><th>Раздел</th></tr></thead>
+    <tbody>
+      <tr><td>Deploy</td><td>Выбор тега, запуск workflow, ожидание результата</td><td><a href="#/flow-deploy">Выкатка</a></td></tr>
+      <tr><td>Roll back</td><td>Откат на один из прежних релизов; называет миграции между ними</td><td><a href="#/flow-rollback">Откат</a></td></tr>
+      <tr><td>Status on the host</td><td>Состояние этого окружения на сервере</td><td><a href="#/flow-deploy">Выкатка</a></td></tr>
+      <tr><td>Logs</td><td>Логи сервисов приложения, базы и прокси по его доменам</td><td><a href="#/flow-incidents">Инциденты</a></td></tr>
+      <tr><td>Database &amp; backups → Backups</td><td>Список, снять сейчас, доказать восстановимость</td><td><a href="#/flow-backups">Бэкапы</a></td></tr>
+      <tr><td>Database &amp; backups → tunnel</td><td>Временная роль в базе и туннель на <code>127.0.0.1:15432</code> для своего клиента, 30 минут</td><td><a href="#/flow-database">База</a></td></tr>
+      <tr><td>Database &amp; backups → psql</td><td><code>psql</code> в контейнере базы на сервере, под постоянной ролью приложения <code>app</code> — временная роль здесь не создаётся</td><td><a href="#/flow-database">База</a></td></tr>
+      <tr><td>Database &amp; backups → restore</td><td>Заменить живую базу дампом; дамп сначала доказывается</td><td><a href="#/ref-cli">CLI</a></td></tr>
+      <tr><td>Database &amp; backups → rotate</td><td>Сменить пароль базы; приложение перезапускается</td><td><a href="#/ref-cli">CLI</a></td></tr>
+      <tr><td>Secrets &amp; config</td><td>Проверка манифеста и compose; <code>push</code> и <code>pull</code> секретов</td><td><a href="#/flow-new-app">Новое приложение</a></td></tr>
+      <tr><td>Retire or purge</td><td>Остановить приложение с сохранением данных; затем, отдельно, удалить всё</td><td><a href="#/flow-retire">Вывод из работы</a></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>Чего консоль не делает</h2>
+  <div class="note">
+    <span class="label">Остаётся командой или руками</span>
+    <p>Восстановление из внешнего хранилища: ключ на чтение консоль не держит.
+    Приёмка перезагрузки нового хоста. Всё у провайдера, в DNS, в настройках GitHub и
+    Tailscale — там консоль называет, что сделать, но делаете вы.</p>
+  </div>
+</section>
+
 				<section class="page" id="ref-cli">
   <h1>Справочник CLI</h1>
   <p class="lede">Восемь команд, которые живут на сервере. Для каждой — что она

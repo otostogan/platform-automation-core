@@ -318,3 +318,13 @@ class WiredHostActionsTest(unittest.TestCase):
             "stays on this host",
             render_backup_result({"offsite": {"state": "not-configured"}}),
         )
+
+
+class InfraCommandTest(unittest.TestCase):
+    def test_infra_alone_lists_like_infra_list(self) -> None:
+        from platform_automation.platform_cli import parse_arguments
+
+        self.assertEqual(parse_arguments(["infra"]).action, "list")
+        self.assertEqual(parse_arguments(["infra", "list"]).action, "list")
+        forget = parse_arguments(["infra", "forget", "/somewhere"])
+        self.assertEqual((forget.action, forget.path), ("forget", "/somewhere"))
