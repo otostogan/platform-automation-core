@@ -204,6 +204,31 @@ def main():
             assert access[-1]["status"] == "200" and "request_time" in access[-1]
             print("PASS: access log is JSON and carries the virtual host", flush=True)
 
+            # The dashboards count requests by path, so the path is logged on
+            # its own: without the query string, which the request line has.
+            run(
+                docker,
+                "exec",
+                prefix + "-nginx",
+                "wget",
+                "-q",
+                "-O",
+                "-",
+                "--header=Host: example.test",
+                "http://127.0.0.1/index.html?token=not-for-the-log&page=2",
+            )
+            queried = [
+                json.loads(line)
+                for line in run(docker, "logs", prefix + "-nginx").stdout.splitlines()
+                if line.startswith("{") and "page=2" in line
+            ]
+            assert queried, "the request with a query string was not logged"
+            assert queried[-1]["path"] == "/index.html", queried[-1]
+            assert "page=2" in queried[-1]["request"], queried[-1]
+            print(
+                "PASS: access log carries the path without the query string", flush=True
+            )
+
             old = build_fragment_plan(
                 "example",
                 "lab",

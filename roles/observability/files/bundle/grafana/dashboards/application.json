@@ -814,6 +814,276 @@
       }
     },
     {
+      "id": 14,
+      "type": "table",
+      "title": "Most requested paths",
+      "description": "From the proxy log, over the selected time range. Numbers and UUIDs in a path are shown as :id.",
+      "datasource": {
+        "type": "loki",
+        "uid": "platform-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "platform-loki"
+          },
+          "queryType": "instant",
+          "expr": "topk(10, sum by (method, path) (count_over_time({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | upstream_addr!~\"-?\" | path!=\"\" | label_format path=`{{ regexReplaceAll \"/[0-9]+/\" (regexReplaceAll \"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/\" (printf \"%s/\" .path) \"/:id/\") \"/:id/\" | trimSuffix \"/\" }}` [$__range])))"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "Requests"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Requests",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Requests"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 15,
+      "type": "table",
+      "title": "Slowest paths, p95",
+      "description": "95th percentile of the proxy's request time over the selected time range. A path with a handful of requests can top this list by chance.",
+      "datasource": {
+        "type": "loki",
+        "uid": "platform-loki"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 28,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "platform-loki"
+          },
+          "queryType": "instant",
+          "expr": "topk(10, quantile_over_time(0.95, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | upstream_addr!~\"-?\" | path!=\"\" | label_format path=`{{ regexReplaceAll \"/[0-9]+/\" (regexReplaceAll \"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/\" (printf \"%s/\" .path) \"/:id/\") \"/:id/\" | trimSuffix \"/\" }}` | unwrap request_time [$__range]) by (method, path))"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "p95"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "p95",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 16,
+      "type": "table",
+      "title": "Paths answering 4xx and 5xx",
+      "description": "Client and server errors by path and status over the selected time range.",
+      "datasource": {
+        "type": "loki",
+        "uid": "platform-loki"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 28,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "platform-loki"
+          },
+          "queryType": "instant",
+          "expr": "topk(10, sum by (method, path, status) (count_over_time({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | upstream_addr!~\"-?\" | path!=\"\" | status=~\"[45]..\" | label_format path=`{{ regexReplaceAll \"/[0-9]+/\" (regexReplaceAll \"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/\" (printf \"%s/\" .path) \"/:id/\") \"/:id/\" | trimSuffix \"/\" }}` [$__range])))"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "Responses"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Responses",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Responses"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
       "id": 13,
       "type": "logs",
       "title": "Logs",
@@ -823,7 +1093,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 38,
         "w": 24,
         "h": 12
       },
