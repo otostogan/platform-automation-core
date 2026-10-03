@@ -523,6 +523,57 @@ class ApplicationDashboardsTest(unittest.TestCase):
             self.walk(self.MANIFEST, readable=False)[1], {"shop-lab": None}
         )
 
+    def test_unreadable_dashboards_do_not_cost_the_application_its_metrics(
+        self,
+    ) -> None:
+        manifest = {
+            **self.MANIFEST,
+            "service": {"web": "web", "metrics": {"path": "/metrics", "port": 9464}},
+        }
+        bundle = self.bundle({})
+        (bundle / "platform-observability.json").write_text("not json")
+        declared, found = {}, {}
+        samples = Samples()
+        with mock.patch.multiple(
+            metrics_export,
+            list_project_scopes=lambda root: [("shop", "lab")],
+            list_release_records=lambda *_: [ReleaseSamplesTest.RECORD],
+            is_retired=lambda *_: False,
+            resolve_release_bundle=lambda record, root: bundle,
+            load_staged_manifest=lambda _: manifest,
+        ):
+            none = Path(self.temporary.name) / "none"
+            release_samples(samples, none, none, none, declared, found)
+
+        self.assertEqual(found, {"shop-lab": None})
+        self.assertEqual(list(declared), [("shop", "lab")])
+        self.assertIn("platform_application_metrics_declared{", samples.render())
+
+    def test_a_scope_whose_records_cannot_be_read_keeps_its_dashboards(self) -> None:
+        def records(root, project, environment):
+            if project == "bad":
+                raise ReleaseLedgerError("corrupt record")
+            return []
+
+        found = {}
+        with mock.patch.multiple(
+            metrics_export,
+            list_project_scopes=lambda root: [("bad", "lab"), ("good", "lab")],
+            list_release_records=records,
+            is_retired=lambda *_: False,
+        ):
+            none = Path(self.temporary.name) / "none"
+            walked = release_samples(Samples(), none, none, none, None, found)
+
+        self.assertTrue(walked)
+        # unreadable is left as it is; readable with no release has nothing
+        self.assertEqual(found, {"bad-lab": None})
+        sync_dashboards(
+            self.root, {"bad-lab": {"a.json": "1"}, "good-lab": {"b.json": "2"}}
+        )
+        sync_dashboards(self.root, found)
+        self.assertEqual(self.tree(), {"bad-lab/a.json": "1"})
+
     def test_an_unwalkable_ledger_changes_no_dashboards_and_no_targets(self) -> None:
         base = Path(self.temporary.name)
         sync_dashboards(self.root, {"shop-lab": {"a.json": "1"}})

@@ -13,6 +13,7 @@ from platform_automation.observability_bundle import (
     API_VERSION,
     BUNDLE_PATH,
     MAX_DASHBOARDS,
+    MAX_DOCUMENT_BYTES,
     ObservabilityBundleError,
     collect_document,
     dashboard_errors,
@@ -297,6 +298,25 @@ class BundleRoundTripTest(unittest.TestCase):
             self.app, Path("deploy/platform.yml"), load_json(DEFAULT_MANIFEST_SCHEMA)
         )
         self.assertFalse([f for f in findings if "dashboards" in f.title])
+
+    def test_the_build_never_makes_a_file_the_host_would_refuse(self) -> None:
+        from platform_automation.verify_bundle import MAX_MEMBER_BYTES
+
+        self.assertLess(MAX_DOCUMENT_BYTES, MAX_MEMBER_BYTES)
+        # each within its own limit, together beyond the limit for all
+        heavy = copy.deepcopy(DASHBOARD)
+        heavy["description"] = "x" * (480 * 1024)
+        self.declare(dashboards={f"d{i}": heavy for i in range(10)})
+
+        with self.assertRaisesRegex(BundleError, "limit for all of them"):
+            create_bundle(self.manifest_path, self.bundle)
+
+        # and what does fit is accepted by the host's verifier
+        self.declare(dashboards={f"d{i}": heavy for i in range(7)})
+        for extra in ("d7", "d8", "d9"):
+            (self.app / f"deploy/dashboards/{extra}.json").unlink()
+        create_bundle(self.manifest_path, self.bundle)
+        self.assertEqual(len(verify_bundle(self.bundle).files), 4)
 
     def test_collecting_skips_hidden_files(self) -> None:
         self.declare()

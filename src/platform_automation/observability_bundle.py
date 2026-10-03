@@ -26,6 +26,9 @@ BUNDLE_PATH = "platform-observability.json"
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 MAX_DASHBOARDS = 20
 MAX_DASHBOARD_BYTES = 512 * 1024
+# All of them together are one bundle file, and the host refuses a bundle
+# file over five megabytes. The build must not make what no host will take.
+MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 # Grafana refuses a uid longer than this.
 MAX_UID_LENGTH = 40
 
@@ -184,7 +187,13 @@ def collect_document(app_root: Path, directory: str) -> bytes:
         raise ObservabilityBundleError(
             "invalid application dashboards:\n" + "\n".join(errors)
         )
-    return (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    content = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(content) > MAX_DOCUMENT_BYTES:
+        raise ObservabilityBundleError(
+            f"{directory}: the dashboards together are {len(content)} bytes;"
+            f" the limit for all of them is {MAX_DOCUMENT_BYTES}"
+        )
+    return content
 
 
 def local_errors(app_root: Path, manifest: dict[str, Any]) -> list:

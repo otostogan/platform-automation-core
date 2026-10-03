@@ -479,6 +479,10 @@ def release_samples(
                 scope,
                 0.0,
             )
+            # Nothing is known about this application right now, which is
+            # not the same as it being gone.
+            if dashboards is not None:
+                dashboards.setdefault(f"{project}-{environment}", None)
             continue
         samples.add(
             "platform_ledger_readable",
@@ -536,9 +540,16 @@ def release_samples(
                     and declared_directory(manifest) is not None
                     and not is_retired(projects_root, project, environment)
                 ):
-                    dashboards[f"{project}-{environment}"] = staged_dashboards(
-                        bundle, project, environment
-                    )
+                    folder = f"{project}-{environment}"
+                    # On its own: a dashboards file that cannot be read must
+                    # not cost the application the metrics and domains that
+                    # the manifest below describes perfectly well.
+                    try:
+                        dashboards[folder] = staged_dashboards(
+                            bundle, project, environment
+                        )
+                    except (ComposeRuntimeError, ObservabilityBundleError, OSError):
+                        dashboards[folder] = None
                 service = manifest.get("service") or {}
                 if service.get("metrics") is not None:
                     samples.add(
