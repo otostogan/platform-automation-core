@@ -12,8 +12,10 @@ from platform_automation.metrics_export import (
     parse_percent,
     parse_size,
     parse_stamp,
+    edge_addresses,
     release_samples,
     scope_labels,
+    scrape_targets,
 )
 from platform_automation.release_ledger import ReleaseLedgerError
 
@@ -229,3 +231,140 @@ class ReleaseSamplesTest(unittest.TestCase):
         self.assertIn(
             'platform_backup_restore_proven{environment="lab",project="good"} 0', text
         )
+
+
+class ApplicationMetricsTest(unittest.TestCase):
+    SERVICE = {
+        "web": "web",
+        "internal_port": 3000,
+        "metrics": {"path": "/metrics", "port": 9464},
+    }
+    CONTAINERS = [
+        {
+            "project": "shop",
+            "environment": "lab",
+            "service": "web",
+            "container": "shop-lab-web-2",
+            "address": "192.0.2.12",
+        },
+        {
+            "project": "shop",
+            "environment": "lab",
+            "service": "web",
+            "container": "shop-lab-web-1",
+            "address": "192.0.2.11",
+        },
+        {
+            "project": "shop",
+            "environment": "lab",
+            "service": "worker",
+            "container": "shop-lab-worker-1",
+            "address": "192.0.2.13",
+        },
+        {
+            "project": "other",
+            "environment": "lab",
+            "service": "web",
+            "container": "other-lab-web-1",
+            "address": "192.0.2.20",
+        },
+    ]
+
+    def test_every_web_container_of_a_declaring_release_is_a_target(self) -> None:
+        targets = scrape_targets({("shop", "lab"): self.SERVICE}, self.CONTAINERS)
+
+        self.assertEqual(
+            [target["targets"] for target in targets],
+            [["192.0.2.11:9464"], ["192.0.2.12:9464"]],
+        )
+        self.assertEqual(
+            targets[0]["labels"],
+            {
+                "__metrics_path__": "/metrics",
+                "project": "shop",
+                "environment": "lab",
+                "service": "web",
+                "container": "shop-lab-web-1",
+            },
+        )
+
+    def test_nothing_declared_means_nothing_scraped(self) -> None:
+        self.assertEqual(scrape_targets({}, self.CONTAINERS), [])
+
+    def test_a_declaration_reaches_the_metric_and_the_target_list(self) -> None:
+        manifest = {
+            "service": self.SERVICE,
+            "database": {"mode": "docker"},
+            "domains": [],
+        }
+        declared = {}
+        samples = Samples()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.multiple(
+                metrics_export,
+                list_project_scopes=lambda root: [("shop", "lab")],
+                list_release_records=lambda *_: [ReleaseSamplesTest.RECORD],
+                is_retired=lambda *_: False,
+                resolve_release_bundle=lambda record, root: Path(directory),
+                load_staged_manifest=lambda bundle: manifest,
+            ),
+        ):
+            none = Path(directory) / "none"
+            release_samples(samples, none, none, none, declared)
+
+        self.assertIn(
+            'platform_application_metrics_declared{environment="lab",project="shop",service="web"} 1',
+            samples.render(),
+        )
+        self.assertEqual(declared, {("shop", "lab"): self.SERVICE})
+
+    def test_addresses_come_from_the_proxys_network_only(self) -> None:
+        def docker(command, **_):
+            if "ps" in command:
+                self.assertIn("network=platform-edge", command)
+                self.assertIn("status=running", command)
+                out = "aaa|shop-lab-web-1|shop-lab|web\nbbb|platform-nginx|platform-proxy|nginx\n"
+            else:
+                self.assertIn('"platform-edge"', command[command.index("--format") + 1])
+                out = "aaa|192.0.2.11\nbbb|\n"
+            return subprocess.CompletedProcess(command, 0, out.encode(), b"")
+
+        found = edge_addresses(Path("/usr/bin/docker"), "platform-edge", docker)
+
+        self.assertEqual(
+            found,
+            [
+                {
+                    "project": "shop",
+                    "environment": "lab",
+                    "service": "web",
+                    "container": "shop-lab-web-1",
+                    "address": "192.0.2.11",
+                }
+            ],
+        )
+
+    def test_the_target_file_is_emptied_when_no_release_declares_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            targets = base / "targets/applications.json"
+            targets.parent.mkdir()
+            targets.write_text('[{"targets": ["192.0.2.1:1"]}]')
+            with mock.patch.object(metrics_export.subprocess, "run", runner):
+                code = metrics_export.main(
+                    [
+                        "--output",
+                        str(base / "platform.prom"),
+                        "--targets",
+                        str(targets),
+                        "--projects-root",
+                        str(base / "none"),
+                        "--releases-root",
+                        str(base / "none"),
+                        "--backups-root",
+                        str(base / "none"),
+                    ]
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(targets.read_text()), [])

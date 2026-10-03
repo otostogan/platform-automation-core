@@ -50,6 +50,10 @@ observability_alloy_memory: 512m
 
 observability_metrics_interval: 30s
 
+# The network the proxy shares with web services. The collector joins it to
+# read the metrics an application declares in its manifest.
+observability_edge_network: platform-edge
+
 observability_bundle_directories:
     - alloy
     - loki
@@ -84,4 +88,6 @@ observability_state_directories:
     - name: alloy
       owner: "0"
     - name: textfile
+      owner: "0"
+    - name: targets
       owner: "0"

@@ -90,7 +90,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="platform-obs-test-") as temporary:
         base = Path(temporary)
         state = base / "state"
-        for name in ("loki", "prometheus", "grafana", "alloy", "textfile"):
+        for name in ("loki", "prometheus", "grafana", "alloy", "textfile", "targets"):
             (state / name).mkdir(parents=True)
             (state / name).chmod(0o777)
         backend, collector = base / "backend.yml", base / "collector.yml"
@@ -120,6 +120,8 @@ def main():
         ]
         workload = prefix + "-web"
         network = prefix + "-observability"
+        edge = prefix + "-edge"
+        instrumented = prefix + "-instrumented"
 
         def inside(container, *command):
             return run(docker, "exec", prefix + "-" + container, *command).stdout
@@ -130,6 +132,7 @@ def main():
 
         try:
             run(docker, "network", "create", network)
+            run(docker, "network", "create", edge)
             run(
                 *environment,
                 docker,
@@ -232,6 +235,71 @@ def main():
                 ),
                 seconds=150,
             )
+            # An application that declares service.metrics: a web container on
+            # the proxy's network serving the text format. The targets are
+            # built by the exporter's own code from this Docker.
+            exposition = (
+                "# TYPE example_orders_total counter\\n"
+                'example_orders_total{host="forged-host",project="forged"} 7\\n'
+                "# TYPE platform_container_up gauge\\n"
+                'platform_container_up{container="forged"} 1\\n'
+            )
+            run(
+                docker,
+                "run",
+                "--detach",
+                "--name",
+                instrumented,
+                "--network",
+                edge,
+                "--label",
+                "com.docker.compose.project=example-lab",
+                "--label",
+                "com.docker.compose.service=web",
+                "busybox:1.36",
+                "sh",
+                "-c",
+                f"mkdir -p /www && printf '{exposition}' > /www/metrics.txt"
+                " && httpd -f -p 9464 -h /www",
+            )
+            from platform_automation.metrics_export import (
+                edge_addresses,
+                scrape_targets,
+            )
+
+            declared = {
+                ("example", "lab"): {
+                    "web": "web",
+                    "metrics": {"path": "/metrics.txt", "port": 9464},
+                }
+            }
+            targets = scrape_targets(declared, edge_addresses(Path(docker), edge))
+            assert [t["labels"]["container"] for t in targets] == [
+                instrumented
+            ], targets
+            (state / "targets/applications.json").write_text(json.dumps(targets))
+
+            own = wait_for(
+                "the application's own metric in Prometheus under platform labels",
+                measured(
+                    "example_orders_total%7Bproject=%22example%22,environment=%22lab%22,service=%22web%22,host=%22integration-host%22,job=%22application%22%7D"
+                ),
+                seconds=180,
+            )
+            assert own[0]["value"][1] == "7", own
+            assert own[0]["metric"]["instance"] == instrumented, own
+            # what the application said about itself is kept, but set aside
+            assert own[0]["metric"]["exported_host"] == "forged-host", own
+            assert own[0]["metric"]["exported_project"] == "forged", own
+            assert measured("up%7Bjob=%22application%22%7D")()[0]["value"][1] == "1"
+            forged = measured("platform_container_up%7Bcontainer=%22forged%22%7D")()
+            assert forged == [], f"an application wrote a platform metric: {forged}"
+            print(
+                "PASS: a declared metrics endpoint is scraped under platform labels,"
+                " and cannot write platform metrics",
+                flush=True,
+            )
+
             # The stamp must survive the trip digit for digit: a rounded one
             # reads as hours old and raises "Platform metrics stopped".
             age = wait_for(
@@ -462,6 +530,7 @@ def main():
             raise
         finally:
             run(docker, "rm", "--force", workload, check=False)
+            run(docker, "rm", "--force", instrumented, check=False)
             run(
                 *environment,
                 docker,
@@ -485,6 +554,7 @@ def main():
                 timeout=180,
             )
             run(docker, "network", "rm", network, check=False)
+            run(docker, "network", "rm", edge, check=False)
             # containers wrote as their own users
             run(
                 docker,

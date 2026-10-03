@@ -71,12 +71,16 @@ services:
         networks:
             - collector-control
             - observability
+            # To reach the metrics endpoints applications declare. They are
+            # web services, and this is the one network every web service is on.
+            - edge
         expose:
             - "12345"
         volumes:
             - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
             - ${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}/alloy:/var/lib/alloy
             - ${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}/textfile:/host/textfile:ro
+            - ${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}/targets:/host/targets:ro
             - /proc:/host/proc:ro
             - /sys:/host/sys:ro
             - /:/host/root:ro
@@ -97,4 +101,7 @@ networks:
         internal: true
     observability:
         name: platform-observability
+        external: true
+    edge:
+        name: ${OBSERVABILITY_EDGE_NETWORK:-platform-edge}
         external: true

@@ -244,6 +244,14 @@ def validate_compose(
                 f"must expose internal port {internal_port}"
             )
 
+        metrics = manifest["service"].get("metrics")
+
+        if metrics is not None and str(metrics["port"]) not in exposed_ports:
+            errors.append(
+                f"$.compose.services.{web_service_name}.expose: "
+                f"must expose metrics port {metrics['port']}"
+            )
+
         if "edge" not in service_network_names(web_service):
             errors.append(
                 f"$.compose.services.{web_service_name}.networks: "

@@ -383,3 +383,37 @@ groups:
         annotations:
             summary: '{{ .Labels.host }}: the release ledger cannot be read{{ if .Labels.project }} for {{ .Labels.project }}/{{ .Labels.environment }}{{ end }}'
             description: 'Deploys and rollbacks depend on it. Run: platform status.'
+    -   uid: platform-application-metrics-missing
+        title: Application metrics not collected
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: (platform_application_metrics_declared and on (project, environment) platform_retired == 0) unless on (project, environment) (up{job="application"} == 1)
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B > 0
+        for: 5m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: warning
+        annotations:
+            summary: '{{ .Labels.host }}: metrics of {{ .Labels.project }}/{{ .Labels.environment }} are not being collected'
+            description: 'The release declares service.metrics, but the collector cannot read them. Check the port, the path, and that the endpoint answers inside the container.'

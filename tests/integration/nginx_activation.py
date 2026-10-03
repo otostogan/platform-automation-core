@@ -328,6 +328,70 @@ def main():
                 flush=True,
             )
 
+            # The metrics guard, as the real generator writes it and the real
+            # nginx reads it. The backend does serve /metrics; the proxy must
+            # stop answering with it once the manifest declares the endpoint.
+            from platform_automation.nginx_config import generate_vhost_fragments
+
+            (base / backends[1] / "metrics").write_text("example_orders_total 1\n")
+
+            def fetched(path):
+                result = run(
+                    docker,
+                    "exec",
+                    prefix + "-nginx",
+                    "wget",
+                    "-S",
+                    "-O",
+                    "-",
+                    "--header=Host: example.test",
+                    "http://127.0.0.1" + path,
+                    check=False,
+                )
+                return result.stderr + result.stdout
+
+            def wait_fetched(path, needle):
+                deadline = time.monotonic() + 15
+                while True:
+                    seen = fetched(path)
+                    if needle in seen:
+                        return
+                    if time.monotonic() >= deadline:
+                        raise AssertionError(
+                            f"proxy never answered {needle!r} for {path}:\n{seen}"
+                        )
+                    time.sleep(0.25)
+
+            wait_fetched("/metrics", "example_orders_total 1")
+            declaring = {
+                "project": "example",
+                "service": {
+                    "web": "web",
+                    "internal_port": 80,
+                    "metrics": {"path": "/metrics", "port": 80},
+                },
+                "domains": [{"host": "example.test", "nginx": {}}],
+            }
+            metered = build_fragment_plan(
+                "example", "lab", "e" * 32, generate_vhost_fragments(declaring)
+            )
+            with manager.prepare(metered) as transaction:
+                transaction.stage()
+                transaction.activate()
+            wait_fetched("/metrics", " 404 ")
+            wait_fetched("/metrics/anything", " 404 ")
+            wait_response("version-b")
+            assert "example_orders_total" not in fetched("/metrics")
+            with manager.prepare(candidate) as transaction:
+                transaction.stage()
+                transaction.activate()
+            wait_fetched("/metrics", "example_orders_total 1")
+            print(
+                "PASS: a declared metrics path is not served publicly, and is again"
+                " once the declaration is gone",
+                flush=True,
+            )
+
             # A nonexistent target proves the request wasn't forwarded (Docker
             # would return 404). GET must still reach Docker through the proxy.
             result = run(

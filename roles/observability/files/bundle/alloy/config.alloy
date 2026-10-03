@@ -102,6 +102,58 @@ prometheus.scrape "host" {
 	forward_to      = [prometheus.remote_write.backend.receiver]
 }
 
+// Applications' own metrics. The platform writes the targets — one per web
+// container of a release whose manifest declares service.metrics — and names
+// them itself: project, environment, service and container come from the
+// target, so what an application says about its own labels is set aside.
+
+discovery.file "applications" {
+	files = ["/host/targets/*.json"]
+	// The file is replaced, not edited, every thirty seconds; reread it on
+	// a clock rather than trust a change notification across a bind mount.
+	refresh_interval = "30s"
+}
+
+discovery.relabel "applications" {
+	targets = discovery.file.applications.targets
+
+	rule {
+		source_labels = ["container"]
+		target_label  = "instance"
+	}
+
+	// On the target, not only as an external label: an external label
+	// yields to one the series already carries, and then an application
+	// could say which host it runs on.
+	rule {
+		target_label = "host"
+		replacement  = sys.env("PLATFORM_HOST")
+	}
+}
+
+prometheus.scrape "applications" {
+	targets         = discovery.relabel.applications.output
+	job_name        = "application"
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	// A runaway label must cost the application its scrape, not the host
+	// its metrics store.
+	sample_limit = 10000
+	forward_to   = [prometheus.relabel.applications.receiver]
+}
+
+// The platform's own names are not an application's to write: the alert
+// rules read them.
+prometheus.relabel "applications" {
+	forward_to = [prometheus.remote_write.backend.receiver]
+
+	rule {
+		source_labels = ["__name__"]
+		regex         = "(platform|node)_.*"
+		action        = "drop"
+	}
+}
+
 prometheus.remote_write "backend" {
 	external_labels = {host = sys.env("PLATFORM_HOST")}
 
