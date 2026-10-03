@@ -12301,7 +12301,7 @@ After=platform-secrets-recovery.service</code></pre>
       <tr><td>Не хранит секретов</td><td>В её настройках только пути к файлам. Ключи и токены лежат там, где лежали, с правами <code>0600</code></td></tr>
       <tr><td>Показывает команду до запуска</td><td>Каждое действие сначала печатает, что именно будет выполнено. Эту строку можно повторить руками</td></tr>
       <tr><td>Ничего не коммитит</td><td>Она пишет файлы и говорит, какие. Коммит — ваш</td></tr>
-      <tr><td>Не работает от root на рабочей машине</td><td>Привилегии есть только на сервере, через <code>sudo -n platform</code> у пользователя <code>ops</code></td></tr>
+      <tr><td>Не нуждается в root на рабочей машине</td><td>Привилегии есть только на сервере, через <code>sudo -n platform</code> у пользователя <code>ops</code>. Запускайте консоль от своего пользователя: под <code>sudo</code> она не откажет, но ключи, репозитории и настройки достанутся root</td></tr>
       <tr><td>Разрушительное не проще, чем в справочнике</td><td>Восстановление, очистка и bootstrap проходят те же проверки в том же порядке, а имя проекта набирается руками</td></tr>
       <tr><td>Ссылается на справочник</td><td>После действия и при отказе печатается раздел, где это объяснено</td></tr>
     </tbody>
@@ -12315,7 +12315,10 @@ After=platform-secrets-recovery.service</code></pre>
 <pre><code>python3 -m venv ~/.local/share/platform-console
 ~/.local/share/platform-console/bin/pip install \
   "platform-automation-runtime[operator] @ https://github.com/otostogan/platform-automation-core/releases/download/v0.23.0/platform_automation_runtime-0.23.0-py3-none-any.whl"
+mkdir -p ~/.local/bin
 ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform</code></pre>
+  <p>Папка <code>~/.local/bin</code> должна быть в <code>PATH</code>; если
+  <code>which platform</code> ничего не находит, добавьте её в профиль оболочки.</p>
   <div class="expect">
     <span class="label">Как понять, что получилось</span>
     <p><code>platform doctor</code> в любой папке печатает первой строкой версию и
@@ -12413,7 +12416,9 @@ ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform</code>
   <article class="card" id="ref-console-doctor">
     <h3><code>platform doctor</code></h3>
     <p>Отвечает на вопрос «почему не заработает» до того, как что-то запущено. Ничего не
-    меняет и не спрашивает, поэтому работает из скрипта.</p>
+    спрашивает, поэтому работает из скрипта, и ничего не меняет ни в репозитории, ни на
+    серверах. Одно исключение — как у любой команды консоли: первый запуск в репозитории
+    инфраструктуры записывает его путь в <code>~/.config/platform/config.yml</code>.</p>
     <dl>
       <dt>В инфраструктуре проверяет</dt>
       <dd>Tailscale на этой машине; коллекция установлена и совпадает с пином;
@@ -12498,7 +12503,7 @@ ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform</code>
       <tr><td>Logs</td><td>Логи сервисов приложения, базы и прокси по его доменам</td><td><a href="#/flow-incidents">Инциденты</a></td></tr>
       <tr><td>Database &amp; backups → Backups</td><td>Список, снять сейчас, доказать восстановимость</td><td><a href="#/flow-backups">Бэкапы</a></td></tr>
       <tr><td>Database &amp; backups → tunnel</td><td>Временная роль в базе и туннель на <code>127.0.0.1:15432</code> для своего клиента, 30 минут</td><td><a href="#/flow-database">База</a></td></tr>
-      <tr><td>Database &amp; backups → psql</td><td><code>psql</code> на сервере под той же временной ролью</td><td><a href="#/flow-database">База</a></td></tr>
+      <tr><td>Database &amp; backups → psql</td><td><code>psql</code> в контейнере базы на сервере, под постоянной ролью приложения <code>app</code> — временная роль здесь не создаётся</td><td><a href="#/flow-database">База</a></td></tr>
       <tr><td>Database &amp; backups → restore</td><td>Заменить живую базу дампом; дамп сначала доказывается</td><td><a href="#/ref-cli">CLI</a></td></tr>
       <tr><td>Database &amp; backups → rotate</td><td>Сменить пароль базы; приложение перезапускается</td><td><a href="#/ref-cli">CLI</a></td></tr>
       <tr><td>Secrets &amp; config</td><td>Проверка манифеста и compose; <code>push</code> и <code>pull</code> секретов</td><td><a href="#/flow-new-app">Новое приложение</a></td></tr>
