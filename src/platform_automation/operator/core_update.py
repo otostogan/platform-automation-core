@@ -217,13 +217,17 @@ def parse_recap(output: str) -> dict:
 
 
 def playbook_command(
-    root: Path, playbook: str, hosts: list, extra: Optional[list] = None
+    root: Path,
+    playbook: str,
+    hosts: list,
+    extra: Optional[list] = None,
+    inventory: str = "inventory/hosts.yml",
 ) -> list:
     return [
         str(root / ".venv/bin/ansible-playbook"),
         f"otostogan.platform.{playbook}",
         "--inventory",
-        "inventory/hosts.yml",
+        inventory,
         "--limit",
         ",".join(hosts),
         *(extra or []),

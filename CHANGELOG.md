@@ -7,6 +7,16 @@ release.
 
 ## [Unreleased]
 
+- Console, on a host: `Bootstrap: first run on a new host`. It checks what
+  is cheap to check first — the host is in `inventory/bootstrap.yml`, the
+  one-off tailnet key is where the inventory says, root accepts the key —
+  then runs bootstrap over the provider's SSH, proves `ops` over the tailnet,
+  and goes on to preflight, converge twice and readiness, stopping at the
+  first step that does not pass. A host that never joins the tailnet is not
+  converged: that would close the public SSH still in hand. A host already
+  on the tailnet skips bootstrap. `Converge (twice)`, `Readiness` and
+  `Bootstrap` now sit in one menu group.
+
 ## [0.23.0] - 2026-10-02
 
 - Console, in an application's menu: `Database: restore from a dump` and

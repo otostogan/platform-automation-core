@@ -3222,6 +3222,18 @@ tailscale_auth_key_source: {{keydir}}/tailscale-auth.key</code></pre>
 									><span class="ttl">Bootstrap</span>
 								</button>
 								<div class="step-body">
+									<div class="note">
+										<span class="label">Из консоли</span>
+										<p><code>platform</code> в репозитории инфраструктуры → хост →
+										<strong>Converge &amp; readiness → Bootstrap: first run on a new host</strong>.
+										Консоль проходит этот шаг и следующие за ним — передачу в тейлнет, preflight,
+										converge дважды, readiness — в том же порядке и останавливается на первом
+										несошедшемся. До запуска она сама проверяет то, что дёшево проверить заранее:
+										хост есть в <code>inventory/bootstrap.yml</code>, одноразовый ключ тейлнета лежит
+										по пути из инвентаря, root пускает по ключу. Если после bootstrap вход как
+										<code>ops</code> по тейлнету не заработал, converge не запускается: он закрыл бы
+										публичный SSH, который у вас ещё есть. Приёмка ребута остаётся за вами.</p>
+									</div>
 									<p>
 										Первый и единственный запуск по
 										публичному SSH провайдера.
