@@ -7,6 +7,9 @@ release.
 
 ## [Unreleased]
 
+- Handbook: a page for the operator console — what it promises, how to
+  install it, where it runs, each command, and both menus item by item.
+
 - Console, on a host: `Bootstrap: first run on a new host`. It checks what
   is cheap to check first — the host is in `inventory/bootstrap.yml`, the
   one-off tailnet key is where the inventory says, root accepts the key —
