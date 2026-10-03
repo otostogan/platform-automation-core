@@ -90,7 +90,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix="platform-obs-test-") as temporary:
         base = Path(temporary)
         state = base / "state"
-        for name in ("loki", "prometheus", "grafana", "alloy", "textfile", "targets"):
+        for name in (
+            "loki",
+            "prometheus",
+            "grafana",
+            "alloy",
+            "textfile",
+            "targets",
+            "dashboards",
+        ):
             (state / name).mkdir(parents=True)
             (state / name).chmod(0o777)
         backend, collector = base / "backend.yml", base / "collector.yml"
@@ -342,6 +350,69 @@ def main():
                 assert health.get("status") == "OK", (uid, health)
             print(
                 "PASS: Grafana serves the provisioned sources and dashboard, and both sources answer",
+                flush=True,
+            )
+
+            # A dashboard an application ships: written by the exporter's own
+            # code, picked up by the real Grafana into a folder named after
+            # the application, and gone again when the release stops shipping it.
+            from platform_automation.metrics_export import sync_dashboards
+            from platform_automation.observability_bundle import provisioned
+
+            shipped = {
+                "title": "Orders",
+                "uid": "the-authors-own-uid",
+                "panels": [
+                    {
+                        "id": 1,
+                        "type": "timeseries",
+                        "title": "Orders per second",
+                        "datasource": {
+                            "type": "prometheus",
+                            "uid": "platform-prometheus",
+                        },
+                        "targets": [{"expr": "rate(example_orders_total[5m])"}],
+                    }
+                ],
+            }
+            folder = state / "dashboards"
+            sync_dashboards(
+                folder,
+                {
+                    "example-lab": {
+                        "orders.json": json.dumps(
+                            provisioned("example", "lab", "orders", shipped)
+                        )
+                    }
+                },
+            )
+
+            def shown():
+                found = grafana("/api/search?type=dash-db")
+                return {d["uid"]: d.get("folderTitle") for d in found}
+
+            listed = wait_for(
+                "the application's dashboard in Grafana",
+                lambda: "example-lab-orders" in shown() and shown(),
+                seconds=120,
+            )
+            assert listed["example-lab-orders"] == "example-lab", listed
+            assert "the-authors-own-uid" not in listed, listed
+            assert "platform-application" in listed, listed
+            loaded = grafana("/api/dashboards/uid/example-lab-orders")
+            assert loaded["dashboard"]["editable"] is False, loaded["dashboard"]
+            assert loaded["meta"]["provisioned"] is True, loaded["meta"]
+
+            sync_dashboards(folder, {})
+            wait_for(
+                "the dashboard to leave with its release",
+                lambda: "example-lab-orders" not in shown(),
+                seconds=120,
+            )
+            assert "platform-application" in shown()
+            print(
+                "PASS: a shipped dashboard appears in its application's folder under"
+                " the platform's uid, and leaves with the release",
                 flush=True,
             )
 

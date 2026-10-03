@@ -317,6 +317,10 @@ def validate_action(root: Path, manifest_path: Path) -> Action:
         if not errors:
             compose = load_yaml(resolve_compose_path(root, document["compose_file"]))
             errors = validate_compose(document, compose)
+        if not errors:
+            from ..observability_bundle import local_errors
+
+            errors = local_errors(root, document)
         if errors:
             print(f"{RED}invalid application contract: {manifest_path}{RESET}")
             for error in errors:

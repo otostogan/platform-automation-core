@@ -42,6 +42,9 @@
 				},
 				"secrets": {
 					"$ref": "#/$defs/file"
+				},
+				"observability": {
+					"$ref": "#/$defs/file"
 				}
 			}
 		}

@@ -55,6 +55,7 @@ platform_cli_tool_files:
     - nginx_config.py
     - nginx_reconcile.py
     - nginx_transaction.py
+    - observability_bundle.py
     - operation_lock.py
     - platform_cli.py
     - reboot_recovery.py

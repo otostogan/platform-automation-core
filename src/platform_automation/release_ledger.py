@@ -16,7 +16,7 @@ from .deployment_request import DeploymentRequest
 from .validate_manifest import load_json, validate_manifest
 
 from .verify_bundle import (
-    EXPECTED_MEMBER_COUNT,
+    MAX_MEMBER_COUNT,
     MAX_MEMBER_BYTES,
     MAX_TOTAL_MEMBER_BYTES,
     BundleVerificationError,
@@ -96,7 +96,7 @@ def load_release_bundle(
             if stat.S_IMODE(info.st_mode) != 0o600:
                 raise ReleaseLedgerError("saved bundle file has unsafe permissions")
 
-            if len(members) >= EXPECTED_MEMBER_COUNT:
+            if len(members) >= MAX_MEMBER_COUNT:
                 raise ReleaseLedgerError("saved bundle contains too many files")
 
             if info.st_size > MAX_MEMBER_BYTES:

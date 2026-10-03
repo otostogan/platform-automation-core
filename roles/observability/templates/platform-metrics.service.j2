@@ -8,10 +8,10 @@ User=root
 Group=root
 UMask=0022
 Environment=PYTHONPATH=/opt/platform/runtime
-ExecStart=/usr/bin/python3 -m platform_automation.metrics_export --output {{ observability_state_directory }}/textfile/platform.prom --targets {{ observability_state_directory }}/targets/applications.json --edge-network {{ observability_edge_network }}
+ExecStart=/usr/bin/python3 -m platform_automation.metrics_export --output {{ observability_state_directory }}/textfile/platform.prom --targets {{ observability_state_directory }}/targets/applications.json --edge-network {{ observability_edge_network }} --dashboards {{ observability_state_directory }}/dashboards
 TimeoutStartSec=60
 NoNewPrivileges=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths={{ observability_state_directory }}/textfile {{ observability_state_directory }}/targets
+ReadWritePaths={{ observability_state_directory }}/textfile {{ observability_state_directory }}/targets {{ observability_state_directory }}/dashboards
 PrivateTmp=yes

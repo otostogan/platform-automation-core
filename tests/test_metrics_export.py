@@ -16,6 +16,8 @@ from platform_automation.metrics_export import (
     release_samples,
     scope_labels,
     scrape_targets,
+    staged_dashboards,
+    sync_dashboards,
 )
 from platform_automation.release_ledger import ReleaseLedgerError
 
@@ -368,3 +370,243 @@ class ApplicationMetricsTest(unittest.TestCase):
                 )
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(targets.read_text()), [])
+
+
+class ApplicationDashboardsTest(unittest.TestCase):
+    DASHBOARD = {
+        "title": "Orders",
+        "uid": "authors-own",
+        "panels": [
+            {
+                "title": "p",
+                "datasource": {"type": "prometheus", "uid": "platform-prometheus"},
+            }
+        ],
+    }
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name) / "dashboards"
+
+    def tree(self) -> dict:
+        return {
+            str(path.relative_to(self.root)): path.read_text()
+            for path in sorted(self.root.rglob("*"))
+            if path.is_file()
+        }
+
+    def test_the_directory_becomes_exactly_what_is_wanted(self) -> None:
+        sync_dashboards(
+            self.root, {"shop-lab": {"orders.json": "{}\n", "queue.json": "[]\n"}}
+        )
+        self.assertEqual(
+            self.tree(), {"shop-lab/orders.json": "{}\n", "shop-lab/queue.json": "[]\n"}
+        )
+        self.assertEqual((self.root / "shop-lab").stat().st_mode & 0o777, 0o755)
+        self.assertEqual(
+            (self.root / "shop-lab/orders.json").stat().st_mode & 0o777, 0o644
+        )
+
+        changed = sync_dashboards(self.root, {"shop-lab": {"orders.json": "{}\n"}})
+        self.assertEqual(changed, ["removed shop-lab/queue.json"])
+        self.assertEqual(self.tree(), {"shop-lab/orders.json": "{}\n"})
+
+    def test_an_unchanged_dashboard_is_not_rewritten(self) -> None:
+        wanted = {"shop-lab": {"orders.json": "{}\n"}}
+        sync_dashboards(self.root, wanted)
+        before = (self.root / "shop-lab/orders.json").stat().st_mtime_ns
+
+        self.assertEqual(sync_dashboards(self.root, wanted), [])
+        self.assertEqual(
+            (self.root / "shop-lab/orders.json").stat().st_mtime_ns, before
+        )
+
+    def test_an_application_that_is_gone_takes_its_folder_with_it(self) -> None:
+        sync_dashboards(
+            self.root, {"shop-lab": {"a.json": "1"}, "blog-lab": {"b.json": "2"}}
+        )
+
+        sync_dashboards(self.root, {"blog-lab": {"b.json": "2"}})
+
+        self.assertEqual(self.tree(), {"blog-lab/b.json": "2"})
+        self.assertFalse((self.root / "shop-lab").exists())
+
+    def test_a_folder_marked_untouched_survives_a_failed_read(self) -> None:
+        sync_dashboards(self.root, {"shop-lab": {"a.json": "1"}})
+
+        sync_dashboards(self.root, {"shop-lab": None})
+
+        self.assertEqual(self.tree(), {"shop-lab/a.json": "1"})
+
+    def test_strangers_in_the_directory_are_removed(self) -> None:
+        sync_dashboards(self.root, {"shop-lab": {"a.json": "1"}})
+        (self.root / "stray.json").write_text("x")
+        (self.root / "shop-lab/nested").mkdir()
+        (self.root / "shop-lab/nested/deep.json").write_text("x")
+        outside = Path(self.temporary.name) / "outside.json"
+        outside.write_text("keep me")
+        (self.root / "shop-lab/link.json").symlink_to(outside)
+
+        sync_dashboards(self.root, {"shop-lab": {"a.json": "1"}})
+
+        self.assertEqual(self.tree(), {"shop-lab/a.json": "1"})
+        self.assertEqual(outside.read_text(), "keep me")
+
+    def bundle(self, document) -> Path:
+        bundle = Path(self.temporary.name) / "bundle"
+        bundle.mkdir(exist_ok=True)
+        (bundle / "platform-observability.json").write_text(json.dumps(document))
+        return bundle
+
+    def test_staged_dashboards_get_the_platforms_uid(self) -> None:
+        bundle = self.bundle(
+            {
+                "api_version": "platform-observability/v1",
+                "dashboards": {"orders": self.DASHBOARD},
+            }
+        )
+
+        files = staged_dashboards(bundle, "shop", "lab")
+
+        self.assertEqual(list(files), ["orders.json"])
+        prepared = json.loads(files["orders.json"])
+        self.assertEqual(prepared["uid"], "shop-lab-orders")
+        self.assertIs(prepared["editable"], False)
+
+    def walk(self, manifest, retired=False, readable=True):
+        """One scope, shop/lab, through release_samples with a staged bundle."""
+        bundle = self.bundle(
+            {
+                "api_version": "platform-observability/v1",
+                "dashboards": {"orders": self.DASHBOARD},
+            }
+        )
+        if not readable:
+            (bundle / "platform-observability.json").write_text("not json")
+        found = {}
+        with mock.patch.multiple(
+            metrics_export,
+            list_project_scopes=lambda root: [("shop", "lab")],
+            list_release_records=lambda *_: [ReleaseSamplesTest.RECORD],
+            is_retired=lambda *_: retired,
+            resolve_release_bundle=lambda record, root: bundle,
+            load_staged_manifest=lambda _: manifest,
+        ):
+            none = Path(self.temporary.name) / "none"
+            walked = release_samples(Samples(), none, none, none, None, found)
+        return walked, found
+
+    MANIFEST = {
+        "observability": {"dashboards": "deploy/dashboards"},
+        "service": {"web": "web"},
+        "database": {"mode": "docker"},
+        "domains": [],
+    }
+
+    def test_a_serving_release_that_ships_dashboards_is_collected(self) -> None:
+        walked, found = self.walk(self.MANIFEST)
+
+        self.assertTrue(walked)
+        self.assertEqual(list(found), ["shop-lab"])
+        self.assertEqual(list(found["shop-lab"]), ["orders.json"])
+
+    def test_a_release_without_the_declaration_ships_none(self) -> None:
+        manifest = {k: v for k, v in self.MANIFEST.items() if k != "observability"}
+        self.assertEqual(self.walk(manifest)[1], {})
+
+    def test_a_retired_application_shows_no_dashboards(self) -> None:
+        self.assertEqual(self.walk(self.MANIFEST, retired=True)[1], {})
+
+    def test_an_unreadable_bundle_leaves_the_folder_as_it_is(self) -> None:
+        self.assertEqual(
+            self.walk(self.MANIFEST, readable=False)[1], {"shop-lab": None}
+        )
+
+    def test_unreadable_dashboards_do_not_cost_the_application_its_metrics(
+        self,
+    ) -> None:
+        manifest = {
+            **self.MANIFEST,
+            "service": {"web": "web", "metrics": {"path": "/metrics", "port": 9464}},
+        }
+        bundle = self.bundle({})
+        (bundle / "platform-observability.json").write_text("not json")
+        declared, found = {}, {}
+        samples = Samples()
+        with mock.patch.multiple(
+            metrics_export,
+            list_project_scopes=lambda root: [("shop", "lab")],
+            list_release_records=lambda *_: [ReleaseSamplesTest.RECORD],
+            is_retired=lambda *_: False,
+            resolve_release_bundle=lambda record, root: bundle,
+            load_staged_manifest=lambda _: manifest,
+        ):
+            none = Path(self.temporary.name) / "none"
+            release_samples(samples, none, none, none, declared, found)
+
+        self.assertEqual(found, {"shop-lab": None})
+        self.assertEqual(list(declared), [("shop", "lab")])
+        self.assertIn("platform_application_metrics_declared{", samples.render())
+
+    def test_a_scope_whose_records_cannot_be_read_keeps_its_dashboards(self) -> None:
+        def records(root, project, environment):
+            if project == "bad":
+                raise ReleaseLedgerError("corrupt record")
+            return []
+
+        found = {}
+        with mock.patch.multiple(
+            metrics_export,
+            list_project_scopes=lambda root: [("bad", "lab"), ("good", "lab")],
+            list_release_records=records,
+            is_retired=lambda *_: False,
+        ):
+            none = Path(self.temporary.name) / "none"
+            walked = release_samples(Samples(), none, none, none, None, found)
+
+        self.assertTrue(walked)
+        # unreadable is left as it is; readable with no release has nothing
+        self.assertEqual(found, {"bad-lab": None})
+        sync_dashboards(
+            self.root, {"bad-lab": {"a.json": "1"}, "good-lab": {"b.json": "2"}}
+        )
+        sync_dashboards(self.root, found)
+        self.assertEqual(self.tree(), {"bad-lab/a.json": "1"})
+
+    def test_an_unwalkable_ledger_changes_no_dashboards_and_no_targets(self) -> None:
+        base = Path(self.temporary.name)
+        sync_dashboards(self.root, {"shop-lab": {"a.json": "1"}})
+        targets = base / "targets.json"
+        targets.write_text("[1]")
+
+        def unreadable(_):
+            raise ReleaseLedgerError("cannot walk")
+
+        with (
+            mock.patch.object(metrics_export, "list_project_scopes", unreadable),
+            mock.patch.object(metrics_export.subprocess, "run", runner),
+        ):
+            code = metrics_export.main(
+                [
+                    "--output",
+                    str(base / "platform.prom"),
+                    "--targets",
+                    str(targets),
+                    "--dashboards",
+                    str(self.root),
+                    "--projects-root",
+                    str(base / "none"),
+                    "--releases-root",
+                    str(base / "none"),
+                    "--backups-root",
+                    str(base / "none"),
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.tree(), {"shop-lab/a.json": "1"})
+        self.assertEqual(targets.read_text(), "[1]")
+        self.assertIn(
+            "platform_ledger_readable 0", (base / "platform.prom").read_text()
+        )

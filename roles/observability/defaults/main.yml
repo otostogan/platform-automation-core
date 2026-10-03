@@ -91,3 +91,5 @@ observability_state_directories:
       owner: "0"
     - name: targets
       owner: "0"
+    - name: dashboards
+      owner: "0"

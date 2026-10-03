@@ -7,6 +7,19 @@ release.
 
 ## [Unreleased]
 
+- Applications ship their own dashboards. A manifest may declare
+  `observability.dashboards`, a directory of Grafana `*.json` files; the
+  bundle builder folds it into one verified bundle file, and the host shows
+  the serving release's dashboards in a Grafana folder named
+  `<project>-<environment>`. A rollback shows the dashboards of the release
+  rolled back to; a retired application's folder goes away. A dashboard may
+  read only `platform-prometheus` and `platform-loki`, its `uid` is set by
+  the platform, and it is not editable in the UI. `platform doctor` and the
+  console's validation check the dashboards before a deploy.
+- The deployment bundle may now carry a fourth file. A host on an older core
+  refuses such a bundle; a bundle without dashboards is unchanged, byte for
+  byte.
+
 ## [0.24.0] - 2026-10-03
 
 - Applications can publish their own metrics. A manifest may declare

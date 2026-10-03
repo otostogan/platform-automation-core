@@ -119,6 +119,50 @@ class ObservabilityBundleTest(unittest.TestCase):
         owners = {i["name"] for i in DEFAULTS["observability_state_directories"]}
         self.assertIn("targets", owners)
 
+    def test_grafana_reads_the_dashboards_applications_ship(self) -> None:
+        grafana = compose("backend.yml")["services"]["grafana"]
+        mounts = [
+            m
+            for m in grafana["volumes"]
+            if m.endswith(":/etc/grafana/application-dashboards:ro")
+        ]
+        self.assertEqual(len(mounts), 1, grafana["volumes"])
+        self.assertIn("/dashboards:", mounts[0])
+
+        providers = {
+            provider["name"]: provider
+            for provider in yaml.safe_load(
+                (BUNDLE / "grafana/provisioning/dashboards/platform.yaml").read_text(
+                    encoding="utf-8"
+                )
+            )["providers"]
+        }
+        applications = providers["applications"]
+        self.assertEqual(
+            applications["options"]["path"], "/etc/grafana/application-dashboards"
+        )
+        self.assertIs(applications["options"]["foldersFromFilesStructure"], True)
+        # a dashboard leaves with its release, and nobody edits one in the UI
+        self.assertIs(applications["disableDeletion"], False)
+        self.assertIs(applications["allowUiUpdates"], False)
+        # the platform's own dashboard is not something a release can remove
+        self.assertIs(providers["platform"]["disableDeletion"], True)
+
+        unit = (ROLE / "templates/platform-metrics.service.j2").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "--dashboards {{ observability_state_directory }}/dashboards", unit
+        )
+        self.assertIn(
+            "{{ observability_state_directory }}/dashboards",
+            unit.split("ReadWritePaths=")[1],
+        )
+        self.assertIn(
+            "dashboards",
+            {i["name"] for i in DEFAULTS["observability_state_directories"]},
+        )
+
     def test_dashboards_use_the_provisioned_sources(self) -> None:
         sources = yaml.safe_load(
             (BUNDLE / "grafana/provisioning/datasources/platform.yaml").read_text(
