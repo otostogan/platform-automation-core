@@ -389,7 +389,7 @@ def scoped_action(
 BACKUP_TIMEOUT_SECONDS = 7200
 
 
-def converge_hosts(root: Path, hosts: list, confirm=None) -> int:
+def converge_hosts(root: Path, hosts: list, confirm=None, play=None) -> int:
     """Converge twice, then readiness; the second pass must change nothing.
 
     ``confirm`` is asked once, after the first command is shown and before
@@ -411,7 +411,7 @@ def converge_hosts(root: Path, hosts: list, confirm=None) -> int:
             if attempt == 1 and confirm is not None and not confirm():
                 print("cancelled before converge")
                 return 130
-            code, output = run_playbook(root, command)
+            code, output = (play or run_playbook)(root, command)
             problems = verdict(parse_recap(output), hosts, second=(attempt == 2))
             if code != 0 or problems:
                 print()
@@ -420,13 +420,13 @@ def converge_hosts(root: Path, hosts: list, confirm=None) -> int:
                 print(f"{DIM}  handbook: {HANDBOOK}#/flow-core-update{RESET}")
                 return 1
             print(f"{GREEN}converge #{attempt}: clean{RESET}")
-        return check_readiness(root, hosts)
+        return check_readiness(root, hosts, play)
     except CoreUpdateError as error:
         print(f"{RED}{error}{RESET}")
         return 1
 
 
-def check_readiness(root: Path, hosts: list) -> int:
+def check_readiness(root: Path, hosts: list, play=None) -> int:
     from .core_update import (
         CoreUpdateError,
         parse_recap,
@@ -439,7 +439,7 @@ def check_readiness(root: Path, hosts: list) -> int:
     print()
     print(f"{DIM}→ readiness: {' '.join(command)}{RESET}")
     try:
-        code, output = run_playbook(root, command)
+        code, output = (play or run_playbook)(root, command)
     except CoreUpdateError as error:
         print(f"{RED}{error}{RESET}")
         return 1
@@ -476,6 +476,168 @@ def converge_action(context: Context, host, prompts) -> Action:
         run,
         "#/flow-core-update",
         remote=True,
+    )
+
+
+def bootstrap_action(
+    context: Context, host, prompts, runner=None, play=None, sleeper=None
+) -> Action:
+    """A new host, from the provider's SSH to a converged member of the tailnet.
+
+    The handbook's steps 8–12 in its order: bootstrap over the public
+    address, prove ``ops`` over the tailnet, preflight, converge twice,
+    readiness. Each step stops the run; none is skipped.
+    """
+    from . import bootstrap
+    from .core_update import (
+        CoreUpdateError,
+        parse_recap,
+        playbook_command,
+        run_playbook,
+        verdict,
+    )
+
+    address, user, identity = host_connection(host)
+    root = context.root
+    runner = runner or subprocess.run
+    play = play or run_playbook
+    sleeper = sleeper or time.sleep
+
+    def playbook(name: str, inventory: str) -> int:
+        command = playbook_command(root, name, [host.name], inventory=inventory)
+        print()
+        print(f"{DIM}→ {name}: {' '.join(command)}{RESET}")
+        try:
+            code, output = play(root, command)
+        except CoreUpdateError as error:
+            print(f"{RED}{error}{RESET}")
+            return 1
+        problems = verdict(parse_recap(output), [host.name], second=False)
+        if code != 0 or problems:
+            print()
+            for problem in problems or [f"ansible-playbook exited {code}"]:
+                print(f"{RED}{problem}{RESET}")
+            print(f"{DIM}  handbook: {HANDBOOK}#/flow-new-host{RESET}")
+            return 1
+        print(f"{GREEN}{name}: clean{RESET}")
+        return 0
+
+    def run() -> int:
+        questionary, style = prompts
+        handover = bootstrap.handover_probe(address, user, identity)
+
+        entry = bootstrap.bootstrap_entry(root, host.name)
+        if entry is None:
+            print(f"{RED}{host.name} is not in {bootstrap.BOOTSTRAP_INVENTORY}{RESET}")
+            print(f"{DIM}  add it with: platform new host{RESET}")
+            return 1
+
+        print(f"{DIM}→ {bootstrap.shown(handover)}{RESET}")
+        already, _ = bootstrap.wait_for_handover(handover, runner, sleeper, attempts=1)
+        if already:
+            print(
+                f"{host.name} already answers as {user} over the tailnet;"
+                " bootstrap is behind it."
+            )
+            if not questionary.confirm(
+                "Continue from preflight: converge twice and readiness?",
+                default=True,
+                style=style,
+            ).ask():
+                print("cancelled — nothing changed on the host")
+                return 130
+        else:
+            state, key_path = bootstrap.auth_key_state(root)
+            if state == "missing-file":
+                print(f"{RED}the tailnet auth key is not at {key_path}{RESET}")
+                print(
+                    f"{DIM}  a one-off key for tag:server-platform, mode 0600 —"
+                    f" handbook: {HANDBOOK}#/flow-new-host{RESET}"
+                )
+                return 1
+            if state == "not-configured":
+                print(
+                    f"{RED}{bootstrap.AUTH_KEY} is not set in {bootstrap.SHARED_SECRETS}{RESET}"
+                )
+                print(
+                    "  Without it someone has to run tailscale up on the host by hand,"
+                    " and the console"
+                )
+                print(
+                    f"  cannot finish the run. {DIM}handbook: {HANDBOOK}#/flow-new-host{RESET}"
+                )
+                return 1
+
+            probe = bootstrap.root_probe(entry)
+            print(f"{DIM}→ {bootstrap.shown(probe)}{RESET}")
+            reachable, reason = bootstrap.answers(probe, runner)
+            if not reachable:
+                print(
+                    f"{RED}{entry.user}@{entry.address} does not let this key in: {reason}{RESET}"
+                )
+                print(
+                    f"{DIM}  install the ops public key for {entry.user} first —"
+                    f" handbook: {HANDBOOK}#/flow-new-host{RESET}"
+                )
+                return 1
+
+            print()
+            print(f"{BOLD}Bootstrap {host.name} at {entry.address}:{RESET}")
+            print(
+                "  1. bootstrap over the provider's SSH: users ops and deploy, Tailscale"
+            )
+            print(f"  2. prove {user}@{address} over the tailnet")
+            print("  3. preflight, converge twice, readiness")
+            print(
+                "  Convergence closes public SSH. Keep the provider's console open"
+                " until readiness passes."
+            )
+            if not questionary.confirm("Start?", default=False, style=style).ask():
+                print("cancelled — nothing changed on the host")
+                return 130
+
+            if playbook("bootstrap", bootstrap.BOOTSTRAP_INVENTORY) != 0:
+                return 1
+
+            print()
+            print(f"{DIM}→ {bootstrap.shown(handover)}{RESET}")
+            joined, detail = bootstrap.wait_for_handover(handover, runner, sleeper)
+            if not joined:
+                print(
+                    f"{RED}{user}@{address} is not reachable over the tailnet: {detail}{RESET}"
+                )
+                print(
+                    "  Nothing further was run: convergence would close the public SSH"
+                    " you still have."
+                )
+                print(f"{DIM}  handbook: {HANDBOOK}#/flow-new-host{RESET}")
+                return 1
+            print(
+                f"{GREEN}handover: {user} over the tailnet, sudo and a tailnet address{RESET}"
+            )
+
+        if playbook("preflight", "inventory/hosts.yml") != 0:
+            return 1
+        code = converge_hosts(root, [host.name], play=play)
+        if code != 0:
+            return code
+        print()
+        print(
+            f"{GREEN}{host.name}: bootstrapped, second converge changed nothing,"
+            f" readiness passed{RESET}"
+        )
+        print(
+            "Next: reboot the host once and run Readiness again — the handbook's"
+            " reboot acceptance."
+        )
+        print("      Then commit both inventories and docs/RECIPIENTS.md.")
+        return 0
+
+    return Action(
+        "Bootstrap: first run on a new host",
+        f".venv/bin/ansible-playbook otostogan.platform.bootstrap --inventory inventory/bootstrap.yml --limit {host.name}",
+        run,
+        "#/flow-new-host",
     )
 
 
@@ -549,6 +711,7 @@ def host_actions(context: Context, host, prompts=None) -> list:
             ),
             converge_action(context, host, prompts),
             readiness_action(context, host),
+            bootstrap_action(context, host, prompts),
         ]
         return actions
     actions += [
@@ -1861,6 +2024,7 @@ def choose_scope(context: Context, questionary, style):
 MENU_GROUPS = (
     # (title, label prefixes) — what is reached for daily stays at the top level
     ("Observability", ("Grafana:", "Alerts:")),
+    ("Converge & readiness", ("Converge", "Readiness", "Bootstrap:")),
     ("Database & backups", ("Database:", "Backups:")),
     ("Secrets & config", ("Secrets:", "Validate ")),
     ("Retire or purge", ("Retire:", "Purge:")),
