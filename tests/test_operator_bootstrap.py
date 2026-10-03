@@ -48,7 +48,7 @@ class World:
             return subprocess.CompletedProcess(command, code, out.encode(), b"denied")
         if self.on_tailnet:
             return subprocess.CompletedProcess(
-                command, 0, b"uid=1000(ops)\nhost\n100.64.0.7\n", b""
+                command, 0, b"uid=1000(ops)\nhost\n192.0.2.7\n", b""
             )
         return subprocess.CompletedProcess(command, 255, b"", b"timed out")
 
@@ -230,7 +230,7 @@ class HandoverTest(unittest.TestCase):
         def runner(command, **_):
             code = next(answers)
             return subprocess.CompletedProcess(
-                command, code, b"100.64.0.9\n" if code == 0 else b"", b"no route"
+                command, code, b"2001:db8::9\n" if code == 0 else b"", b"no route"
             )
 
         ok, _ = bootstrap.wait_for_handover(

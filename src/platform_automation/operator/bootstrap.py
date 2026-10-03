@@ -7,6 +7,7 @@ run and expensive in the middle of it: is the host in the bootstrap inventory,
 is the one-off tailnet key where the inventory says, does root SSH answer.
 """
 
+import ipaddress
 import shlex
 import subprocess
 import time
@@ -132,7 +133,7 @@ def wait_for_handover(
     reason = "never tried"
     for attempt in range(attempts):
         ok, output = answers(command, runner)
-        if ok and any(line.startswith("100.") for line in output.splitlines()):
+        if ok and any(is_address(line) for line in output.splitlines()):
             return True, output
         reason = (
             output if not ok else "ops answers, but tailscale ip printed no address"
@@ -140,6 +141,15 @@ def wait_for_handover(
         if attempt + 1 < attempts:
             sleeper(pause)
     return False, reason
+
+
+def is_address(line: str) -> bool:
+    """``tailscale ip`` prints one address per line; nothing else in the probe does."""
+    try:
+        ipaddress.ip_address(line.strip())
+    except ValueError:
+        return False
+    return True
 
 
 def _text(value) -> str:
