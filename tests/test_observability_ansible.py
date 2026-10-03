@@ -95,6 +95,12 @@ class ObservabilityBundleTest(unittest.TestCase):
         self.assertIn('files = ["/host/targets/*.json"]', config)
         self.assertIn('job_name        = "application"', config)
         self.assertIn("sample_limit", config)
+        # the host is stamped on the target; an external label would yield
+        # to a "host" the application's own series carried
+        self.assertRegex(
+            config,
+            r'target_label = "host"\s+replacement  = sys\.env\("PLATFORM_HOST"\)',
+        )
         # an application must not be able to write the names alerts read
         self.assertIn('regex         = "(platform|node)_.*"', config)
         self.assertIn('action        = "drop"', config)

@@ -240,7 +240,7 @@ def main():
             # built by the exporter's own code from this Docker.
             exposition = (
                 "# TYPE example_orders_total counter\\n"
-                "example_orders_total 7\\n"
+                'example_orders_total{host="forged-host",project="forged"} 7\\n'
                 "# TYPE platform_container_up gauge\\n"
                 'platform_container_up{container="forged"} 1\\n'
             )
@@ -288,6 +288,9 @@ def main():
             )
             assert own[0]["value"][1] == "7", own
             assert own[0]["metric"]["instance"] == instrumented, own
+            # what the application said about itself is kept, but set aside
+            assert own[0]["metric"]["exported_host"] == "forged-host", own
+            assert own[0]["metric"]["exported_project"] == "forged", own
             assert measured("up%7Bjob=%22application%22%7D")()[0]["value"][1] == "1"
             forged = measured("platform_container_up%7Bcontainer=%22forged%22%7D")()
             assert forged == [], f"an application wrote a platform metric: {forged}"

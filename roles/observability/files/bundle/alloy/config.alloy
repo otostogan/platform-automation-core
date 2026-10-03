@@ -121,6 +121,14 @@ discovery.relabel "applications" {
 		source_labels = ["container"]
 		target_label  = "instance"
 	}
+
+	// On the target, not only as an external label: an external label
+	// yields to one the series already carries, and then an application
+	// could say which host it runs on.
+	rule {
+		target_label = "host"
+		replacement  = sys.env("PLATFORM_HOST")
+	}
 }
 
 prometheus.scrape "applications" {

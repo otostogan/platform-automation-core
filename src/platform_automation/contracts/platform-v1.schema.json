@@ -125,7 +125,7 @@
 					"type": "string",
 					"minLength": 2,
 					"maxLength": 256,
-					"pattern": "^/[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*$"
+					"pattern": "^(?!.*/\\.\\.?(/|$))/[A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*$"
 				},
 				"port": {
 					"type": "integer",

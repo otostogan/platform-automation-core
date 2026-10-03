@@ -374,10 +374,30 @@ class ManifestValidatorTest(unittest.TestCase):
         )
 
     def test_rejects_a_metrics_path_that_could_carry_nginx_syntax(self) -> None:
-        for path in ("metrics", "/", "/metrics;", "/a b", "/metrics/", "/m{x}"):
+        # "." and ".." are resolved by nginx before it matches a location, so
+        # a guard written for the literal path would not cover the real one.
+        for path in (
+            "metrics",
+            "/",
+            "/metrics;",
+            "/a b",
+            "/metrics/",
+            "/m{x}",
+            "/..",
+            "/.",
+            "/foo/../metrics",
+            "/foo/./metrics",
+            "/metrics/..",
+        ):
             manifest = copy.deepcopy(self.valid_manifest)
             manifest["service"]["metrics"] = {"path": path, "port": 3000}
             self.assertTrue(self.validate(manifest), path)
+
+    def test_accepts_dots_that_are_part_of_a_name(self) -> None:
+        for path in ("/metrics.txt", "/.well-known/metrics", "/v1.2/metrics", "/a..b"):
+            manifest = copy.deepcopy(self.valid_manifest)
+            manifest["service"]["metrics"] = {"path": path, "port": 3000}
+            self.assertEqual(self.validate(manifest), [], path)
 
     def test_rejects_an_incomplete_metrics_block(self) -> None:
         manifest = copy.deepcopy(self.valid_manifest)
