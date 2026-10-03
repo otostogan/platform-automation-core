@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-03
+
 - Applications ship their own dashboards. A manifest may declare
   `observability.dashboards`, a directory of Grafana `*.json` files; the
   bundle builder folds it into one verified bundle file, and the host shows
