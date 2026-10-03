@@ -34,6 +34,9 @@ from .restore_runtime import VERIFICATION_SUCCEEDED, last_verification
 from .retire import is_retired
 
 DEFAULT_OUTPUT = Path("/var/lib/platform/observability/textfile/platform.prom")
+DEFAULT_TARGETS = Path("/var/lib/platform/observability/targets/applications.json")
+# Where the proxy meets web services, and so where the collector can too.
+DEFAULT_EDGE_NETWORK = "platform-edge"
 DEFAULT_PROJECTS_ROOT = Path("/var/lib/platform/projects")
 DEFAULT_RELEASES_ROOT = Path("/var/lib/platform/releases")
 DEFAULT_DOCKER = Path("/usr/bin/docker")
@@ -267,11 +270,86 @@ def container_samples(samples: Samples, docker: Path, runner=subprocess.run) -> 
                 samples.add(name, "counter", help_text, labels, value)
 
 
+# ------------------------------------------------------- application metrics
+
+
+def edge_addresses(docker: Path, network: str, runner=subprocess.run) -> list:
+    """Running containers on the proxy's network: scope, name and address there."""
+    listing = docker_lines(
+        docker,
+        [
+            "ps",
+            "--no-trunc",
+            "--filter",
+            "status=running",
+            "--filter",
+            f"network={network}",
+            "--format",
+            '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}',
+        ],
+        runner,
+    )
+    known = {}
+    for line in listing:
+        parts = line.split("|")
+        if len(parts) == 4:
+            known[parts[0]] = {
+                **scope_labels(parts[2], parts[3]),
+                "container": parts[1],
+            }
+    if not known:
+        return []
+    template = (
+        "{{.Id}}|{{with index .NetworkSettings.Networks "
+        + json.dumps(network)
+        + "}}{{.IPAddress}}{{end}}"
+    )
+    found = []
+    for line in docker_lines(docker, ["inspect", "--format", template, *known], runner):
+        identifier, _, address = line.partition("|")
+        if identifier in known and address.strip():
+            found.append({**known[identifier], "address": address.strip()})
+    return found
+
+
+def scrape_targets(declared: dict, containers: list) -> list:
+    """Prometheus file-discovery entries for every declared metrics endpoint.
+
+    ``declared`` maps ``(project, environment)`` to the serving release's
+    ``service`` block. Only that release's web service is scraped, on the
+    address it has on the proxy's network; the labels are the platform's, so
+    an application cannot name itself something else.
+    """
+    targets = []
+    for container in sorted(containers, key=lambda c: c["container"]):
+        service = declared.get((container["project"], container["environment"]))
+        if service is None or container["service"] != service["web"]:
+            continue
+        metrics = service["metrics"]
+        targets.append(
+            {
+                "targets": [f"{container['address']}:{metrics['port']}"],
+                "labels": {
+                    "__metrics_path__": metrics["path"],
+                    "project": container["project"],
+                    "environment": container["environment"],
+                    "service": container["service"],
+                    "container": container["container"],
+                },
+            }
+        )
+    return targets
+
+
 # ------------------------------------------------------------------ releases
 
 
 def release_samples(
-    samples: Samples, projects_root: Path, releases_root: Path, backups_root: Path
+    samples: Samples,
+    projects_root: Path,
+    releases_root: Path,
+    backups_root: Path,
+    declared: Optional[dict] = None,
 ) -> None:
     try:
         scopes = list_project_scopes(projects_root)
@@ -358,6 +436,17 @@ def release_samples(
                 manifest = load_staged_manifest(
                     resolve_release_bundle(current, releases_root)
                 )
+                service = manifest.get("service") or {}
+                if service.get("metrics") is not None:
+                    samples.add(
+                        "platform_application_metrics_declared",
+                        "gauge",
+                        "1 when the serving release declares a metrics endpoint.",
+                        {**scope, "service": service["web"]},
+                        1.0,
+                    )
+                    if declared is not None:
+                        declared[(project, environment)] = service
                 samples.add(
                     "platform_backup_scheduled",
                     "gauge",
@@ -453,10 +542,11 @@ def collect(
     backups_root: Path = DEFAULT_BACKUPS_ROOT,
     runner=subprocess.run,
     now: Optional[float] = None,
+    declared: Optional[dict] = None,
 ) -> str:
     samples = Samples()
     container_samples(samples, docker, runner)
-    release_samples(samples, projects_root, releases_root, backups_root)
+    release_samples(samples, projects_root, releases_root, backups_root, declared)
     stamp = datetime.now(timezone.utc).timestamp() if now is None else now
     samples.add(
         "platform_metrics_export_timestamp_seconds",
@@ -477,8 +567,16 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--projects-root", type=Path, default=DEFAULT_PROJECTS_ROOT)
     parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
     parser.add_argument("--backups-root", type=Path, default=DEFAULT_BACKUPS_ROOT)
+    parser.add_argument(
+        "--targets",
+        type=Path,
+        default=None,
+        help="Also write the applications' scrape targets to this file.",
+    )
+    parser.add_argument("--edge-network", default=DEFAULT_EDGE_NETWORK)
     arguments = parser.parse_args(argv)
     try:
+        declared: dict = {}
         write_atomically(
             arguments.output,
             collect(
@@ -486,8 +584,21 @@ def main(argv: Optional[list] = None) -> int:
                 arguments.projects_root,
                 arguments.releases_root,
                 arguments.backups_root,
+                declared=declared,
             ),
         )
+        if arguments.targets is not None:
+            # Always written, an empty list included: a release that stops
+            # declaring metrics must stop being scraped.
+            containers = (
+                edge_addresses(arguments.docker, arguments.edge_network)
+                if declared
+                else []
+            )
+            write_atomically(
+                arguments.targets,
+                json.dumps(scrape_targets(declared, containers), indent=2) + "\n",
+            )
     except OSError as error:
         print(f"metrics export error: {error}", file=sys.stderr)
         return 1

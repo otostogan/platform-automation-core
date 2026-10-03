@@ -364,6 +364,36 @@ class ManifestValidatorTest(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_accepts_a_metrics_endpoint(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["service"]["metrics"] = {"path": "/metrics", "port": 3000}
+
+        self.assertEqual(self.validate(manifest), [])
+        self.assertEqual(
+            self.validate_compose_contract(self.valid_compose, manifest), []
+        )
+
+    def test_rejects_a_metrics_path_that_could_carry_nginx_syntax(self) -> None:
+        for path in ("metrics", "/", "/metrics;", "/a b", "/metrics/", "/m{x}"):
+            manifest = copy.deepcopy(self.valid_manifest)
+            manifest["service"]["metrics"] = {"path": path, "port": 3000}
+            self.assertTrue(self.validate(manifest), path)
+
+    def test_rejects_an_incomplete_metrics_block(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["service"]["metrics"] = {"path": "/metrics"}
+        self.assertTrue(self.validate(manifest))
+
+    def test_the_metrics_port_must_be_exposed_by_the_web_service(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["service"]["metrics"] = {"path": "/metrics", "port": 9464}
+
+        errors = self.validate_compose_contract(self.valid_compose, manifest)
+
+        self.assertIn(
+            "$.compose.services.app.expose: must expose metrics port 9464", errors
+        )
+
     def test_rejects_compose_build(self) -> None:
         compose = copy.deepcopy(self.valid_compose)
         compose["services"]["app"]["build"] = "."

@@ -77,6 +77,42 @@ class ObservabilityBundleTest(unittest.TestCase):
         self.assertNotIn("cadvisor", config)
         self.assertNotIn("http://loki", config)
 
+    def test_the_collector_reads_application_metrics_from_platform_written_targets(
+        self,
+    ) -> None:
+        collector = compose("collector.yml")
+        alloy = collector["services"]["alloy"]
+        # the proxy's network is the one every web service is on
+        self.assertIn("edge", alloy["networks"])
+        edge = collector["networks"]["edge"]
+        self.assertIs(edge["external"], True)
+        self.assertEqual(edge["name"], "${OBSERVABILITY_EDGE_NETWORK:-platform-edge}")
+        self.assertEqual(DEFAULTS["observability_edge_network"], "platform-edge")
+        mounts = [m for m in alloy["volumes"] if m.endswith(":/host/targets:ro")]
+        self.assertEqual(len(mounts), 1, alloy["volumes"])
+
+        config = (BUNDLE / "alloy/config.alloy").read_text(encoding="utf-8")
+        self.assertIn('files = ["/host/targets/*.json"]', config)
+        self.assertIn('job_name        = "application"', config)
+        self.assertIn("sample_limit", config)
+        # an application must not be able to write the names alerts read
+        self.assertIn('regex         = "(platform|node)_.*"', config)
+        self.assertIn('action        = "drop"', config)
+
+        unit = (ROLE / "templates/platform-metrics.service.j2").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "--targets {{ observability_state_directory }}/targets/applications.json",
+            unit,
+        )
+        self.assertIn(
+            "{{ observability_state_directory }}/targets",
+            unit.split("ReadWritePaths=")[1],
+        )
+        owners = {i["name"] for i in DEFAULTS["observability_state_directories"]}
+        self.assertIn("targets", owners)
+
     def test_dashboards_use_the_provisioned_sources(self) -> None:
         sources = yaml.safe_load(
             (BUNDLE / "grafana/provisioning/datasources/platform.yaml").read_text(

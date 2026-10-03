@@ -118,3 +118,51 @@ class NginxConfigTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MetricsGuardTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.valid_manifest = load_yaml(MANIFEST_PATH)
+
+    def manifest(self, port=None, path="/metrics") -> dict:
+        manifest = copy.deepcopy(self.valid_manifest)
+        if port is not None:
+            manifest["service"]["metrics"] = {"path": path, "port": port}
+        return manifest
+
+    def test_metrics_on_the_proxied_port_are_not_served_publicly(self) -> None:
+        manifest = self.manifest(port=3000)
+        host = manifest["domains"][0]["host"]
+
+        fragment = generate_vhost_fragments(manifest)[host]
+
+        self.assertIn("location = /metrics { return 404; }", fragment)
+        self.assertIn("location ^~ /metrics/ { return 404; }", fragment)
+
+    def test_metrics_on_their_own_port_need_no_guard(self) -> None:
+        manifest = self.manifest(port=9464)
+        host = manifest["domains"][0]["host"]
+
+        self.assertNotIn("return 404", generate_vhost_fragments(manifest)[host])
+
+    def test_no_metrics_block_changes_nothing(self) -> None:
+        manifest = self.manifest()
+        host = manifest["domains"][0]["host"]
+
+        self.assertNotIn("return 404", generate_vhost_fragments(manifest)[host])
+
+    def test_a_helper_services_domain_is_left_alone(self) -> None:
+        manifest = self.manifest(port=3000, path="/internal/metrics")
+        helper = copy.deepcopy(manifest["domains"][0])
+        helper["host"] = "mail.example.invalid"
+        helper["service"] = "mailpit"
+        manifest["domains"].append(helper)
+
+        fragments = generate_vhost_fragments(manifest)
+
+        self.assertIn(
+            "location = /internal/metrics { return 404; }",
+            fragments[manifest["domains"][0]["host"]],
+        )
+        self.assertNotIn("return 404", fragments["mail.example.invalid"])

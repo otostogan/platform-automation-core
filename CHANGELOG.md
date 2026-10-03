@@ -7,6 +7,18 @@ release.
 
 ## [Unreleased]
 
+- Applications can publish their own metrics. A manifest may declare
+  `service.metrics` with a `path` and a `port`; the platform scrapes that
+  endpoint every thirty seconds on each web container of the serving
+  release, over the proxy's network, and labels the series itself — host,
+  project, environment, service, container. The port must be in the web
+  service's `expose`. When it is the proxied port, the proxy answers 404 for
+  that path on the web service's domains, so metrics are never public.
+  Series named `platform_*` or `node_*` are dropped and a scrape of more
+  than 10 000 samples is refused. A new alert, "Application metrics not
+  collected", fires when a release declares metrics that cannot be read.
+  The collector joins the proxy's network to reach the endpoints.
+
 - Handbook: a page for the operator console — what it promises, how to
   install it, where it runs, each command, and both menus item by item.
 
