@@ -115,6 +115,9 @@ services:
         volumes:
             - ./grafana/provisioning:/etc/grafana/provisioning:ro
             - ./grafana/dashboards:/etc/grafana/dashboards:ro
+            # What applications ship with their releases; the platform keeps
+            # this directory equal to the releases that are serving.
+            - ${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}/dashboards:/etc/grafana/application-dashboards:ro
             - ${PLATFORM_OBSERVABILITY_STATE_DIR:-/var/lib/platform/observability}/grafana:/var/lib/grafana
         mem_limit: ${OBSERVABILITY_GRAFANA_MEMORY:-768m}
         healthcheck:

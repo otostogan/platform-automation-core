@@ -185,9 +185,23 @@ class VerifyBundleTest(unittest.TestCase):
         entries.append(("unexpected.txt", b"unexpected"))
         self.write_entries(entries)
 
+        # one extra file is a count the bundle may have, so it is refused for
+        # what it is: a member the metadata does not declare
         with self.assertRaisesRegex(
             BundleVerificationError,
-            "must contain exactly 4 files",
+            "archive members do not match deployment bundle metadata",
+        ):
+            verify_bundle(self.modified_bundle)
+
+    def test_rejects_more_members_than_a_bundle_can_have(self) -> None:
+        entries = self.read_entries()
+        entries.append(("unexpected.txt", b"unexpected"))
+        entries.append(("another.txt", b"unexpected"))
+        self.write_entries(entries)
+
+        with self.assertRaisesRegex(
+            BundleVerificationError,
+            "must contain 4 or 5 files",
         ):
             verify_bundle(self.modified_bundle)
 

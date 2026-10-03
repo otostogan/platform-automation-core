@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-import hashlib
 import argparse
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -14,6 +14,12 @@ from typing import Any
 from .contract_resources import contract_path
 from .sops_validation import validate_sops_document
 
+from .observability_bundle import (
+    BUNDLE_PATH as OBSERVABILITY_PATH,
+    ObservabilityBundleError,
+    collect_document,
+    declared_directory,
+)
 from .validate_manifest import (
     load_json,
     load_yaml,
@@ -172,6 +178,28 @@ def collect_bundle(
         },
     }
 
+    # The one bundle file that is not a file of the application: a directory
+    # of dashboards folded into a single document, so the set of bundle files
+    # stays fixed.
+    generated: dict[str, bytes] = {}
+    dashboards = declared_directory(manifest)
+
+    if dashboards is not None:
+        try:
+            generated["observability"] = collect_document(resolved_root, dashboards)
+        except ObservabilityBundleError as error:
+            raise BundleError(str(error)) from error
+
+        if OBSERVABILITY_PATH in relative_paths.values():
+            raise BundleError(
+                f"{OBSERVABILITY_PATH} is reserved for the generated bundle file"
+            )
+
+        metadata["files"]["observability"] = {
+            "path": OBSERVABILITY_PATH,
+            "sha256": hashlib.sha256(generated["observability"]).hexdigest(),
+        }
+
     bundle_schema = load_json(DEFAULT_BUNDLE_SCHEMA)
     metadata_errors = validate_manifest(metadata, bundle_schema)
 
@@ -180,7 +208,7 @@ def collect_bundle(
             "invalid deployment bundle metadata:\n" + "\n".join(metadata_errors)
         )
 
-    return metadata, files
+    return metadata, {**files, **generated}
 
 
 def add_archive_file(
@@ -259,10 +287,15 @@ def create_bundle(
                         files,
                         key=lambda item: metadata["files"][item]["path"],
                     ):
+                        content = files[name]
                         add_archive_file(
                             archive,
                             metadata["files"][name]["path"],
-                            files[name].read_bytes(),
+                            (
+                                content
+                                if isinstance(content, bytes)
+                                else content.read_bytes()
+                            ),
                         )
 
         temporary_path.chmod(0o600)

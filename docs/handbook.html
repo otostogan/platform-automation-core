@@ -10886,10 +10886,52 @@ ssh -N -L 13000:&lt;адрес&gt;:3000 ops@{{tailnet}}</code></pre>
     Если объявленные метрики не собираются пять минут, приходит алерт
     «Application metrics not collected».</p>
   </div>
+  <h3>Свои дашборды</h3>
+  <p>Дашборды приложения лежат файлами рядом с манифестом и едут в пакете выкатки —
+  вместе с релизом, который они описывают:</p>
+<pre><code>deploy/
+    dashboards/
+        orders.json
+        queue.json
+    platform.{{env}}.yml</code></pre>
+<pre><code>observability:
+    dashboards: deploy/dashboards</code></pre>
+  <p>После выкатки они появляются в Grafana в папке
+  <code>&lt;проект&gt;-&lt;окружение&gt;</code> — в пределах полуминуты, без
+  перезапуска. При откате показываются дашборды того релиза, на который откатились;
+  у приложения, выведенного из работы, папка исчезает.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Правило</th><th>Почему</th></tr></thead>
+    <tbody>
+      <tr><td>Источник данных назван по <code>uid</code>: <code>platform-prometheus</code> или <code>platform-loki</code></td><td>Других источников на хосте нет. Дашборд с чужим или подставным (<code>${DS_…}</code>) источником сборка пакета отклонит и скажет, в какой панели</td></tr>
+      <tr><td>Экспорт из Grafana — с выключенным переключателем «Export the dashboard to use in another instance» (в старых версиях — «Export for sharing externally»)</td><td>С ним источники превращаются в заглушки, которые некому заполнить</td></tr>
+      <tr><td>Имя файла — строчные буквы, цифры и дефисы</td><td>Из него платформа делает <code>uid</code> дашборда: <code>&lt;проект&gt;-&lt;окружение&gt;-&lt;имя&gt;</code>. Свой <code>uid</code> из файла заменяется, поэтому два приложения не столкнутся и ни одно не подменит дашборд платформы</td></tr>
+      <tr><td>В Grafana дашборд не редактируется</td><td>Показывается то, что выкачено. Правка делается в файле и приезжает релизом</td></tr>
+      <tr><td>До 20 дашбордов, каждый до 512 КБ</td><td>Пакет выкатки ограничен по размеру</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="expect">
+    <span class="label">Как понять, что получилось</span>
+    <p>До выкатки: <code>platform doctor</code> в репозитории приложения показывает
+    строку <code>… dashboards</code> с числом файлов либо причину отказа. После
+    выкатки: Grafana → <strong>Dashboards</strong> → папка
+    <code>{{project}}-{{env}}</code>.</p>
+  </div>
+  <div class="note">
+    <span class="label">Как сделать дашборд</span>
+    <p>Соберите его в Grafana руками в любой другой папке. Затем на странице дашборда:
+    <strong>Export → Export as JSON</strong>, переключатель «Export the dashboard to
+    use in another instance» выключен, <strong>Download file</strong>. Файл положите в
+    <code>deploy/dashboards/</code>. Накликанный черновик конвергенцию не переживёт —
+    переживает то, что лежит в репозитории.</p>
+  </div>
   <div class="note">
     <span class="label">Ещё не реализовано</span>
-    <p>Метрики сервисов, кроме веб-сервиса; свои дашборды и алерты приложения в пакете
-    выкатки; трейсы через <code>PLATFORM_OTLP_ENDPOINT</code>.</p>
+    <p>Метрики сервисов, кроме веб-сервиса; свои алерты приложения в пакете выкатки;
+    трейсы через <code>PLATFORM_OTLP_ENDPOINT</code>. Дашборды приложения показывает
+    Grafana на том же хосте, где оно выкачено.</p>
   </div>
 
   <h2>Алерты</h2>
@@ -11639,6 +11681,36 @@ restore_validation:
 								поднялась; запрос, считающий строки в непустой
 								таблице, доказывает, что в ней есть данные.
 								Второе полезнее.
+							</dd>
+						</dl>
+					</article>
+
+					<article class="card" id="ref-mf-observability">
+						<h3><code>observability.dashboards</code></h3>
+						<dl>
+							<dt>Значение</dt>
+							<dd>
+								Путь к папке с дашбордами Grafana относительно
+								корня репозитория, обычно
+								<code>deploy/dashboards</code>. В папке —
+								только файлы <code>*.json</code>.
+							</dd>
+							<dt>Обязательно</dt>
+							<dd>нет; блок <code>observability</code> можно не писать вовсе</dd>
+							<dt>Что сломается</dt>
+							<dd>
+								Сборка пакета отклонит папку, которой нет,
+								посторонний файл в ней, символическую ссылку и
+								дашборд с чужим источником данных. Хост
+								проверяет то же самое ещё раз и не примет пакет,
+								где манифест объявляет дашборды, а файла с ними
+								нет.
+							</dd>
+							<dt>Зачем</dt>
+							<dd>
+								Дашборды едут с релизом и показываются в
+								Grafana в папке приложения. Подробно —
+								<a href="#/ref-observability">Наблюдаемость</a>.
 							</dd>
 						</dl>
 					</article>

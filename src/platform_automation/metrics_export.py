@@ -21,7 +21,18 @@ from typing import Any, Optional
 
 from .backup_runtime import DEFAULT_BACKUPS_ROOT, list_backups
 from .backup_schedule import backups_are_scheduled
-from .compose_runtime import ComposeRuntimeError, load_staged_manifest
+from .compose_runtime import (
+    ComposeRuntimeError,
+    load_staged_manifest,
+    resolve_staged_file,
+)
+from .observability_bundle import (
+    BUNDLE_PATH as OBSERVABILITY_PATH,
+    ObservabilityBundleError,
+    declared_directory,
+    load_document,
+    provisioned,
+)
 from .domains import domain_service
 from .release_ledger import (
     ReleaseLedgerError,
@@ -341,6 +352,85 @@ def scrape_targets(declared: dict, containers: list) -> list:
     return targets
 
 
+# ---------------------------------------------------- application dashboards
+
+
+def staged_dashboards(bundle: Path, project: str, environment: str) -> dict:
+    """The serving release's dashboards, as Grafana is to get them.
+
+    ``{file name: JSON text}``. Read from the staged bundle, which was
+    verified when it was deployed, and checked again here: this text ends up
+    in a directory another process trusts.
+    """
+    document = load_document(
+        resolve_staged_file(
+            bundle, OBSERVABILITY_PATH, "application dashboards"
+        ).read_bytes()
+    )
+    return {
+        f"{name}.json": json.dumps(
+            provisioned(project, environment, name, dashboard),
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        + "\n"
+        for name, dashboard in document["dashboards"].items()
+    }
+
+
+def sync_dashboards(root: Path, wanted: dict) -> list:
+    """Make ``root`` hold exactly ``wanted``; returns what changed.
+
+    ``wanted`` maps a folder — ``<project>-<environment>`` — to its files, or
+    to ``None`` for a folder to leave exactly as it is.
+    Grafana reads the tree every thirty seconds and names its folders after
+    the directories, so a release that is rolled back, retired or no longer
+    ships a dashboard loses it here and, a moment later, there. Files that
+    already say the right thing are left alone: rewriting them would make
+    Grafana reload every dashboard twice a minute.
+    """
+    changed = []
+    root.mkdir(mode=0o755, parents=True, exist_ok=True)
+    for entry in sorted(root.iterdir()):
+        if entry.is_symlink() or not entry.is_dir():
+            entry.unlink()
+            changed.append(f"removed {entry.name}")
+            continue
+        if entry.name in wanted and wanted[entry.name] is None:
+            continue
+        files = wanted.get(entry.name, {})
+        for item in sorted(entry.iterdir()):
+            if item.is_symlink() or not item.is_file() or item.name not in files:
+                if item.is_dir() and not item.is_symlink():
+                    # nothing the platform writes is nested this deep
+                    for nested in sorted(item.rglob("*"), reverse=True):
+                        nested.unlink() if not nested.is_dir() else nested.rmdir()
+                    item.rmdir()
+                else:
+                    item.unlink()
+                changed.append(f"removed {entry.name}/{item.name}")
+        if not files:
+            entry.rmdir()
+            changed.append(f"removed {entry.name}")
+    for folder, files in sorted(wanted.items()):
+        if not files:
+            continue
+        directory = root / folder
+        directory.mkdir(mode=0o755, exist_ok=True)
+        directory.chmod(0o755)
+        for name, text in sorted(files.items()):
+            path = directory / name
+            try:
+                if path.read_text(encoding="utf-8") == text:
+                    continue
+            except (OSError, UnicodeDecodeError):
+                pass
+            write_atomically(path, text)
+            changed.append(f"wrote {folder}/{name}")
+    return changed
+
+
 # ------------------------------------------------------------------ releases
 
 
@@ -350,7 +440,13 @@ def release_samples(
     releases_root: Path,
     backups_root: Path,
     declared: Optional[dict] = None,
-) -> None:
+    dashboards: Optional[dict] = None,
+) -> bool:
+    """Returns whether the ledger could be walked at all.
+
+    A caller that mirrors what was found — scrape targets, dashboards — must
+    not take "nothing was found" from a walk that never happened.
+    """
     try:
         scopes = list_project_scopes(projects_root)
     except (ReleaseLedgerError, OSError):
@@ -361,7 +457,7 @@ def release_samples(
             {},
             0.0,
         )
-        return
+        return False
     samples.add(
         "platform_ledger_readable",
         "gauge",
@@ -433,9 +529,16 @@ def release_samples(
                     deployed,
                 )
             try:
-                manifest = load_staged_manifest(
-                    resolve_release_bundle(current, releases_root)
-                )
+                bundle = resolve_release_bundle(current, releases_root)
+                manifest = load_staged_manifest(bundle)
+                if (
+                    dashboards is not None
+                    and declared_directory(manifest) is not None
+                    and not is_retired(projects_root, project, environment)
+                ):
+                    dashboards[f"{project}-{environment}"] = staged_dashboards(
+                        bundle, project, environment
+                    )
                 service = manifest.get("service") or {}
                 if service.get("metrics") is not None:
                     samples.add(
@@ -469,11 +572,15 @@ def release_samples(
             except (
                 ReleaseLedgerError,
                 ComposeRuntimeError,
+                ObservabilityBundleError,
                 OSError,
                 KeyError,
                 TypeError,
             ):
-                pass
+                # Unreadable now is not the same as gone: leave this
+                # application's dashboards as they are until it reads again.
+                if dashboards is not None:
+                    dashboards.setdefault(f"{project}-{environment}", None)
 
         directory = backups_root / project / environment
         try:
@@ -521,6 +628,8 @@ def release_samples(
                 proven,
             )
 
+    return True
+
 
 def write_atomically(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -543,10 +652,16 @@ def collect(
     runner=subprocess.run,
     now: Optional[float] = None,
     declared: Optional[dict] = None,
+    dashboards: Optional[dict] = None,
+    outcome: Optional[dict] = None,
 ) -> str:
     samples = Samples()
     container_samples(samples, docker, runner)
-    release_samples(samples, projects_root, releases_root, backups_root, declared)
+    walked = release_samples(
+        samples, projects_root, releases_root, backups_root, declared, dashboards
+    )
+    if outcome is not None:
+        outcome["ledger"] = walked
     stamp = datetime.now(timezone.utc).timestamp() if now is None else now
     samples.add(
         "platform_metrics_export_timestamp_seconds",
@@ -574,9 +689,17 @@ def main(argv: Optional[list] = None) -> int:
         help="Also write the applications' scrape targets to this file.",
     )
     parser.add_argument("--edge-network", default=DEFAULT_EDGE_NETWORK)
+    parser.add_argument(
+        "--dashboards",
+        type=Path,
+        default=None,
+        help="Also keep the applications' dashboards in this directory.",
+    )
     arguments = parser.parse_args(argv)
     try:
         declared: dict = {}
+        dashboards: dict = {}
+        outcome: dict = {}
         write_atomically(
             arguments.output,
             collect(
@@ -585,8 +708,16 @@ def main(argv: Optional[list] = None) -> int:
                 arguments.releases_root,
                 arguments.backups_root,
                 declared=declared,
+                dashboards=dashboards,
+                outcome=outcome,
             ),
         )
+        if not outcome.get("ledger"):
+            # Nothing was learned about any application; what is already
+            # scraped and shown stays until the ledger reads again.
+            return 0
+        if arguments.dashboards is not None:
+            sync_dashboards(arguments.dashboards, dashboards)
         if arguments.targets is not None:
             # Always written, an empty list included: a release that stops
             # declaring metrics must stop being scraped.

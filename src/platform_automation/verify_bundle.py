@@ -10,6 +10,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .contract_resources import contract_path
+from .observability_bundle import (
+    BUNDLE_PATH as OBSERVABILITY_PATH,
+    ObservabilityBundleError,
+    declared_directory,
+    load_document,
+)
 from .sops_validation import validate_sops_document
 from .validate_manifest import (
     load_json,
@@ -22,7 +28,10 @@ DEFAULT_BUNDLE_SCHEMA = contract_path("bundle-v1.schema.json")
 DEFAULT_MANIFEST_SCHEMA = contract_path("platform-v1.schema.json")
 
 METADATA_PATH = "platform-bundle.json"
+# The metadata file, the three files every bundle has, and one more when the
+# application ships dashboards.
 EXPECTED_MEMBER_COUNT = 4
+MAX_MEMBER_COUNT = 5
 
 MAX_BUNDLE_BYTES = 10 * 1024 * 1024
 MAX_MEMBER_BYTES = 5 * 1024 * 1024
@@ -71,10 +80,10 @@ def read_archive_members(bundle_content: bytes) -> dict[str, bytes]:
         ) as archive:
             archive_members = archive.getmembers()
 
-            if len(archive_members) != EXPECTED_MEMBER_COUNT:
+            if not EXPECTED_MEMBER_COUNT <= len(archive_members) <= MAX_MEMBER_COUNT:
                 raise BundleVerificationError(
-                    "deployment bundle must contain exactly "
-                    f"{EXPECTED_MEMBER_COUNT} files"
+                    f"deployment bundle must contain {EXPECTED_MEMBER_COUNT} or "
+                    f"{MAX_MEMBER_COUNT} files"
                 )
 
             for member in archive_members:
@@ -209,6 +218,28 @@ def validate_embedded_contract(
             "invalid embedded SOPS secrets:\n" + "\n".join(sops_errors)
         )
 
+    # Declared and shipped together, or neither: a manifest that names
+    # dashboards the bundle lacks would deploy without them, silently.
+    declares = declared_directory(manifest) is not None
+    ships = "observability" in declared_files
+
+    if declares != ships:
+        raise BundleVerificationError(
+            "manifest observability.dashboards and the bundle's observability "
+            "file must come together"
+        )
+
+    if ships:
+        if declared_files["observability"]["path"] != OBSERVABILITY_PATH:
+            raise BundleVerificationError(
+                f"bundle observability file must be {OBSERVABILITY_PATH}"
+            )
+
+        try:
+            load_document(files["observability"])
+        except ObservabilityBundleError as error:
+            raise BundleVerificationError(str(error)) from error
+
     return manifest, compose, secrets
 
 
@@ -216,9 +247,10 @@ def validate_bundle_members(
     members: dict[str, bytes],
     minimum_age_recipients: int = 1,
 ) -> tuple:
-    if len(members) != EXPECTED_MEMBER_COUNT:
+    if not EXPECTED_MEMBER_COUNT <= len(members) <= MAX_MEMBER_COUNT:
         raise BundleVerificationError(
-            "deployment bundle must contain exactly " f"{EXPECTED_MEMBER_COUNT} files"
+            f"deployment bundle must contain {EXPECTED_MEMBER_COUNT} or "
+            f"{MAX_MEMBER_COUNT} files"
         )
 
     for path, content in members.items():

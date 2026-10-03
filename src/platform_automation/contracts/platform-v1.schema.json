@@ -59,6 +59,9 @@
 		},
 		"restore_validation": {
 			"$ref": "#/$defs/restore_validation"
+		},
+		"observability": {
+			"$ref": "#/$defs/observability"
 		}
 	},
 	"$defs": {
@@ -423,6 +426,21 @@
 						"env",
 						"files"
 					]
+				}
+			}
+		},
+		"observability": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"dashboards"
+			],
+			"properties": {
+				"dashboards": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 255,
+					"pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)*$"
 				}
 			}
 		},

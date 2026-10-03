@@ -11,3 +11,14 @@ providers:
       updateIntervalSeconds: 60
       options:
           path: /etc/grafana/dashboards
+    # Dashboards an application ships in its release. One directory per
+    # application and environment, shown as a folder of that name; a dashboard
+    # leaves with the release that brought it.
+    - name: applications
+      type: file
+      disableDeletion: false
+      allowUiUpdates: false
+      updateIntervalSeconds: 30
+      options:
+          path: /etc/grafana/application-dashboards
+          foldersFromFilesStructure: true

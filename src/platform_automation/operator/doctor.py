@@ -15,6 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from ..observability_bundle import (
+    count_dashboards,
+    declared_directory,
+    local_errors,
+)
 from ..sops_validation import valid_age_recipients, validate_sops_document
 from ..validate_manifest import (
     DEFAULT_SCHEMA,
@@ -368,6 +373,24 @@ def manifest_findings(root: Path, manifest_path: Path, schema: dict) -> list:
     else:
         findings.append(
             ok(f"{label}: compose", f"{document['compose_file']} honours the contract")
+        )
+
+    dashboard_errors = local_errors(root, document)
+    if dashboard_errors:
+        findings.append(
+            fail(
+                f"{label}: dashboards",
+                "; ".join(dashboard_errors[:3])
+                + (" …" if len(dashboard_errors) > 3 else ""),
+                "#/ref-observability",
+            )
+        )
+    elif declared_directory(document) is not None:
+        findings.append(
+            ok(
+                f"{label}: dashboards",
+                f"{count_dashboards(root, document)} in {declared_directory(document)}",
+            )
         )
 
     secrets = (
