@@ -163,6 +163,49 @@ class ObservabilityBundleTest(unittest.TestCase):
             {i["name"] for i in DEFAULTS["observability_state_directories"]},
         )
 
+    def test_the_standard_dashboard_ranks_paths_for_every_application(self) -> None:
+        board = json.loads(
+            (BUNDLE / "grafana/dashboards/application.json").read_text(encoding="utf-8")
+        )
+        panels = {panel["title"]: panel for panel in board["panels"]}
+        ranked = (
+            "Most requested paths",
+            "Slowest paths, p95",
+            "Paths answering 4xx and 5xx",
+        )
+        for title in ranked:
+            panel = panels[title]
+            self.assertEqual(panel["type"], "table", title)
+            target = panel["targets"][0]
+            self.assertEqual(target["queryType"], "instant", title)
+            expression = target["expr"]
+            # this application's domains only, and only what reached it
+            self.assertIn('vhost=~"${domain:regex}"', expression, title)
+            self.assertIn('upstream_addr!~"-?"', expression, title)
+            self.assertIn('path!=""', expression, title)
+            self.assertIn("[$__range]", expression, title)
+            self.assertIn("topk(10,", expression, title)
+            # /documents/1 and /documents/2 are one address
+            self.assertIn('"/:id/"', expression, title)
+        # no two panels share a place on the grid
+        places = [(p["gridPos"]["x"], p["gridPos"]["y"]) for p in board["panels"]]
+        self.assertEqual(len(places), len(set(places)))
+        self.assertEqual(len({p["id"] for p in board["panels"]}), len(board["panels"]))
+
+    def test_the_proxy_logs_the_path_without_the_query_string(self) -> None:
+        proxy = yaml.safe_load(
+            (ROOT / "roles/proxy/files/bundle/compose.yml").read_text(encoding="utf-8")
+        )
+        formats = [
+            service["environment"]["LOG_FORMAT"]
+            for service in proxy["services"].values()
+            if isinstance(service.get("environment"), dict)
+            and "LOG_FORMAT" in service["environment"]
+        ]
+        self.assertEqual(len(formats), 1)
+        self.assertIn('"path":"$$uri"', formats[0])
+        self.assertIn('"request":"$$request"', formats[0])
+
     def test_dashboards_use_the_provisioned_sources(self) -> None:
         sources = yaml.safe_load(
             (BUNDLE / "grafana/provisioning/datasources/platform.yaml").read_text(

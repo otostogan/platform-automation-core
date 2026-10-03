@@ -7,6 +7,14 @@ release.
 
 ## [Unreleased]
 
+- The standard dashboard ranks paths for every application: the most
+  requested, the slowest by p95, and those answering 4xx and 5xx, over the
+  selected time range. Numbers and UUIDs in a path are folded into `:id`.
+  Nothing is asked of the application.
+- The proxy access log carries `path` — the path alone, without the query
+  string — beside `request`. Lines written before this have no `path` and
+  are not ranked. The convergence restarts the proxy once.
+
 ## [0.25.0] - 2026-10-03
 
 - Applications ship their own dashboards. A manifest may declare
