@@ -7,6 +7,11 @@ release.
 
 ## [Unreleased]
 
+- The build workflow template writes its tag pattern without quotes. An
+  application's formatter with single quotes rewrote `"v*.*.*"` in a commit
+  hook, and `platform doctor` then reported the file behind its template
+  after every `platform update`.
+
 ## [0.26.0] - 2026-10-04
 
 - The standard dashboard ranks paths for every application: the most
