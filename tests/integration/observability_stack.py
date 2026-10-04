@@ -448,6 +448,7 @@ def main():
                         ("$service", ".*"),
                         ("$search", ""),
                         ("$__auto", "5m"),
+                        ("$__range", "1h"),
                         ("$__rate_interval", "5m"),
                     ):
                         expression = expression.replace(token, value)
