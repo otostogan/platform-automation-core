@@ -290,10 +290,6 @@ class WriteAndValidateTest(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TemplatesSurviveFormattersTest(unittest.TestCase):
     def test_no_quoted_scalar_a_formatter_would_requote(self) -> None:
         """An application's formatter runs over the files the platform owns.
@@ -321,3 +317,7 @@ class TemplatesSurviveFormattersTest(unittest.TestCase):
             )
         ]
         self.assertEqual(offenders, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

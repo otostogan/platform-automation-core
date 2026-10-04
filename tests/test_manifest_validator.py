@@ -499,10 +499,6 @@ class ManifestValidatorTest(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DomainServiceTest(ManifestValidatorTest):
     """A domain may belong to a helper service; the checks name what would fail silently."""
 
@@ -594,3 +590,7 @@ class DomainAuthTest(ManifestValidatorTest):
         manifest = copy.deepcopy(self.valid_manifest)
         manifest["domains"][0]["auth"] = {"username": "te:am", "password_env": "X"}
         self.assertNotEqual(self.validate(manifest), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

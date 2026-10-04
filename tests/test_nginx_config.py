@@ -116,10 +116,6 @@ class NginxConfigTest(unittest.TestCase):
             generate_vhost_fragments(manifest)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class MetricsGuardTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -166,3 +162,7 @@ class MetricsGuardTest(unittest.TestCase):
             fragments[manifest["domains"][0]["host"]],
         )
         self.assertNotIn("return 404", fragments["mail.example.invalid"])
+
+
+if __name__ == "__main__":
+    unittest.main()

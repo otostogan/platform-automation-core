@@ -195,10 +195,6 @@ class RenderBackupsTest(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class MenuGroupsTest(unittest.TestCase):
     def test_daily_actions_stay_on_top_and_the_rest_is_grouped_in_order(self) -> None:
         from platform_automation.operator.console import Action, group_of, menu_entries
@@ -328,3 +324,7 @@ class InfraCommandTest(unittest.TestCase):
         self.assertEqual(parse_arguments(["infra", "list"]).action, "list")
         forget = parse_arguments(["infra", "forget", "/somewhere"])
         self.assertEqual((forget.action, forget.path), ("forget", "/somewhere"))
+
+
+if __name__ == "__main__":
+    unittest.main()

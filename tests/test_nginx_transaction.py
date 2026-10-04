@@ -294,10 +294,6 @@ class NginxTransactionTest(unittest.TestCase):
             load_raw_project_allowlist(self.allowlist)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class HtpasswdTransactionTest(NginxTransactionTest):
     """Basic-auth files ride the same transaction as the fragments."""
 
@@ -367,3 +363,7 @@ class HtpasswdTransactionTest(NginxTransactionTest):
             transaction.stage()
             transaction.activate()
         self.assertFalse((self.base / "htpasswd").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

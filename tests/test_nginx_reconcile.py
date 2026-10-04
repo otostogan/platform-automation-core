@@ -136,10 +136,6 @@ class NginxReconcileTest(unittest.TestCase):
             self.assertEqual(main(["--arbitrary-path"]), 2)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ReconcileRetryTest(unittest.TestCase):
     """A unit start has no next tick; the one transient failure is retried there."""
 
@@ -214,3 +210,7 @@ class ReconcileRetryTest(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertNotIn("--attempts", timer)
+
+
+if __name__ == "__main__":
+    unittest.main()
