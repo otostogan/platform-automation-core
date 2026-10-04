@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-04
+
 - The standard dashboard ranks paths for every application: the most
   requested, the slowest by p95, and those answering 4xx and 5xx, over the
   selected time range. Numbers and UUIDs in a path are folded into `:id`.
