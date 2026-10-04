@@ -1905,10 +1905,6 @@ class PlatformCliTest(unittest.TestCase):
         self.assertEqual(records, [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _recording_run(calls):
     import subprocess
 
@@ -2073,3 +2069,7 @@ class DatabaseSessionCliTest(PlatformCliTest):
         self.assertEqual(
             self.session_calls, [("open", 15), ("close", "tunnel_0123abcd")]
         )
+
+
+if __name__ == "__main__":
+    unittest.main()

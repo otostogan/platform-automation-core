@@ -290,5 +290,34 @@ class WriteAndValidateTest(unittest.TestCase):
         )
 
 
+class TemplatesSurviveFormattersTest(unittest.TestCase):
+    def test_no_quoted_scalar_a_formatter_would_requote(self) -> None:
+        """An application's formatter runs over the files the platform owns.
+
+        Prettier with ``singleQuote`` turned ``"v*.*.*"`` into ``'v*.*.*'``
+        in a hook, and from then on ``doctor`` called the file behind its
+        template. A scalar that needs no quotes is written without them; one
+        that does need them is not something a formatter rewrites silently —
+        this test lists the plain ones.
+        """
+        import re
+
+        plain = re.compile(r"""^\s*(?:-|[\w-]+:)\s+(["'])([\w.*/@-]+)\1\s*$""")
+        root = Path(__file__).parent.parent / "src/platform_automation/templates/app"
+        offenders = [
+            f"{path.name}:{number}: {line.strip()}"
+            for path in sorted(root.glob("*.yml"))
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), 1
+            )
+            if (match := plain.match(line))
+            # a quoted number or boolean is quoted on purpose
+            and not re.fullmatch(
+                r"[0-9.]+|true|false|null|yes|no|on|off", match.group(2)
+            )
+        ]
+        self.assertEqual(offenders, [])
+
+
 if __name__ == "__main__":
     unittest.main()

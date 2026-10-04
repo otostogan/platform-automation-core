@@ -5438,7 +5438,7 @@ on:
     # Только теги. Работа в процессе не нуждается в образе.
     push:
         tags:
-            - "v*.*.*"
+            - v*.*.*
     workflow_dispatch:
 
 permissions:
@@ -5549,7 +5549,7 @@ name: Release
 on:
     push:
         tags:
-            - 'v*.*.*'
+            - v*.*.*
 
 permissions:
     contents: write
