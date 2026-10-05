@@ -442,7 +442,13 @@ def main():
                 ]
                 for kind, expression, where in targets:
                     for token, value in (
-                        ("${domain:regex}", ".*"),
+                        # what Grafana really substitutes for two selected
+                        # domains: escaped dots, which is exactly what a
+                        # double-quoted LogQL string cannot hold
+                        (
+                            "${domain:regex}",
+                            "(app\\.example\\.test|mail\\.example\\.test)",
+                        ),
                         ("$project", "example"),
                         ("$environment", "lab"),
                         ("$service", ".*"),
