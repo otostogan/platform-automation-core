@@ -7,6 +7,13 @@ release.
 
 ## [Unreleased]
 
+- Fix every domain-filtered panel of the standard dashboard answering
+  "parse error". Since v0.23.0 "All" domains expands to the application's
+  own domains, which Grafana writes with escaped dots, and LogQL does not
+  accept `\.` inside a double-quoted string. The filter is now a raw string.
+  The integration test substituted `.*` for the variable and so never saw
+  it; it now substitutes what Grafana does.
+
 - The build workflow template writes its tag pattern without quotes. An
   application's formatter with single quotes rewrote `"v*.*.*"` in a commit
   hook, and `platform doctor` then reported the file behind its template

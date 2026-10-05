@@ -142,7 +142,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" [5m]))"
+          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` [5m]))"
         }
       ],
       "fieldConfig": {
@@ -195,7 +195,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | status=~\"5..\" [5m])) / sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" [5m])) * 100 or vector(0)"
+          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | status=~\"5..\" [5m])) / sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` [5m])) * 100 or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -256,7 +256,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "quantile_over_time(0.95, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | unwrap request_time [5m]) by ()"
+          "expr": "quantile_over_time(0.95, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | unwrap request_time [5m]) by ()"
         }
       ],
       "fieldConfig": {
@@ -498,7 +498,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "sum by (vhost) (rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" [$__auto]))",
+          "expr": "sum by (vhost) (rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` [$__auto]))",
           "legendFormat": "{{vhost}}"
         }
       ],
@@ -546,7 +546,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "quantile_over_time(0.99, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | unwrap request_time [$__auto]) by ()",
+          "expr": "quantile_over_time(0.99, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | unwrap request_time [$__auto]) by ()",
           "legendFormat": "p99"
         },
         {
@@ -555,7 +555,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "quantile_over_time(0.95, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | unwrap request_time [$__auto]) by ()",
+          "expr": "quantile_over_time(0.95, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | unwrap request_time [$__auto]) by ()",
           "legendFormat": "p95"
         },
         {
@@ -564,7 +564,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "quantile_over_time(0.50, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | unwrap request_time [$__auto]) by ()",
+          "expr": "quantile_over_time(0.50, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | unwrap request_time [$__auto]) by ()",
           "legendFormat": "p50"
         }
       ],
@@ -612,7 +612,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | status=~\"2..\" [$__auto]))",
+          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | status=~\"2..\" [$__auto]))",
           "legendFormat": "2xx"
         },
         {
@@ -621,7 +621,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | status=~\"3..\" [$__auto]))",
+          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | status=~\"3..\" [$__auto]))",
           "legendFormat": "3xx"
         },
         {
@@ -630,7 +630,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | status=~\"4..\" [$__auto]))",
+          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | status=~\"4..\" [$__auto]))",
           "legendFormat": "4xx"
         },
         {
@@ -639,7 +639,7 @@
             "type": "loki",
             "uid": "platform-loki"
           },
-          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | status=~\"5..\" [$__auto]))",
+          "expr": "sum(rate({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | status=~\"5..\" [$__auto]))",
           "legendFormat": "5xx"
         }
       ],
@@ -836,7 +836,7 @@
             "uid": "platform-loki"
           },
           "queryType": "instant",
-          "expr": "topk(10, sum by (method, path) (count_over_time({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | upstream_addr!~\"-?\" | path!=\"\" | label_format path=`{{ regexReplaceAll \"/[0-9]+/\" (regexReplaceAll \"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/\" (printf \"%s/\" .path) \"/:id/\") \"/:id/\" | trimSuffix \"/\" }}` [$__range])))"
+          "expr": "topk(10, sum by (method, path) (count_over_time({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | upstream_addr!~\"-?\" | path!=\"\" | label_format path=`{{ regexReplaceAll \"/[0-9]+/\" (regexReplaceAll \"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/\" (printf \"%s/\" .path) \"/:id/\") \"/:id/\" | trimSuffix \"/\" }}` [$__range])))"
         }
       ],
       "transformations": [
@@ -926,7 +926,7 @@
             "uid": "platform-loki"
           },
           "queryType": "instant",
-          "expr": "topk(10, quantile_over_time(0.95, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | upstream_addr!~\"-?\" | path!=\"\" | label_format path=`{{ regexReplaceAll \"/[0-9]+/\" (regexReplaceAll \"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/\" (printf \"%s/\" .path) \"/:id/\") \"/:id/\" | trimSuffix \"/\" }}` | unwrap request_time [$__range]) by (method, path))"
+          "expr": "topk(10, quantile_over_time(0.95, {container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | upstream_addr!~\"-?\" | path!=\"\" | label_format path=`{{ regexReplaceAll \"/[0-9]+/\" (regexReplaceAll \"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/\" (printf \"%s/\" .path) \"/:id/\") \"/:id/\" | trimSuffix \"/\" }}` | unwrap request_time [$__range]) by (method, path))"
         }
       ],
       "transformations": [
@@ -1016,7 +1016,7 @@
             "uid": "platform-loki"
           },
           "queryType": "instant",
-          "expr": "topk(10, sum by (method, path, status) (count_over_time({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~\"${domain:regex}\" | upstream_addr!~\"-?\" | path!=\"\" | status=~\"[45]..\" | label_format path=`{{ regexReplaceAll \"/[0-9]+/\" (regexReplaceAll \"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/\" (printf \"%s/\" .path) \"/:id/\") \"/:id/\" | trimSuffix \"/\" }}` [$__range])))"
+          "expr": "topk(10, sum by (method, path, status) (count_over_time({container=\"platform-nginx\"} | json | __error__=\"\" | vhost=~`${domain:regex}` | upstream_addr!~\"-?\" | path!=\"\" | status=~\"[45]..\" | label_format path=`{{ regexReplaceAll \"/[0-9]+/\" (regexReplaceAll \"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/\" (printf \"%s/\" .path) \"/:id/\") \"/:id/\" | trimSuffix \"/\" }}` [$__range])))"
         }
       ],
       "transformations": [

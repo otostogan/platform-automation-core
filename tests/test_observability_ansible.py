@@ -180,7 +180,7 @@ class ObservabilityBundleTest(unittest.TestCase):
             self.assertEqual(target["queryType"], "instant", title)
             expression = target["expr"]
             # this application's domains only, and only what reached it
-            self.assertIn('vhost=~"${domain:regex}"', expression, title)
+            self.assertIn("vhost=~`${domain:regex}`", expression, title)
             self.assertIn('upstream_addr!~"-?"', expression, title)
             self.assertIn('path!=""', expression, title)
             self.assertIn("[$__range]", expression, title)
@@ -191,6 +191,26 @@ class ObservabilityBundleTest(unittest.TestCase):
         places = [(p["gridPos"]["x"], p["gridPos"]["y"]) for p in board["panels"]]
         self.assertEqual(len(places), len(set(places)))
         self.assertEqual(len({p["id"] for p in board["panels"]}), len(board["panels"]))
+
+    def test_a_regex_variable_in_logql_sits_in_a_raw_string(self) -> None:
+        """Grafana escapes the dots of a domain: ``dev\\.api\\.example``.
+
+        LogQL reads a double-quoted string with Go's escapes, where ``\\.``
+        is not one, and answers "parse error". Every panel filtered by domain
+        was blank the moment "All" stopped meaning ``.*``. A raw string in
+        backticks takes the backslash as it is.
+        """
+        for path in sorted((BUNDLE / "grafana/dashboards").glob("*.json")):
+            board = json.loads(path.read_text(encoding="utf-8"))
+            for panel in board["panels"]:
+                if panel["datasource"]["type"] != "loki":
+                    continue
+                for target in panel["targets"]:
+                    self.assertNotRegex(
+                        target["expr"],
+                        r'=~\s*"[^"]*\$\{[^}]*:regex\}',
+                        f"{path.name}: {panel['title']}",
+                    )
 
     def test_the_proxy_logs_the_path_without_the_query_string(self) -> None:
         proxy = yaml.safe_load(
