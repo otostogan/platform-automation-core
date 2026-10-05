@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-10-05
+
 - Fix every domain-filtered panel of the standard dashboard answering
   "parse error". Since v0.23.0 "All" domains expands to the application's
   own domains, which Grafana writes with escaped dots, and LogQL does not
