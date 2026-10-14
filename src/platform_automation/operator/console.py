@@ -2789,7 +2789,15 @@ def ask_company(questionary, style, root: Path) -> "CompanyAnswers":
 
 
 def run_new_company(context: Context, questionary, style) -> int:
-    from .company import CompanyError, next_steps, venv_commands, write_company
+    from .company import (
+        ANSIBLE_CORE,
+        CONTROLLER_PYTHON,
+        CompanyError,
+        controller_python,
+        next_steps,
+        venv_commands,
+        write_company,
+    )
     from .wizard import Cancelled
 
     if context.kind in ("infra", "app"):
@@ -2823,7 +2831,26 @@ def run_new_company(context: Context, questionary, style) -> int:
     if result.git_initialised:
         print(f"{DIM}git init done; registered in ~/.config/platform/config.yml{RESET}")
 
-    commands = venv_commands()
+    python = controller_python()
+    if python is None:
+        low, high = CONTROLLER_PYTHON
+        print(
+            f"{RED}no Python {low[0]}.{low[1]}–{high[0]}.{high[1]} on this machine;"
+            f" ansible-core {ANSIBLE_CORE} runs on nothing newer{RESET}"
+        )
+        print(
+            "  Install one (python3.11 from Homebrew, or the Xcode command line"
+            " tools) and run the venv step by hand:"
+        )
+        # Shown, not offered: running them with the Python at hand would
+        # build the very venv this check exists to prevent.
+        for command in venv_commands("python3.11"):
+            print(f"  {command}")
+        print()
+        print(next_steps(answers, result))
+        print(f"{DIM}  handbook: {HANDBOOK}#/flow-new-host{RESET}")
+        return 0
+    commands = venv_commands(python)
     print()
     print("Controller venv and the pinned collection:")
     for command in commands:

@@ -227,3 +227,124 @@ class TemplatesMatchHandbookTest(unittest.TestCase):
             self.assertEqual(
                 folds[fold], render(template(name), values).rstrip("\n"), fold
             )
+
+
+class ControllerPythonTest(unittest.TestCase):
+    """ansible-core 2.15 does not run on the Python a Mac puts first in PATH."""
+
+    def versions(self, table):
+        def runner(command, **_):
+            out = table.get(command[0])
+            if out is None:
+                return subprocess.CompletedProcess(command, 1, b"", b"no such python")
+            return subprocess.CompletedProcess(command, 0, out.encode(), b"")
+
+        return runner
+
+    def test_python3_is_taken_when_it_is_supported(self) -> None:
+        from platform_automation.operator.company import controller_python
+
+        which = lambda name: {"python3": "/opt/homebrew/bin/python3"}.get(name)
+        runner = self.versions({"/opt/homebrew/bin/python3": "3 11"})
+
+        self.assertEqual(controller_python(which, runner), "/opt/homebrew/bin/python3")
+
+    def test_a_too_new_python3_is_passed_over_for_an_older_one(self) -> None:
+        from platform_automation.operator.company import controller_python
+
+        which = lambda name: {
+            "python3": "/opt/homebrew/bin/python3",
+            "python3.9": "/opt/homebrew/bin/python3.9",
+        }.get(name)
+        runner = self.versions(
+            {"/opt/homebrew/bin/python3": "3 14", "/opt/homebrew/bin/python3.9": "3 9"}
+        )
+
+        self.assertEqual(
+            controller_python(which, runner), "/opt/homebrew/bin/python3.9"
+        )
+
+    def test_the_system_interpreter_is_the_last_resort(self) -> None:
+        from platform_automation.operator.company import controller_python
+
+        which = lambda name: {"python3": "/opt/homebrew/bin/python3"}.get(name)
+        runner = self.versions(
+            {"/opt/homebrew/bin/python3": "3 14", "/usr/bin/python3": "3 9"}
+        )
+
+        self.assertEqual(controller_python(which, runner), "/usr/bin/python3")
+
+    def test_no_supported_python_is_said_so(self) -> None:
+        from platform_automation.operator.company import controller_python
+
+        which = lambda name: {"python3": "/opt/homebrew/bin/python3"}.get(name)
+        runner = self.versions({"/opt/homebrew/bin/python3": "3 14"})
+
+        self.assertIsNone(controller_python(which, runner))
+
+    def test_the_venv_is_made_with_the_chosen_interpreter(self) -> None:
+        from platform_automation.operator.company import venv_commands
+
+        self.assertEqual(
+            venv_commands("/usr/bin/python3")[0], "/usr/bin/python3 -m venv .venv"
+        )
+        self.assertEqual(venv_commands()[0], "python3 -m venv .venv")
+
+    def test_doctor_refuses_a_venv_on_a_python_ansible_cannot_run_on(self) -> None:
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from platform_automation.operator import doctor
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".venv/bin").mkdir(parents=True)
+            (root / ".venv/bin/python").write_text("")
+            (root / ".venv/bin/ansible").write_text("")
+            context = SimpleNamespace(root=root, core_pin="v0.26.1")
+
+            def runner(command, **_):
+                if command[0].endswith("/python"):
+                    return subprocess.CompletedProcess(command, 0, b"3 14", b"")
+                return subprocess.CompletedProcess(
+                    command, 0, b"ansible [core 2.15.13]", b""
+                )
+
+            with mock.patch.object(
+                doctor,
+                "installed_collection",
+                lambda _: {
+                    "version": "0.26.1",
+                    "requires_ansible": ">=2.15.13,<2.16.0",
+                },
+            ):
+                findings = {
+                    f.title: f
+                    for f in doctor.collection_findings(context, runner, root)
+                }
+
+        python = findings["Controller Python"]
+        self.assertTrue(python.failed)
+        self.assertIn("3.14", python.detail)
+        self.assertIn("3.9–3.11", python.detail)
+
+    def test_doctor_reports_the_python_even_without_the_collection(self) -> None:
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from platform_automation.operator import doctor
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".venv/bin").mkdir(parents=True)
+            (root / ".venv/bin/python").write_text("")
+            context = SimpleNamespace(root=root, core_pin="v0.26.1")
+            runner = lambda command, **_: subprocess.CompletedProcess(
+                command, 0, b"3 14", b""
+            )
+            with mock.patch.object(doctor, "installed_collection", lambda _: None):
+                titles = [
+                    f.title for f in doctor.collection_findings(context, runner, root)
+                ]
+
+        self.assertEqual(titles, ["Controller Python", "Core collection"])
