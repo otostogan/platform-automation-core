@@ -5184,7 +5184,16 @@ networks:
 												вида
 												<code
 													>repo:{{org}}/{{project}}:ref:refs/heads/main</code
-												>.
+												>. GitHub может присылать его с
+												числовыми идентификаторами:
+												<code
+													>repo:{{org}}@123/{{project}}@456:ref:refs/heads/main</code
+												>. Угадывать не нужно: после первой
+												неудачной выкатки откройте учётку —
+												Tailscale покажет субъект, который
+												пришёл на самом деле
+												(«Received … from issuer»), его и
+												вставьте.
 											</li>
 										</ol>
 										<span class="where"
@@ -5456,8 +5465,13 @@ jobs:
         timeout-minutes: 30
         env:
             REPOSITORY: ghcr.io/{{org}}/{{project}}
+            # Под какие процессоры собирать: хост на ARM не возьмёт образ,
+            # собранный только под amd64. Через запятую, например
+            # linux/amd64,linux/arm64; «platform update» сохраняет значение.
+            PLATFORMS: {{platforms}}
         steps:
             - uses: actions/checkout@v5
+            - uses: docker/setup-qemu-action@v3
             - uses: docker/setup-buildx-action@v3
             - uses: docker/login-action@v3
               with:
@@ -5498,6 +5512,7 @@ jobs:
               uses: docker/build-push-action@v6
               with:
                   context: .
+                  platforms: ${{ env.PLATFORMS }}
                   push: true
                   # Всегда по коммиту, чтобы любой коммит был выкатываемым.
                   # Тег версии дополнительно даёт читаемое имя.

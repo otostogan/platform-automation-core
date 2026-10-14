@@ -7,6 +7,15 @@ release.
 
 ## [Unreleased]
 
+- The build workflow takes a list of platforms: `PLATFORMS: linux/amd64`
+  by default, `linux/amd64,linux/arm64` for an image that a host on ARM can
+  run. The value is read back by `platform update`, so an edit to the
+  platform-managed file survives it. Seen live: an image built for amd64
+  alone refused to pull on an ARM stand.
+- Handbook: the subject of a Tailscale trust credential may arrive from
+  GitHub with numeric ids; the exact one is read off the credential after a
+  failed attempt rather than guessed.
+
 ## [0.26.1] - 2026-10-05
 
 - Fix every domain-filtered panel of the standard dashboard answering

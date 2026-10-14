@@ -148,6 +148,34 @@ class UpdateTest(unittest.TestCase):
         )
         self.assertEqual(facts.recipients_source, ".sops.yaml")
 
+    def test_build_platforms_are_read_back_and_kept_by_an_update(self) -> None:
+        build = self.root / ".github/workflows/build.yml"
+        text = build.read_text()
+        self.assertIn("PLATFORMS: linux/amd64\n", text)
+        build.write_text(
+            text.replace(
+                "PLATFORMS: linux/amd64\n", "PLATFORMS: linux/amd64,linux/arm64\n"
+            )
+        )
+
+        facts = self.facts()
+
+        self.assertEqual(facts.build_platforms, "linux/amd64,linux/arm64")
+        rendered = render_managed(facts)[".github/workflows/build.yml"]
+        self.assertIn("PLATFORMS: linux/amd64,linux/arm64\n", rendered)
+        self.assertIn("platforms: ${{ env.PLATFORMS }}", rendered)
+        self.assertIn("docker/setup-qemu-action@v3", rendered)
+
+    def test_a_platform_list_that_is_not_one_falls_back_to_amd64(self) -> None:
+        build = self.root / ".github/workflows/build.yml"
+        build.write_text(
+            build.read_text().replace(
+                "PLATFORMS: linux/amd64\n", "PLATFORMS: windows/x\n"
+            )
+        )
+
+        self.assertEqual(self.facts().build_platforms, "linux/amd64")
+
     def test_image_name_is_found_in_a_step_env_and_the_tag_is_kept(self) -> None:
         write(
             self.root / ".github/workflows/build.yml",

@@ -24,6 +24,7 @@ from .config import infra_for_host
 from .context import Context, load_yaml, read_collection_pin
 from .recipients import host_recipient, read_recipients, recovery_recipient
 from .scaffold import (
+    DEFAULT_PLATFORMS,
     DEPLOY_WORKFLOW,
     DESTINATIONS,
     ENVIRONMENTS,
@@ -32,6 +33,7 @@ from .scaffold import (
     MERGED,
     environment_options,
     is_managed,
+    valid_platforms,
     merge_lines,
     render,
     strip_marker,
@@ -63,6 +65,7 @@ class Facts:
     tailscale_tag: str = (
         ""  # what deploy.yml already uses; the template's tag:ci-<project> otherwise
     )
+    build_platforms: str = DEFAULT_PLATFORMS  # what build.yml already builds for
 
 
 def find_repository(document) -> Optional[str]:
@@ -83,6 +86,25 @@ def find_repository(document) -> Optional[str]:
     elif isinstance(document, list):
         for child in document:
             found = find_repository(child)
+            if found:
+                return found
+    return None
+
+
+def find_platforms(document) -> Optional[str]:
+    """``PLATFORMS: linux/…`` in any env mapping of the build workflow."""
+    if isinstance(document, dict):
+        env = document.get("env")
+        value = env.get("PLATFORMS") if isinstance(env, dict) else None
+        if valid_platforms(value):
+            return value
+        for child in document.values():
+            found = find_platforms(child)
+            if found:
+                return found
+    elif isinstance(document, list):
+        for child in document:
+            found = find_platforms(child)
             if found:
                 return found
     return None
@@ -159,9 +181,14 @@ def gather_facts(context: Context, home: Path) -> Facts:
     if len(recipients) < 2:
         raise UpdateError(".sops.yaml declares fewer than two age recipients")
 
+    platforms = find_platforms(
+        load_yaml(context.root / DESTINATIONS["workflow_build.yml"])
+    )
+
     return Facts(
         project=project,
         owner=repository["owner"],
+        build_platforms=platforms or DEFAULT_PLATFORMS,
         target_host=context.target_host,
         core_pin=core_pin,
         environments=environments,
@@ -194,6 +221,7 @@ def render_managed(facts: Facts, version: str = __version__) -> dict:
         "core_pin": facts.core_pin,
         "recipient_host": facts.recipient_host,
         "recipient_recovery": facts.recipient_recovery,
+        "platforms": facts.build_platforms,
     }
     files = {}
     for name, destination in DESTINATIONS.items():
