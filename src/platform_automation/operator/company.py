@@ -9,6 +9,7 @@ registry entry, so ``doctor`` and ``new app`` see it at once.
 """
 
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +37,11 @@ SSH_PUBLIC_PATTERN = re.compile(
 ACME_STAGING = "https://acme-staging-v02.api.letsencrypt.org/directory"
 ACME_PRODUCTION = "https://acme-v02.api.letsencrypt.org/directory"
 ANSIBLE_CORE = "2.15.13"
+# What ansible-core 2.15 runs on, on the controller. 3.12 and later are not
+# in its support matrix, and 3.14 removes ast.Str, which it still uses: the
+# first conditional of the first play fails with "module 'ast' has no
+# attribute 'Str'". A Mac with Homebrew puts 3.14 first in PATH as python3.
+CONTROLLER_PYTHON = (3, 9), (3, 11)
 
 DESTINATIONS = {
     "ansible.cfg": "ansible.cfg",
@@ -234,10 +240,58 @@ def write_company(
     return result
 
 
-def venv_commands() -> list:
+def python_version(executable: str, runner=subprocess.run) -> Optional[tuple]:
+    try:
+        result = runner(
+            [
+                executable,
+                "-c",
+                "import sys; print(sys.version_info[0], sys.version_info[1])",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    parts = _text(result.stdout).split()
+    if result.returncode != 0 or len(parts) != 2 or not all(p.isdigit() for p in parts):
+        return None
+    return int(parts[0]), int(parts[1])
+
+
+def supported_python(version: Optional[tuple]) -> bool:
+    low, high = CONTROLLER_PYTHON
+    return version is not None and low <= version <= high
+
+
+def controller_python(which=shutil.which, runner=subprocess.run) -> Optional[str]:
+    """An interpreter ansible-core can run on, or None when the machine has none.
+
+    ``python3`` first, because that is what the handbook says and what an
+    operator would type; then the versioned names from newest to oldest, and
+    the system interpreter macOS ships under a path that is not on PATH.
+    """
+    candidates = [
+        "python3",
+        "python3.11",
+        "python3.10",
+        "python3.9",
+        "/usr/bin/python3",
+    ]
+    for candidate in candidates:
+        executable = which(candidate) if "/" not in candidate else candidate
+        if executable and supported_python(python_version(executable, runner)):
+            return executable
+    return None
+
+
+def venv_commands(python: str = "python3") -> list:
     """What the handbook's venv step runs; the console prints them and asks."""
     return [
-        "python3 -m venv .venv",
+        f"{python} -m venv .venv",
         ".venv/bin/python -m pip install --upgrade pip",
         f".venv/bin/python -m pip install 'ansible-core=={ANSIBLE_CORE}'",
         ".venv/bin/ansible-galaxy collection install --force --requirement requirements.yml",

@@ -189,8 +189,33 @@ def ansible_core_version(root: Path, runner) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def controller_python_finding(root: Path, runner) -> Optional[Finding]:
+    """The venv's interpreter, checked on its own: a missing collection must
+    not hide a Python that ansible-core cannot run on."""
+    from .company import CONTROLLER_PYTHON, python_version, supported_python
+
+    venv_python = root / ".venv/bin/python"
+    if not venv_python.is_file():
+        return None
+    version = python_version(str(venv_python), runner)
+    low, high = CONTROLLER_PYTHON
+    if version is None:
+        return skip("Controller Python", ".venv/bin/python does not report a version")
+    if supported_python(version):
+        return ok("Controller Python", f"{version[0]}.{version[1]} in .venv")
+    return fail(
+        "Controller Python",
+        f"{version[0]}.{version[1]} in .venv; ansible-core runs on"
+        f" {low[0]}.{low[1]}–{high[0]}.{high[1]} — rebuild .venv on one",
+        "#/flow-new-host",
+    )
+
+
 def collection_findings(context: Context, runner, collections_root: Path) -> list:
     findings = []
+    python = controller_python_finding(context.root, runner)
+    if python is not None:
+        findings.append(python)
     installed = installed_collection(collections_root)
     pin = context.core_pin
 
