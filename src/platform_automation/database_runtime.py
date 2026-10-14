@@ -42,6 +42,10 @@ DATABASE_PORT = 5432
 
 CREDENTIALS_FILENAME = "credentials.sops.json"
 COMPOSE_FILENAME = "compose.yml"
+DEFAULT_SHM_SIZE_MB = 128
+DEFAULT_SHM_SIZE = f"{DEFAULT_SHM_SIZE_MB}m"
+# PostgreSQL's own default; a limit small enough to go below it is a mistake.
+MINIMUM_SHARED_BUFFERS_MB = 128
 DATABASE_ENV_FILENAME = "database.env"
 
 PASSWORD_ENTROPY_BYTES = 32
@@ -431,14 +435,56 @@ def postgres_data_mount(postgres_major: int) -> str:
     return "data:/var/lib/postgresql/data"
 
 
+def size_in_megabytes(value: str) -> int:
+    """``512m`` or ``2g`` — the two units the manifest accepts."""
+    number, unit = int(value[:-1]), value[-1]
+    return number * 1024 if unit == "g" else number
+
+
+def database_resources(
+    resources: Optional[dict[str, Any]],
+) -> tuple[dict[str, Any], list[str]]:
+    """What ``database.resources`` adds to the service, and why these numbers.
+
+    The limit is the container's. PostgreSQL does not see it, so the two
+    settings that tell the planner how much memory exists are derived from
+    it: ``shared_buffers`` a quarter of the limit unless the manifest says,
+    ``effective_cache_size`` two thirds. Shared memory is raised to the
+    buffers because parallel workers meet in it.
+    """
+    if not resources:
+        return {"shm_size": DEFAULT_SHM_SIZE}, []
+    memory = size_in_megabytes(resources["memory"])
+    buffers = (
+        size_in_megabytes(resources["shared_buffers"])
+        if resources.get("shared_buffers")
+        else max(memory // 4, MINIMUM_SHARED_BUFFERS_MB)
+    )
+    cache = max(memory * 2 // 3, buffers)
+    service = {
+        "mem_limit": f"{memory}m",
+        "shm_size": f"{max(buffers, DEFAULT_SHM_SIZE_MB)}m",
+    }
+    command = [
+        "postgres",
+        "-c",
+        f"shared_buffers={buffers}MB",
+        "-c",
+        f"effective_cache_size={cache}MB",
+    ]
+    return service, command
+
+
 def build_database_compose(
     project: str,
     environment: str,
     image: str,
     database_env_path: Path,
     postgres_major: int,
+    resources: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     resource = database_resource_name(project, environment)
+    sizing, command = database_resources(resources)
 
     return {
         "name": resource,
@@ -446,8 +492,9 @@ def build_database_compose(
             DATABASE_SERVICE: {
                 "image": image,
                 "restart": "unless-stopped",
+                **({"command": command} if command else {}),
                 "env_file": [str(database_env_path)],
-                "shm_size": "128m",
+                **sizing,
                 "networks": {
                     "db": {"aliases": [DATABASE_ALIAS]},
                 },
@@ -664,6 +711,7 @@ def ensure_project_database(
         image,
         database_env_path,
         manifest["database"]["postgres_major"],
+        manifest["database"].get("resources"),
     )
     write_private_file(
         compose_path,

@@ -4633,6 +4633,12 @@ restore_validation:
 											запрещает этот блок. Пароль нигде не
 											указывается: он генерируется при
 											первой выкатке.
+											<code>resources</code> ограничивает
+											память базы: без него контейнер не
+											ограничен, и под нагрузкой первым
+											страдает сосед. Подробности — в
+											карточке
+											<a class="ref mono" data-ref="mf-database">database</a>.
 										</p>
 									</div>
 									<div class="note" data-when="db=external">
@@ -11632,6 +11638,20 @@ restore_validation:
 								<code>backup_enabled: true</code> блок
 								<code>backup</code> обязателен, при
 								<code>false</code> — <strong>запрещён</strong>.
+							</dd>
+							<dt><code>resources</code> (необязательно)</dt>
+							<dd>
+								Память контейнера базы: <code>memory</code>
+								(от <code>256m</code>, единицы <code>m</code> и
+								<code>g</code>) и, по желанию,
+								<code>shared_buffers</code> — не больше половины
+								<code>memory</code>, иначе выкатка откажет.
+								Без <code>shared_buffers</code> платформа берёт
+								четверть лимита; <code>effective_cache_size</code>
+								всегда считается сама, две трети лимита.
+								Без блока база не ограничена, как раньше.
+								Смена значений применяется на следующей
+								выкатке перезапуском базы.
 							</dd>
 							<dt>Пароль</dt>
 							<dd>

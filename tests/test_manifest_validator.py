@@ -185,6 +185,66 @@ class ManifestValidatorTest(unittest.TestCase):
                     errors,
                 )
 
+    def resourced_manifest(self, **resources) -> dict:
+        manifest = self.docker_database_manifest()
+        manifest["database"]["resources"] = resources
+        return manifest
+
+    def test_accepts_database_resources(self) -> None:
+        for resources in (
+            {"memory": "1536m"},
+            {"memory": "2g", "shared_buffers": "512m"},
+            {"memory": "1g", "shared_buffers": "512m"},
+        ):
+            with self.subTest(resources=resources):
+                self.assertEqual(
+                    self.validate(self.resourced_manifest(**resources)), []
+                )
+
+    def test_database_resources_need_a_unit(self) -> None:
+        for memory in ("1536", "1.5g", "1536M", "0m", 1536, "1" * 400 + "m"):
+            with self.subTest(memory=memory):
+                errors = self.validate(self.resourced_manifest(memory=memory))
+
+                self.assertTrue(
+                    any(
+                        error.startswith("$.database.resources.memory:")
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def test_database_resources_need_the_limit(self) -> None:
+        errors = self.validate(self.resourced_manifest(shared_buffers="256m"))
+
+        self.assertTrue(
+            any(error.startswith("$.database.resources:") for error in errors), errors
+        )
+
+    def test_database_memory_has_a_floor(self) -> None:
+        errors = self.validate(self.resourced_manifest(memory="128m"))
+
+        self.assertIn("$.database.resources.memory: at least 256m", errors)
+
+    def test_shared_buffers_leave_room_for_the_rest(self) -> None:
+        errors = self.validate(
+            self.resourced_manifest(memory="1g", shared_buffers="600m")
+        )
+
+        self.assertIn(
+            "$.database.resources.shared_buffers: at most half of memory", errors
+        )
+
+    def test_external_database_takes_no_resources(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["database"]["resources"] = {"memory": "1g"}
+
+        errors = self.validate(manifest)
+
+        self.assertTrue(
+            any(error.startswith("$.database:") for error in errors), errors
+        )
+
     def test_rejects_backup_interval_outside_bounds(self) -> None:
         for interval in (0, 14, 1441, 360.5, "360"):
             with self.subTest(interval=interval):
