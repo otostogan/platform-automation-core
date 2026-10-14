@@ -202,7 +202,7 @@ class ManifestValidatorTest(unittest.TestCase):
                 )
 
     def test_database_resources_need_a_unit(self) -> None:
-        for memory in ("1536", "1.5g", "1536M", "0m", 1536):
+        for memory in ("1536", "1.5g", "1536M", "0m", 1536, "1" * 400 + "m"):
             with self.subTest(memory=memory):
                 errors = self.validate(self.resourced_manifest(memory=memory))
 
