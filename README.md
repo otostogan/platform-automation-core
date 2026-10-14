@@ -53,7 +53,7 @@ recovery controls, and the bus-factor drill.
 
 ## Status
 
-`v0.27.0` is the current installable release. Consumers pin the release, verify
+`v0.28.0` is the current installable release. Consumers pin the release, verify
 `SHA256SUMS`, and keep inventory and credentials in their own private
 repositories.
 
