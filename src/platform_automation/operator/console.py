@@ -2840,11 +2840,17 @@ def run_new_company(context: Context, questionary, style) -> int:
         )
         print(
             "  Install one (python3.11 from Homebrew, or the Xcode command line"
-            " tools) and run the venv step by hand."
+            " tools) and run the venv step by hand:"
         )
-        commands = venv_commands()
-    else:
-        commands = venv_commands(python)
+        # Shown, not offered: running them with the Python at hand would
+        # build the very venv this check exists to prevent.
+        for command in venv_commands("python3.11"):
+            print(f"  {command}")
+        print()
+        print(next_steps(answers, result))
+        print(f"{DIM}  handbook: {HANDBOOK}#/flow-new-host{RESET}")
+        return 0
+    commands = venv_commands(python)
     print()
     print("Controller venv and the pinned collection:")
     for command in commands:

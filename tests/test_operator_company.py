@@ -327,3 +327,24 @@ class ControllerPythonTest(unittest.TestCase):
         self.assertTrue(python.failed)
         self.assertIn("3.14", python.detail)
         self.assertIn("3.9–3.11", python.detail)
+
+    def test_doctor_reports_the_python_even_without_the_collection(self) -> None:
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from platform_automation.operator import doctor
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".venv/bin").mkdir(parents=True)
+            (root / ".venv/bin/python").write_text("")
+            context = SimpleNamespace(root=root, core_pin="v0.26.1")
+            runner = lambda command, **_: subprocess.CompletedProcess(
+                command, 0, b"3 14", b""
+            )
+            with mock.patch.object(doctor, "installed_collection", lambda _: None):
+                titles = [
+                    f.title for f in doctor.collection_findings(context, runner, root)
+                ]
+
+        self.assertEqual(titles, ["Controller Python", "Core collection"])
