@@ -16091,6 +16091,12 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://{{domain}}/</code></pre>
 						def: "platform-backups",
 						hint: "объектное хранилище",
 					},
+					{
+						key: "platforms",
+						label: "Платформы образа",
+						def: "linux/amd64",
+						hint: "linux/amd64,linux/arm64 для хоста на ARM",
+					},
 				];
 
 				var context = store.get("context", {});
