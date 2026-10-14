@@ -7,6 +7,14 @@ release.
 
 ## [Unreleased]
 
+- The build workflow takes a list of platforms: `PLATFORMS: linux/amd64`
+  by default, `linux/amd64,linux/arm64` for an image that a host on ARM can
+  run. The value is read back by `platform update`, so an edit to the
+  platform-managed file survives it. Seen live: an image built for amd64
+  alone refused to pull on an ARM stand.
+- Handbook: the subject of a Tailscale trust credential may arrive from
+  GitHub with numeric ids; the exact one is read off the credential after a
+  failed attempt rather than guessed.
 - `platform new company-infra` builds the controller venv on a Python that
   ansible-core 2.15 runs on (3.9–3.11), passing over a newer `python3`
   first in PATH; `platform doctor` reports the venv's Python and fails on

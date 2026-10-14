@@ -113,6 +113,14 @@ class ScaffoldError(RuntimeError):
     pass
 
 
+DEFAULT_PLATFORMS = "linux/amd64"
+PLATFORM_PATTERN = re.compile(r"^linux/(amd64|arm64)(,linux/(amd64|arm64))*$")
+
+
+def valid_platforms(value) -> bool:
+    return isinstance(value, str) and bool(PLATFORM_PATTERN.fullmatch(value))
+
+
 @dataclass(frozen=True)
 class AppAnswers:
     project: str
@@ -132,6 +140,9 @@ class AppAnswers:
     backup_retain: int = 3
     restore_query: str = "SELECT 1"
     secret_names: tuple = ("API_TOKEN", "SESSION_SECRET")
+    # What the image is built for. amd64 alone is the common case; a host on
+    # ARM needs linux/arm64 in the list, and that build runs under emulation.
+    build_platforms: str = DEFAULT_PLATFORMS
     core_pin: str = field(default_factory=lambda: f"v{__version__}")
 
 
@@ -164,6 +175,10 @@ def validate_answers(answers: AppAnswers) -> list:
         errors.append("the two recipients must be different keys")
     if not 1 <= answers.internal_port <= 65535:
         errors.append("internal_port must be between 1 and 65535")
+    if not valid_platforms(answers.build_platforms):
+        errors.append(
+            "build platforms: a comma-separated list of linux/amd64 and linux/arm64"
+        )
     if not answers.healthcheck_path.startswith("/"):
         errors.append("healthcheck path must start with /")
     if answers.healthcheck_timeout < 1:
@@ -220,6 +235,7 @@ def render_app(answers: AppAnswers) -> dict:
     common = {
         "project": answers.project,
         "org": answers.owner,
+        "platforms": answers.build_platforms,
         "tailnet": answers.target_host,
         "core_pin": answers.core_pin,
         "internal_port": answers.internal_port,

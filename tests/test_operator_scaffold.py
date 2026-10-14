@@ -319,5 +319,39 @@ class TemplatesSurviveFormattersTest(unittest.TestCase):
         self.assertEqual(offenders, [])
 
 
+class BuildPlatformsTest(unittest.TestCase):
+    def test_the_default_is_amd64_and_arm64_can_be_added(self) -> None:
+        from dataclasses import replace
+
+        from platform_automation.operator.scaffold import (
+            AppAnswers,
+            render_app,
+            valid_platforms,
+            validate_answers,
+        )
+
+        base = AppAnswers(
+            project="my-app",
+            owner="example",
+            environments=("lab",),
+            domains={"lab": "lab.my-app.example.com"},
+            target_host="platform-host-1.tailnet.example.net",
+            recipient_host="age1syntheticfixture",
+            recipient_recovery="age1recoveryfixture",
+        )
+        self.assertIn(
+            "PLATFORMS: linux/amd64\n", render_app(base)[".github/workflows/build.yml"]
+        )
+        both = replace(base, build_platforms="linux/amd64,linux/arm64")
+        self.assertEqual(validate_answers(both), [])
+        self.assertIn(
+            "PLATFORMS: linux/amd64,linux/arm64\n",
+            render_app(both)[".github/workflows/build.yml"],
+        )
+        for bad in ("", "linux/amd64,", "darwin/arm64", "linux/amd64 linux/arm64"):
+            self.assertFalse(valid_platforms(bad), bad)
+            self.assertTrue(validate_answers(replace(base, build_platforms=bad)), bad)
+
+
 if __name__ == "__main__":
     unittest.main()
