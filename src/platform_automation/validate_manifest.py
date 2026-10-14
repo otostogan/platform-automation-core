@@ -122,8 +122,43 @@ def validate_manifest(
 
     formatted_errors.extend(validate_unique_domain_hosts(manifest))
     formatted_errors.extend(validate_web_domain_present(manifest))
+    formatted_errors.extend(validate_database_resources(manifest))
 
     return formatted_errors
+
+
+MINIMUM_DATABASE_MEMORY_MB = 256
+
+
+def validate_database_resources(manifest: Any) -> list[str]:
+    """The numbers the schema cannot relate: buffers against the limit.
+
+    PostgreSQL keeps more than its buffers in memory — every connection,
+    sorts, the maintenance work — so buffers above half the limit leave the
+    rest nothing, and the kernel kills the server at the first busy moment.
+    """
+    try:
+        resources = manifest["database"]["resources"]
+    except (KeyError, TypeError):
+        return []
+    if not isinstance(resources, dict):
+        return []
+    pattern = re.compile(r"^[1-9][0-9]*[mg]$")
+    values = {}
+    for key in ("memory", "shared_buffers"):
+        value = resources.get(key)
+        if isinstance(value, str) and pattern.fullmatch(value):
+            values[key] = int(value[:-1]) * (1024 if value.endswith("g") else 1)
+    errors = []
+    memory = values.get("memory")
+    if memory is not None and memory < MINIMUM_DATABASE_MEMORY_MB:
+        errors.append(
+            f"$.database.resources.memory: at least {MINIMUM_DATABASE_MEMORY_MB}m"
+        )
+    buffers = values.get("shared_buffers")
+    if memory is not None and buffers is not None and buffers * 2 > memory:
+        errors.append("$.database.resources.shared_buffers: at most half of memory")
+    return errors
 
 
 def validate_web_domain_present(manifest: Any) -> list[str]:

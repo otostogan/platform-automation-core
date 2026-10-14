@@ -361,6 +361,23 @@
 							"maximum": 100
 						}
 					}
+				},
+				"resources": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": [
+						"memory"
+					],
+					"properties": {
+						"memory": {
+							"type": "string",
+							"pattern": "^[1-9][0-9]*[mg]$"
+						},
+						"shared_buffers": {
+							"type": "string",
+							"pattern": "^[1-9][0-9]*[mg]$"
+						}
+					}
 				}
 			},
 			"allOf": [
@@ -380,6 +397,11 @@
 							"backup_enabled": {
 								"const": false
 							}
+						},
+						"not": {
+							"required": [
+								"resources"
+							]
 						}
 					}
 				},

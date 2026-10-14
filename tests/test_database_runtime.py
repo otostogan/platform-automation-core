@@ -168,6 +168,53 @@ class DatabaseComposeTest(unittest.TestCase):
             ["data:/var/lib/postgresql"],
         )
 
+    def test_without_resources_the_database_is_unlimited_as_before(self) -> None:
+        self.assertNotIn("mem_limit", self.service)
+        self.assertNotIn("command", self.service)
+        self.assertEqual(self.service["shm_size"], "128m")
+
+    def resourced(self, **resources) -> dict:
+        compose = build_database_compose(
+            "example",
+            "lab",
+            PINNED_IMAGE,
+            Path("/run/platform/secrets/example/lab/database.env"),
+            postgres_major=17,
+            resources=resources,
+        )
+        return compose["services"]["postgres"]
+
+    def test_the_limit_is_the_containers_and_the_planner_learns_of_it(self) -> None:
+        service = self.resourced(memory="1536m", shared_buffers="512m")
+
+        self.assertEqual(service["mem_limit"], "1536m")
+        self.assertEqual(
+            service["command"],
+            [
+                "postgres",
+                "-c",
+                "shared_buffers=512MB",
+                "-c",
+                "effective_cache_size=1024MB",
+            ],
+        )
+
+    def test_buffers_default_to_a_quarter_of_the_limit(self) -> None:
+        service = self.resourced(memory="2g")
+
+        self.assertIn("shared_buffers=512MB", service["command"])
+        self.assertIn("effective_cache_size=1365MB", service["command"])
+
+    def test_buffers_never_go_below_the_image_default(self) -> None:
+        service = self.resourced(memory="256m")
+
+        self.assertIn("shared_buffers=128MB", service["command"])
+
+    def test_shared_memory_grows_with_the_buffers(self) -> None:
+        self.assertEqual(self.resourced(memory="4g")["shm_size"], "1024m")
+        # and never shrinks below what the image needs
+        self.assertEqual(self.resourced(memory="512m")["shm_size"], "128m")
+
     def test_compose_round_trips_through_yaml(self) -> None:
         self.assertEqual(
             yaml.safe_load(yaml.safe_dump(self.compose)),
@@ -297,6 +344,22 @@ class EnsureProjectDatabaseTest(unittest.TestCase):
             self.runtime_root / "example" / "lab" / "database.env"
         ).read_text(encoding="utf-8")
         self.assertIn(f"POSTGRES_PASSWORD={password}", env_content)
+
+    def test_resources_from_the_manifest_reach_the_compose(self) -> None:
+        manifest = docker_manifest()
+        manifest["database"]["resources"] = {"memory": "1g"}
+
+        self.ensure(manifest=manifest)
+
+        compose = yaml.safe_load(
+            (self.databases_root / "example" / "lab" / "compose.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        service = compose["services"]["postgres"]
+
+        self.assertEqual(service["mem_limit"], "1024m")
+        self.assertIn("shared_buffers=256MB", service["command"])
 
     def test_second_deploy_reuses_password_and_image_pin(self) -> None:
         first = self.ensure()

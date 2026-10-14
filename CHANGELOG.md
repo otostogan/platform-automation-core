@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+- `database.resources` in the manifest limits the platform-owned database:
+  `memory` becomes the container's `mem_limit`, and PostgreSQL learns of it
+  through `shared_buffers` (the manifest's value, or a quarter of the limit)
+  and `effective_cache_size` (two thirds). Shared memory grows with the
+  buffers. Without the block the database stays unlimited, as before.
+
 ## [0.27.0] - 2026-10-14
 
 - The build workflow takes a list of platforms: `PLATFORMS: linux/amd64`
