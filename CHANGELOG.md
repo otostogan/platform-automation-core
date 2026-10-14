@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-14
+
 - The build workflow takes a list of platforms: `PLATFORMS: linux/amd64`
   by default, `linux/amd64,linux/arm64` for an image that a host on ARM can
   run. The value is read back by `platform update`, so an edit to the
