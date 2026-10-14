@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-14
+
 - `database.resources` in the manifest limits the platform-owned database:
   `memory` becomes the container's `mem_limit`, and PostgreSQL learns of it
   through `shared_buffers` (the manifest's value, or a quarter of the limit)
