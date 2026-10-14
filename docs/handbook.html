@@ -3144,6 +3144,16 @@ tailscale_auth_key_source: {{keydir}}/tailscale-auth.key</code></pre>
 										<pre><code>python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install 'ansible-core==2.15.13'</code></pre>
+										<div class="note">
+											<span class="label">Какой Python</span>
+											<p>ansible-core 2.15 работает на Python 3.9–3.11. На Mac с Homebrew
+											<code>python3</code> в <code>PATH</code> — это 3.14, и первый же прогон
+											падает с <code>module 'ast' has no attribute 'Str'</code>. Тогда вместо
+											<code>python3</code> берите <code>python3.11</code> из Homebrew или системный
+											<code>/usr/bin/python3</code>. Мастер <code>platform new company-infra</code>
+											выбирает подходящий сам, а <code>platform doctor</code> показывает версию в
+											строке «Controller Python».</p>
+										</div>
 										<p>
 											Затем коллекции.
 											<code>requirements.yml</code> пинит

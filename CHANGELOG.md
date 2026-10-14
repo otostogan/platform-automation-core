@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+- `platform new company-infra` builds the controller venv on a Python that
+  ansible-core 2.15 runs on (3.9–3.11), passing over a newer `python3`
+  first in PATH; `platform doctor` reports the venv's Python and fails on
+  one ansible-core cannot use. Seen live: Homebrew's Python 3.14 made the
+  first play fail with `module 'ast' has no attribute 'Str'`.
+
 ## [0.26.1] - 2026-10-05
 
 - Fix every domain-filtered panel of the standard dashboard answering

@@ -2789,7 +2789,15 @@ def ask_company(questionary, style, root: Path) -> "CompanyAnswers":
 
 
 def run_new_company(context: Context, questionary, style) -> int:
-    from .company import CompanyError, next_steps, venv_commands, write_company
+    from .company import (
+        ANSIBLE_CORE,
+        CONTROLLER_PYTHON,
+        CompanyError,
+        controller_python,
+        next_steps,
+        venv_commands,
+        write_company,
+    )
     from .wizard import Cancelled
 
     if context.kind in ("infra", "app"):
@@ -2823,7 +2831,20 @@ def run_new_company(context: Context, questionary, style) -> int:
     if result.git_initialised:
         print(f"{DIM}git init done; registered in ~/.config/platform/config.yml{RESET}")
 
-    commands = venv_commands()
+    python = controller_python()
+    if python is None:
+        low, high = CONTROLLER_PYTHON
+        print(
+            f"{RED}no Python {low[0]}.{low[1]}–{high[0]}.{high[1]} on this machine;"
+            f" ansible-core {ANSIBLE_CORE} runs on nothing newer{RESET}"
+        )
+        print(
+            "  Install one (python3.11 from Homebrew, or the Xcode command line"
+            " tools) and run the venv step by hand."
+        )
+        commands = venv_commands()
+    else:
+        commands = venv_commands(python)
     print()
     print("Controller venv and the pinned collection:")
     for command in commands:
