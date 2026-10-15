@@ -97,8 +97,10 @@ mkdir -p ~/.local/bin
 ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform
 ```
 
-`sops` and `age` must be on the `PATH` as well: the pre-commit hook of an
-application encrypts `.env.<environment>` with them. `platform doctor` in any
+`~/.local/bin` must be on the `PATH` — on macOS it usually is not; add
+`export PATH="$HOME/.local/bin:$PATH"` to the shell profile. `sops` and
+`age` must be on it as well: the pre-commit hook of an application encrypts
+`.env.<environment>` with them. `platform doctor` in any
 directory prints the console's version first and ends with `all checks
 passed` or the number of findings.
 
