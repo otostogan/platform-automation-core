@@ -81,6 +81,43 @@ the wheel and are resolved through Python package resources. Runtime state
 continues to live under `/opt/platform`, `/var/lib/platform`, and
 `/run/platform`.
 
+## Workstation console
+
+The same wheel, with the `operator` extra, is the console an operator or a
+developer runs on their own machine. One binary, `platform`; what it offers
+depends on the directory it is started in.
+
+Install it once, pinned to the release the infrastructure pins:
+
+```bash
+python3 -m venv ~/.local/share/platform-console
+~/.local/share/platform-console/bin/pip install \
+  "platform-automation-runtime[operator] @ https://github.com/otostogan/platform-automation-core/releases/download/v0.28.0/platform_automation_runtime-0.28.0-py3-none-any.whl"
+mkdir -p ~/.local/bin
+ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform
+```
+
+`sops` and `age` must be on the `PATH` as well: the pre-commit hook of an
+application encrypts `.env.<environment>` with them. `platform doctor` in any
+directory prints the console's version first and ends with `all checks
+passed` or the number of findings.
+
+| Where it runs | What `platform` opens |
+| --- | --- |
+| Anywhere | `platform new company-infra` scaffolds an infrastructure repository; `platform infra` registers one on this machine |
+| Infrastructure repository | hosts from `inventory/hosts.yml`, then: converge and readiness, bootstrap of a new host, backups and restore proofs, Grafana tunnel, Telegram alerts; `platform update` moves the core pin and converges |
+| Application repository | environments from `deploy/platform.*.yml`, then: Deploy (through the application's own workflow), status and logs of the host, secrets push and pull, database tunnel, rollback; `platform new app` scaffolds the deploy files, `platform update` rewrites the platform-managed workflows and hooks |
+
+The console holds no secrets — only paths to them — prints every command
+before running it, and never commits: it writes files and names them. A
+developer without access to the infrastructure repository still has the whole
+build-and-deploy loop: validation, secrets push, Deploy. The actions that
+reach the host over the tailnet (status, logs, backups, database, rollback)
+need the `ops` key, which stays with the operator.
+
+The handbook describes every action and its preconditions:
+[`docs/handbook.html#/ref-console`](docs/handbook.html).
+
 ## Ansible Collection
 
 Reusable host automation is distributed as `otostogan.platform`. Consumers
