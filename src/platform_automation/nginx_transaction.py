@@ -12,7 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Iterator, Mapping, Optional
 
-from .htpasswd import HtpasswdError, htpasswd_files_for_release
+from .htpasswd import PATHS_SUFFIX, HtpasswdError, htpasswd_files_for_release
 from .nginx_config import NginxConfigError, generate_vhost_fragments
 
 
@@ -85,7 +85,10 @@ def _validate_fragment(name: str, content: str) -> None:
 
 
 def _validate_htpasswd(host: str, content: str) -> None:
-    if not HOST_PATTERN.fullmatch(host):
+    # "<host>" guards the whole host, "<host>_paths" only the locations the
+    # vhost fragment points at it; nothing else may sit in that directory.
+    bare = host[: -len(PATHS_SUFFIX)] if host.endswith(PATHS_SUFFIX) else host
+    if not HOST_PATTERN.fullmatch(bare):
         raise NginxTransactionError(f"invalid htpasswd host: {host!r}")
     if not isinstance(content, str) or "\x00" in content:
         raise NginxTransactionError(f"htpasswd for {host!r} must be text")

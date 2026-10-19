@@ -134,12 +134,27 @@ def read_env_file(path: Path) -> dict:
 # ------------------------------------------------------------------ rendering
 
 
+PATHS_SUFFIX = "_paths"
+
+
 def auth_domains(manifest: dict[str, Any]) -> list:
     return [d for d in manifest["domains"] if isinstance(d.get("auth"), dict)]
 
 
+def htpasswd_name(domain: dict[str, Any]) -> str:
+    """Where the proxy reads the file from, and so what it protects.
+
+    nginx-proxy applies ``htpasswd/<host>`` to the whole host on its own.
+    An ``auth`` block with ``paths`` must not be found there, so its file
+    carries a suffix and only the locations the platform renders name it.
+    """
+    if domain["auth"].get("paths"):
+        return domain["host"] + PATHS_SUFFIX
+    return domain["host"]
+
+
 def render_htpasswd_files(manifest: dict[str, Any], secrets: dict) -> dict:
-    """host → ``user:$6$…`` for every domain with an ``auth`` block."""
+    """file name → ``user:$6$…`` for every domain with an ``auth`` block."""
     files = {}
     for domain in auth_domains(manifest):
         auth = domain["auth"]
@@ -154,7 +169,7 @@ def render_htpasswd_files(manifest: dict[str, Any], secrets: dict) -> dict:
             raise HtpasswdError(
                 f"domain {domain['host']}: password variable {variable} is empty"
             )
-        files[domain["host"]] = f"{auth['username']}:{sha512_crypt(password)}\n"
+        files[htpasswd_name(domain)] = f"{auth['username']}:{sha512_crypt(password)}\n"
     return files
 
 

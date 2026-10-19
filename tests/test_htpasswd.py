@@ -59,6 +59,26 @@ class RenderTest(unittest.TestCase):
         self.assertTrue(line.startswith("team:$6$"))
         self.assertNotIn("hunter2", line)
 
+    def test_a_path_scoped_auth_gets_a_file_the_proxy_does_not_apply_itself(
+        self,
+    ) -> None:
+        manifest = {
+            **MANIFEST,
+            "domains": [
+                {
+                    **MANIFEST["domains"][0],
+                    "auth": {
+                        "username": "ops",
+                        "password_env": "ADMIN_PASSWORD",
+                        "paths": ["/admin"],
+                    },
+                }
+            ],
+        }
+        files = render_htpasswd_files(manifest, {"ADMIN_PASSWORD": "hunter2"})
+        self.assertEqual(list(files), ["app.example.invalid_paths"])
+        self.assertTrue(files["app.example.invalid_paths"].startswith("ops:$6$"))
+
     def test_a_missing_or_empty_variable_is_named_without_its_value(self) -> None:
         with self.assertRaises(HtpasswdError) as caught:
             render_htpasswd_files(MANIFEST, {"OTHER": "s3cret-other"})

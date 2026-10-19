@@ -40,6 +40,50 @@ class NginxConfigTest(unittest.TestCase):
             ),
         )
 
+    def test_auth_paths_become_guarded_locations_in_the_vhost(self) -> None:
+        manifest = self.manifest()
+        manifest["domains"][0]["auth"] = {
+            "username": "team",
+            "password_env": "ADMIN_PASSWORD",
+            "paths": ["/admin"],
+        }
+
+        fragment = generate_vhost_fragments(manifest)["app.example.invalid"]
+
+        for matcher in ("location = /admin {", "location ^~ /admin/ {"):
+            self.assertIn(matcher, fragment)
+        self.assertIn(
+            "auth_basic_user_file /etc/nginx/htpasswd/app.example.invalid_paths;",
+            fragment,
+        )
+        self.assertIn("proxy_pass http://app.example.invalid;", fragment)
+        self.assertNotIn("_location", fragment)
+        self.assertNotIn("$6$", fragment)
+
+    def test_whole_host_auth_adds_nothing_to_the_vhost(self) -> None:
+        manifest = self.manifest()
+        manifest["domains"][0]["auth"] = {"username": "team", "password_env": "X"}
+
+        self.assertNotIn(
+            "auth_basic", generate_vhost_fragments(manifest)["app.example.invalid"]
+        )
+
+    def test_guarded_locations_keep_the_raw_location_snippet(self) -> None:
+        manifest = self.manifest()
+        manifest["domains"][0]["auth"] = {
+            "username": "team",
+            "password_env": "X",
+            "paths": ["/admin"],
+        }
+        manifest["domains"][0]["nginx"]["raw_location_snippet"] = "proxy_buffering off;"
+
+        fragments = generate_vhost_fragments(manifest, {manifest["project"]})
+
+        self.assertIn(
+            "include /etc/nginx/vhost.d/app.example.invalid_location;",
+            fragments["app.example.invalid"],
+        )
+
     def test_generates_gzip_off(self) -> None:
         manifest = self.manifest()
         manifest["domains"][0]["nginx"]["gzip"] = {
