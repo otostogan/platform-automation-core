@@ -679,9 +679,18 @@ class DomainAuthTest(ManifestValidatorTest):
             "paths": ["/metrics"],
         }
         errors = self.validate(manifest)
-        self.assertTrue(any("is the metrics path" in e for e in errors), errors)
+        self.assertTrue(any("under the metrics path" in e for e in errors), errors)
+
+        # below it a protected location would be more specific than the guard
+        manifest["domains"][0]["auth"]["paths"] = ["/metrics/export"]
+        errors = self.validate(manifest)
+        self.assertTrue(any("under the metrics path" in e for e in errors), errors)
+        # a sibling that merely shares the prefix string is fine
+        manifest["domains"][0]["auth"]["paths"] = ["/metrics-ui"]
+        self.assertEqual(self.validate(manifest), [])
 
         # on a port of its own there is no guard, and so nothing to collide with
+        manifest["domains"][0]["auth"]["paths"] = ["/metrics"]
         manifest["service"]["metrics"]["port"] = port + 1
         self.assertEqual(self.validate(manifest), [])
 
