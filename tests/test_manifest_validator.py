@@ -646,6 +646,29 @@ class DomainAuthTest(ManifestValidatorTest):
         errors = self.validate(manifest)
         self.assertTrue(any("password" in e for e in errors), errors)
 
+    def test_auth_may_name_the_paths_it_guards(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["domains"][0]["auth"] = {
+            "username": "team",
+            "password_env": "X",
+            "paths": ["/admin", "/docs/internal"],
+        }
+        self.assertEqual(self.validate(manifest), [])
+
+    def test_auth_paths_are_real_paths_and_never_the_root(self) -> None:
+        for paths in ([], ["/"], ["admin"], ["/a/../b"], ["/admin", "/admin"], ["/x/"]):
+            with self.subTest(paths=paths):
+                manifest = copy.deepcopy(self.valid_manifest)
+                manifest["domains"][0]["auth"] = {
+                    "username": "team",
+                    "password_env": "X",
+                    "paths": paths,
+                }
+                errors = self.validate(manifest)
+                self.assertTrue(
+                    any("$.domains[0].auth.paths" in e for e in errors), errors
+                )
+
     def test_username_cannot_contain_a_colon(self) -> None:
         manifest = copy.deepcopy(self.valid_manifest)
         manifest["domains"][0]["auth"] = {"username": "te:am", "password_env": "X"}

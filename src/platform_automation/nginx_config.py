@@ -45,6 +45,35 @@ def metrics_guard(manifest: dict[str, Any]) -> list[str]:
     ]
 
 
+def protected_paths(domain: dict[str, Any], raw_location: bool) -> list[str]:
+    """Basic auth on the listed paths only; the rest of the host stays open.
+
+    nginx-proxy guards a whole host when ``htpasswd/<host>`` exists, so a
+    path-scoped file is named ``<host>_paths`` and only these locations read
+    it. Each location proxies where the host's own ``location /`` does: the
+    upstream nginx-proxy names after the host, with the proxy headers it
+    sets for every location at the ``http`` level.
+    """
+    auth = domain.get("auth")
+    paths = auth.get("paths") if isinstance(auth, dict) else None
+    if not paths:
+        return []
+    host = domain["host"]
+    body = [
+        f'    auth_basic "Restricted {host}";',
+        f"    auth_basic_user_file /etc/nginx/htpasswd/{host}_paths;",
+        f"    proxy_pass http://{host};",
+        "    set $upstream_keepalive false;",
+    ]
+    if raw_location:
+        body.append(f"    include /etc/nginx/vhost.d/{host}_location;")
+    lines = ["# Basic auth on these paths only; the rest of the host stays open."]
+    for path in paths:
+        for matcher in (f"location = {path}", f"location ^~ {path}/"):
+            lines += [f"{matcher} {{", *body, "}"]
+    return lines
+
+
 def generate_vhost_fragments(
     manifest: dict[str, Any],
     allowed_raw_projects: set[str] = None,
@@ -110,6 +139,8 @@ def generate_vhost_fragments(
             raise NginxConfigError(
                 f"Raw nginx snippets are not allowed for project: {project}"
             )
+
+        vhost_lines.extend(protected_paths(domain, bool(raw_location)))
 
         if raw_vhost:
             vhost_lines.extend(

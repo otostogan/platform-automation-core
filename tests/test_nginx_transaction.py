@@ -306,6 +306,24 @@ class HtpasswdTransactionTest(NginxTransactionTest):
             {host: f"user:$6$salt$hash-{host}\n" for host in hosts},
         )
 
+    def test_a_path_scoped_file_is_owned_like_the_host_one(self) -> None:
+        plan = build_fragment_plan(
+            "example",
+            "lab",
+            "3" * 32,
+            {"app.example.test": "# managed\n"},
+            {"app.example.test_paths": "user:$6$salt$hash\n"},
+        )
+        self.assertEqual(list(plan.htpasswd), ["app.example.test_paths"])
+        with self.assertRaises(NginxTransactionError):
+            build_fragment_plan(
+                "example",
+                "lab",
+                "3" * 32,
+                {"app.example.test": "# managed\n"},
+                {"app.example.test_other": "user:$6$salt$hash\n"},
+            )
+
     def test_htpasswd_is_written_owned_and_removed_with_the_domain(self) -> None:
         (self.base / "htpasswd").mkdir(mode=0o755)
         self.generated = "server_name mail.example.test;\n"
