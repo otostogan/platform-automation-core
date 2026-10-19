@@ -123,8 +123,64 @@ def validate_manifest(
     formatted_errors.extend(validate_unique_domain_hosts(manifest))
     formatted_errors.extend(validate_web_domain_present(manifest))
     formatted_errors.extend(validate_database_resources(manifest))
+    formatted_errors.extend(validate_auth_paths(manifest))
 
     return formatted_errors
+
+
+# One path component on the host's filesystem; the suffix must fit beside the host.
+NAME_MAX = 255
+HTPASSWD_PATHS_SUFFIX = "_paths"
+
+
+def validate_auth_paths(manifest: Any) -> list[str]:
+    """What the schema cannot see about ``auth.paths``: the metrics path and the file name.
+
+    The metrics guard already writes a ``location`` pair for the metrics path
+    when it is served on the proxied port; a second pair for the same path
+    would make nginx refuse the configuration. And the hash file is named
+    after the host plus a suffix, which a near-limit host name cannot carry.
+    """
+    try:
+        domains = manifest["domains"]
+        service = manifest["service"]
+        web = service["web"]
+    except (KeyError, TypeError):
+        return []
+    if not isinstance(domains, list) or not isinstance(service, dict):
+        return []
+    metrics = service.get("metrics")
+    guarded = (
+        metrics["path"]
+        if isinstance(metrics, dict)
+        and metrics.get("port") == service.get("internal_port")
+        and isinstance(metrics.get("path"), str)
+        else None
+    )
+    errors = []
+    for index, domain in enumerate(domains):
+        if not isinstance(domain, dict):
+            continue
+        auth = domain.get("auth")
+        paths = auth.get("paths") if isinstance(auth, dict) else None
+        if not isinstance(paths, list) or not paths:
+            continue
+        host = domain.get("host")
+        if isinstance(host, str) and len(host) + len(HTPASSWD_PATHS_SUFFIX) > NAME_MAX:
+            errors.append(
+                f"$.domains[{index}].host: with auth.paths the host name must be at most"
+                f" {NAME_MAX - len(HTPASSWD_PATHS_SUFFIX)} characters"
+            )
+        if (
+            guarded is not None
+            and domain.get("service", web) == web
+            and guarded in paths
+        ):
+            errors.append(
+                f"$.domains[{index}].auth.paths: {guarded} is the metrics path, which"
+                " the proxy never serves"
+            )
+    return errors
 
 
 MINIMUM_DATABASE_MEMORY_MB = 256
