@@ -171,15 +171,18 @@ def validate_auth_paths(manifest: Any) -> list[str]:
                 f"$.domains[{index}].host: with auth.paths the host name must be at most"
                 f" {NAME_MAX - len(HTPASSWD_PATHS_SUFFIX)} characters"
             )
-        if (
-            guarded is not None
-            and domain.get("service", web) == web
-            and guarded in paths
-        ):
-            errors.append(
-                f"$.domains[{index}].auth.paths: {guarded} is the metrics path, which"
-                " the proxy never serves"
-            )
+        if guarded is None or domain.get("service", web) != web:
+            continue
+        # The guard answers 404 for the metrics path and everything under it;
+        # a protected location there would be more specific and proxy instead.
+        for path in paths:
+            if isinstance(path, str) and (
+                path == guarded or path.startswith(guarded + "/")
+            ):
+                errors.append(
+                    f"$.domains[{index}].auth.paths: {path} is under the metrics"
+                    f" path {guarded}, which the proxy never serves"
+                )
     return errors
 
 
