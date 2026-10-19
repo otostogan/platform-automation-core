@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-19
+
 - `domains[].auth.paths` puts only the listed paths of a domain behind the
   basic auth, each with everything under it; the rest of the host stays
   open. The hash file is `htpasswd/<host>_paths`, read only by the

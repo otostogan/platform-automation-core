@@ -53,7 +53,7 @@ recovery controls, and the bus-factor drill.
 
 ## Status
 
-`v0.28.0` is the current installable release. Consumers pin the release, verify
+`v0.29.0` is the current installable release. Consumers pin the release, verify
 `SHA256SUMS`, and keep inventory and credentials in their own private
 repositories.
 
@@ -92,7 +92,7 @@ Install it once, pinned to the release the infrastructure pins:
 ```bash
 python3 -m venv ~/.local/share/platform-console
 ~/.local/share/platform-console/bin/pip install \
-  "platform-automation-runtime[operator] @ https://github.com/otostogan/platform-automation-core/releases/download/v0.28.0/platform_automation_runtime-0.28.0-py3-none-any.whl"
+  "platform-automation-runtime[operator] @ https://github.com/otostogan/platform-automation-core/releases/download/v0.29.0/platform_automation_runtime-0.29.0-py3-none-any.whl"
 mkdir -p ~/.local/bin
 ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform
 ```
