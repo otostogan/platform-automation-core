@@ -4,6 +4,7 @@ import argparse
 import copy
 import json
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -342,6 +343,31 @@ def parse_arguments(
         "--json",
         action="store_true",
         help="Emit JSON instead of a table.",
+    )
+
+    exec_parser = subparsers.add_parser(
+        "exec",
+        help="Run one command in a fresh container of the serving release.",
+    )
+    exec_parser.add_argument(
+        "--project", required=True, help="Application project name."
+    )
+    exec_parser.add_argument(
+        "--environment",
+        required=True,
+        choices=("lab", "staging", "production"),
+        help="Deployment environment.",
+    )
+    exec_parser.add_argument(
+        "--service",
+        help="Compose service whose image and settings to use. Default: the web service.",
+    )
+    # Not "command": that is the subcommand's own destination.
+    exec_parser.add_argument(
+        "argv",
+        nargs=argparse.REMAINDER,
+        metavar="command",
+        help="The command and its arguments, after --.",
     )
 
     backup_parser = subparsers.add_parser(
@@ -2033,6 +2059,79 @@ def run_backups(
     return 0
 
 
+def run_exec(
+    arguments: argparse.Namespace,
+    projects_root: Path,
+    releases_root: Path,
+    runtime_secrets_root: Path,
+    age_key_file: Path,
+    sops_executable: Path,
+    secrets_materializer,
+    docker_executable: Path,
+    minimum_age_recipients: int,
+    compose_runtime_module=compose_runtime,
+) -> int:
+    """A one-off command in the serving release, the way its migration runs.
+
+    No lock: a task may run for hours, and a deployment meanwhile is the
+    operator's call. The container is the release's own — image, secrets,
+    networks — so what the command sees is what the application sees.
+    """
+    command = list(arguments.argv)
+    if command and command[0] == "--":
+        command = command[1:]
+    try:
+        if not command:
+            raise ComposeRuntimeError("nothing to run: give the command after --")
+        records = list_release_records(
+            projects_root, arguments.project, arguments.environment
+        )
+        record = find_latest_deployed_release(records)
+        if record is None:
+            raise ComposeRuntimeError(
+                "a command runs in a deployed release; none exists"
+            )
+        bundle = load_release_bundle(
+            record, releases_root, minimum_age_recipients=minimum_age_recipients
+        )
+        staged_bundle_path = resolve_release_bundle(record, releases_root)
+        manifest = bundle.manifest
+        service = arguments.service or manifest["service"]["web"]
+        request = SimpleNamespace(
+            bundle=bundle, project=arguments.project, environment=arguments.environment
+        )
+        runtime_secrets_path = materialize_release_secrets(
+            request=request,
+            staged_bundle_path=staged_bundle_path,
+            release_id=record["release_id"],
+            runtime_secrets_root=runtime_secrets_root,
+            age_key_file=age_key_file,
+            sops_executable=sops_executable,
+            secrets_materializer=secrets_materializer,
+        )
+        print(
+            f"→ {record['release_tag']} · service {service} · {' '.join(command)}",
+            file=sys.stderr,
+        )
+        return compose_runtime_module.run_release_command(
+            manifest=manifest,
+            staged_bundle_path=staged_bundle_path,
+            image=record["image"]["reference"],
+            runtime_secrets_path=runtime_secrets_path,
+            docker_executable=docker_executable,
+            service=service,
+            command=command,
+        )
+    except (
+        ComposeRuntimeError,
+        ReleaseLedgerError,
+        RuntimeSecretsError,
+        OSError,
+    ) as error:
+        print(f"exec error: {error}", file=sys.stderr)
+        return 1
+
+
 def run_backup(
     arguments: argparse.Namespace,
     projects_root: Path,
@@ -2905,6 +3004,20 @@ def main(
             offsite_config,
             offsite_credentials,
             offsite_reporter,
+        )
+
+    if arguments.command == "exec":
+        return run_exec(
+            arguments,
+            projects_root,
+            releases_root,
+            runtime_secrets_root,
+            age_key_file,
+            sops_executable,
+            secrets_materializer,
+            docker_executable,
+            arguments.minimum_age_recipients,
+            compose_runtime_module,
         )
 
     if arguments.command == "backup":

@@ -84,6 +84,7 @@ class PlatformCliTest(unittest.TestCase):
         self.nginx_rollback_error = None
         self.validation_error = None
         self.migration_error = None
+        self.exec_calls: list = []
         self.start_error_images: set[str] = set()
         self.stop_error = None
         self.removed_images: list[str] = []
@@ -539,6 +540,11 @@ class PlatformCliTest(unittest.TestCase):
 
         if self.validation_error is not None:
             raise ComposeRuntimeError(self.validation_error)
+
+    def run_release_command(self, **kwargs) -> int:
+        self.runtime_events.append(("exec", kwargs["image"]))
+        self.exec_calls.append(kwargs)
+        return 0
 
     def run_release_migration(self, **kwargs) -> None:
         self.runtime_events.append(("migration", kwargs["image"]))
@@ -1287,6 +1293,65 @@ class PlatformCliTest(unittest.TestCase):
             "--json",
             *extra,
         )
+
+    def test_exec_runs_in_the_serving_release_with_the_web_service_by_default(
+        self,
+    ) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, stderr = self.run_cli(
+            "exec",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--",
+            "node",
+            "dist/task.js",
+            "10000",
+        )
+
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(len(self.exec_calls), 1)
+        call = self.exec_calls[0]
+        self.assertEqual(call["command"], ["node", "dist/task.js", "10000"])
+        current = find_latest_deployed_release(
+            list_release_records(self.projects_root, "example", "lab")
+        )
+        self.assertEqual(call["image"], current["image"]["reference"])
+        self.assertEqual(call["service"], call["manifest"]["service"]["web"])
+        self.assertIn("service", stderr)
+
+    def test_exec_takes_another_service_and_refuses_an_empty_command(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+
+        code, _, _ = self.run_cli(
+            "exec",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--service",
+            "worker",
+            "--",
+            "true",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.exec_calls[-1]["service"], "worker")
+
+        code, _, stderr = self.run_cli(
+            "exec", "--project", "example", "--environment", "lab"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("give the command after --", stderr)
+
+    def test_exec_needs_a_deployed_release(self) -> None:
+        code, _, stderr = self.run_cli(
+            "exec", "--project", "example", "--environment", "lab", "--", "true"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("none exists", stderr)
+        self.assertEqual(self.exec_calls, [])
 
     def test_backup_describes_the_deployed_release(self) -> None:
         self.run_cli(*self.deploy_arguments())

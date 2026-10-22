@@ -12,6 +12,7 @@ EXAMPLE_MANIFEST = (
 
 from platform_automation.build_bundle import create_bundle  # noqa: E402
 from platform_automation.compose_runtime import (  # noqa: E402
+    run_release_command,
     ComposeRuntimeError,
     build_compose_environment,
     load_staged_manifest,
@@ -163,6 +164,50 @@ class ComposeRuntimeTest(unittest.TestCase):
                 "migrate",
             ],
         )
+
+    def test_a_one_off_command_runs_like_the_migration_in_its_own_container(
+        self,
+    ) -> None:
+        code = run_release_command(
+            **self.runtime_arguments(),
+            service="app",
+            command=["node", "dist/generate.js", "10000"],
+        )
+
+        self.assertEqual(code, 0)
+        call = self.runner.calls[0]
+        self.assertEqual(
+            call["command"][-8:],
+            [
+                "run",
+                "--rm",
+                "--entrypoint",
+                "",
+                "app",
+                "node",
+                "dist/generate.js",
+                "10000",
+            ],
+        )
+        self.assertEqual(call["env"]["PLATFORM_IMAGE"], IMAGE)
+        # output is the operator's, not captured
+        self.assertNotIn("stdout", call)
+
+    def test_a_one_off_command_reports_the_commands_exit_code(self) -> None:
+        self.runner.returncode = 3
+        code = run_release_command(
+            **self.runtime_arguments(), service="app", command=["false"]
+        )
+        self.assertEqual(code, 3)
+
+    def test_a_one_off_command_needs_a_declared_service_and_a_command(self) -> None:
+        with self.assertRaisesRegex(ComposeRuntimeError, "not in the Compose file"):
+            run_release_command(
+                **self.runtime_arguments(), service="ghost", command=["true"]
+            )
+        with self.assertRaisesRegex(ComposeRuntimeError, "command to run"):
+            run_release_command(**self.runtime_arguments(), service="app", command=[])
+        self.assertEqual(self.runner.calls, [])
 
     def http_ok(self, url, host, timeout):
         self.probes.append((url, host))

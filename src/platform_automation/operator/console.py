@@ -1438,6 +1438,80 @@ def logs_action(context: Context, host, user, identity, prompts, scope=None) -> 
     )
 
 
+def exec_action(context: Context, scope, prompts) -> Action:
+    """One command in a fresh container of the serving release, output live."""
+    from .logs import ssh_command
+    from .oneoff import OneOffError, compose_services, remote_command, split_command
+
+    target_host = context.target_host
+    name = f"{scope.project}/{scope.environment}"
+
+    def run() -> int:
+        questionary, style = prompts
+        text, select = make_prompts(questionary, style)
+        from .wizard import BACK, CANCEL
+
+        if not target_host:
+            print(f"{RED}deploy.yml names no target_host{RESET}")
+            return 1
+        blocked = tailnet_gate(read_tailnet())
+        if blocked:
+            print(f"{RED}{blocked}{RESET}")
+            return 1
+        try:
+            services = compose_services(context.root, scope.manifest)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            print(f"{RED}cannot read the Compose services: {error}{RESET}")
+            return 1
+        if not services:
+            print(f"{RED}the Compose file declares no services{RESET}")
+            return 1
+        service = select("Service (its image, settings and networks)", services)
+        if service in (BACK, CANCEL):
+            print("cancelled")
+            return 130
+        typed = text(
+            "Command (no shell: words only, e.g. node dist/generate-quarter.js 10000)",
+            "",
+            lambda v: bool(v.strip()) or "required",
+        )
+        if typed in (BACK, CANCEL):
+            print("cancelled")
+            return 130
+        try:
+            argv = split_command(typed)
+        except OneOffError as error:
+            print(f"{RED}{error}{RESET}")
+            return 1
+        remote = remote_command(scope.project, scope.environment, service, argv)
+        print()
+        print(
+            f"{BOLD}Run in a fresh {service} container of {name} on {target_host}:{RESET}"
+        )
+        print("  the serving container is not touched; the task shares its image,")
+        print("  secrets and networks, and its memory limit from the Compose file.")
+        print(f"{DIM}→ ssh -t ops@{target_host} '{remote}'{RESET}")
+        if not questionary.confirm("Run it?", default=True, style=style).ask():
+            print("cancelled — nothing ran on the host")
+            return 130
+        print()
+        code = subprocess.call(ssh_command(target_host, "ops", remote, None, tty=True))
+        print()
+        if code == 0:
+            print(f"{GREEN}finished with exit code 0{RESET}")
+        else:
+            print(f"{RED}finished with exit code {code}{RESET}")
+        return code
+
+    return Action(
+        "Run a one-off command in the release",
+        f"ssh -t ops@{target_host or '<target host>'} 'sudo -n platform exec --project <p> --environment <e> --service <s> -- …'",
+        run,
+        "#/ref-cli-exec",
+        remote=True,
+    )
+
+
 def database_actions(context: Context, scope, prompts) -> list:
     """A tunnel for the operator's own client, or psql on the host. Both leave no door open."""
     import select
@@ -1950,6 +2024,7 @@ def app_actions(context: Context, scope, prompts=None) -> list:
         actions.insert(
             3, logs_action(context, context.target_host, "ops", None, prompts, scope)
         )
+        actions.append(exec_action(context, scope, prompts))
         actions += database_actions(context, scope, prompts)
         actions += [
             restore_action(context, scope, prompts),
