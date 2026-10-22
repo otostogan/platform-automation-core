@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-22
+
 - `platform exec --project … --environment … [--service …] -- <command>`
   runs one command in a fresh container of the serving release, the way its
   migration runs: the release's image, secrets and networks, a container of
