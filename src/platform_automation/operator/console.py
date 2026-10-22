@@ -1517,7 +1517,9 @@ def exec_action(context: Context, scope, prompts) -> Action:
         if not services:
             print(f"{RED}the Compose file declares no services{RESET}")
             return 1
-        service = select("Service (its image, settings and networks)", services)
+        service = select(
+            "Service (its image, settings and networks)", services, lambda s: s
+        )
         if service in (BACK, CANCEL):
             print("cancelled")
             return 130
