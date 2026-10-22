@@ -848,14 +848,24 @@ def deploy_action(
         # a new name — what an operator who just emptied the database wants.
         effective = ref or (tags[0] if tags else "")
         expected = default_label(scope.environment, effective) if effective else None
-        if (
-            expected
-            and "label" in inputs
-            and context.target_host
-            and tailnet_gate(read_tailnet()) is None
-        ):
-            status = run_platform(context.target_host, "ops", ["status", *ident])
-            if status.ok and serving_release_tag(status.document) == expected:
+        if expected and "label" in inputs:
+            status = None
+            if context.target_host and tailnet_gate(read_tailnet()) is None:
+                status = run_platform(context.target_host, "ops", ["status", *ident])
+            if status is None or not status.ok:
+                # Without the host's answer the operator knows better than
+                # the console whether this tag already serves.
+                answer = text(
+                    f"Label (Enter keeps {expected}; a new one redeploys a release"
+                    " that already serves)",
+                    "",
+                    lambda v: True,
+                )
+                if answer in (BACK, CANCEL):
+                    print("cancelled — nothing dispatched")
+                    return 130
+                label = answer.strip()
+            elif serving_release_tag(status.document) == expected:
                 print()
                 print(
                     f"{BOLD}{effective} is the release serving {scope.environment} now.{RESET}"
