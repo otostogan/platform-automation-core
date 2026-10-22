@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import json
+
+import yaml
 import os
 import subprocess
 import time
@@ -276,6 +278,54 @@ def run_release_migration(
         "application migration",
         runner,
     )
+
+
+def run_release_command(
+    manifest: dict[str, Any],
+    staged_bundle_path: Path,
+    image: str,
+    runtime_secrets_path: Path,
+    docker_executable: Path,
+    service: str,
+    command: list[str],
+    runner=subprocess.run,
+) -> int:
+    """One command in a fresh container of the serving release; its exit code.
+
+    The same path the migration takes — ``compose run --rm`` with the
+    release's image, environment file and networks — so a task meets the
+    database exactly as the application does, in a container of its own
+    that shares nothing with the one answering requests. Output goes to the
+    caller's terminal untouched.
+    """
+    if not command:
+        raise ComposeRuntimeError("a command to run is required")
+    compose_file = resolve_staged_file(
+        staged_bundle_path, manifest["compose_file"], "Compose file"
+    )
+    try:
+        document = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as error:
+        raise ComposeRuntimeError("Compose file is unreadable") from error
+    services = document.get("services") if isinstance(document, dict) else None
+    if not isinstance(services, dict) or service not in services:
+        known = ", ".join(sorted(services)) if isinstance(services, dict) else "none"
+        raise ComposeRuntimeError(
+            f"service {service!r} is not in the Compose file (services: {known})"
+        )
+    base, environment = compose_context(
+        manifest, staged_bundle_path, image, runtime_secrets_path, docker_executable
+    )
+    try:
+        result = runner(
+            [*base, "run", "--rm", "--entrypoint", "", service, *command],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError as error:
+        raise ComposeRuntimeError("the command could not start") from error
+    return int(result.returncode)
 
 
 def start_release(

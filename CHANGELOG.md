@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+- `platform exec --project … --environment … [--service …] -- <command>`
+  runs one command in a fresh container of the serving release, the way its
+  migration runs: the release's image, secrets and networks, a container of
+  its own, the command's exit code. The console offers it as "Run a one-off
+  command in the release" with live output over SSH. `ops` only.
+
 - Console Deploy: when the chosen tag is the release serving the environment
   now, the console says a plain dispatch would be a no-op on the host and
   offers to run the whole flow again — migrations, seeds, restart — under a
