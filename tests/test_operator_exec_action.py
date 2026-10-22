@@ -58,7 +58,7 @@ class ExecActionTest(unittest.TestCase):
         (root / "deploy" / "compose.yml").write_text(
             "services:\n    worker: {}\n    web: {}\n"
         )
-        self.context = SimpleNamespace(root=root, target_host="host.example.test")
+        self.context = SimpleNamespace(root=root, target_host="host.example.invalid")
         self.scope = SimpleNamespace(
             project="example",
             environment="lab",
@@ -92,7 +92,7 @@ class ExecActionTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         command = calls[0]
         self.assertIn("-t", command)
-        self.assertEqual(command[-2], "ops@host.example.test")
+        self.assertEqual(command[-3:-1], ["ops@host.example.invalid", "--"])
         self.assertTrue(
             command[-1].endswith(
                 "--project example --environment lab --service web -- node dist/task.js 10000"

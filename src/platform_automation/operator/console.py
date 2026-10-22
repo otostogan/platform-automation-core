@@ -1557,7 +1557,7 @@ def exec_action(context: Context, scope, prompts) -> Action:
         return code
 
     return Action(
-        "Run a one-off command in the release",
+        "Run a script inside the application (one-off container, e.g. node dist/seed.js)",
         f"ssh -t ops@{target_host or '<target host>'} 'sudo -n platform exec --project <p> --environment <e> --service <s> -- …'",
         run,
         "#/ref-cli-exec",
