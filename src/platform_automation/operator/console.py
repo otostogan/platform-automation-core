@@ -781,11 +781,14 @@ def deploy_action(
     from .deploy import (
         DeployError,
         current_branch,
+        default_label,
         dispatch,
         dispatch_arguments,
         find_run,
         list_run_ids,
+        redeploy_label,
         release_tags,
+        serving_release_tag,
         watch,
     )
 
@@ -806,6 +809,7 @@ def deploy_action(
             return 1
 
         ref = preset_ref or ""
+        tags: list = []
         if "ref" in inputs and preset_ref is None:
             tags = release_tags(root)
             LATEST, OTHER = "latest release", "another ref…"
@@ -838,7 +842,39 @@ def deploy_action(
                 return 130
             branch = answer.strip()
 
-        arguments = dispatch_arguments(inputs, scope.environment, ref, "", branch)
+        label = ""
+        # The host answers a dispatch of the release it already serves with
+        # a no-op. Say so before the dispatch, and offer the full flow under
+        # a new name — what an operator who just emptied the database wants.
+        effective = ref or (tags[0] if tags else "")
+        expected = default_label(scope.environment, effective) if effective else None
+        if (
+            expected
+            and "label" in inputs
+            and context.target_host
+            and tailnet_gate(read_tailnet()) is None
+        ):
+            status = run_platform(context.target_host, "ops", ["status", *ident])
+            if status.ok and serving_release_tag(status.document) == expected:
+                print()
+                print(
+                    f"{BOLD}{effective} is the release serving {scope.environment} now.{RESET}"
+                )
+                print(
+                    f"{DIM}  dispatched as-is the host only refreshes the image and secrets:"
+                    f" no migrations, no restart{RESET}"
+                )
+                again = questionary.confirm(
+                    "Run the whole flow again — migrations, seeds, restart — under a new label?",
+                    default=False,
+                    style=style,
+                ).ask()
+                if not again:
+                    print("cancelled — nothing dispatched")
+                    return 130
+                label = redeploy_label(scope.environment, effective)
+
+        arguments = dispatch_arguments(inputs, scope.environment, ref, label, branch)
         print()
         print(f"{DIM}→ gh {' '.join(arguments)}{RESET}")
         if scope.environment == "production":
