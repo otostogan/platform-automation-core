@@ -11,6 +11,7 @@ import json
 import re
 import subprocess
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -77,6 +78,49 @@ def release_tags(root: Path, runner=subprocess.run, limit: int = 8) -> list:
     )
     tags = [line.strip() for line in _text(result.stdout).splitlines()]
     return [tag for tag in tags if TAG_PATTERN.match(tag)][:limit]
+
+
+def latest_release(root: Path, runner=subprocess.run) -> Optional[str]:
+    """The tag the workflow deploys for an empty ref: GitHub's latest release.
+
+    Not the newest local tag — a stale clone or an unreleased tag would name
+    a different release than the one the workflow resolves.
+    """
+    result = gh(
+        root, ["release", "view", "--json", "tagName", "-q", ".tagName"], runner
+    )
+    tag = _text(result.stdout).strip()
+    return tag if result.returncode == 0 and TAG_PATTERN.fullmatch(tag) else None
+
+
+def default_label(environment: str, ref: str) -> Optional[str]:
+    """What the workflow names the release when no label is given.
+
+    Mirrors deploy.yml: a version tag gives ``<environment>-<tag>``; a branch
+    or commit gives a name from the short commit, which the workstation
+    cannot know ahead, so ``None``.
+    """
+    if TAG_PATTERN.fullmatch(ref):
+        return f"{environment}-{ref}"
+    return None
+
+
+def serving_release_tag(status: dict) -> Optional[str]:
+    """The ledger name of the release that answers now; ``None`` without one."""
+    current = status.get("current") if isinstance(status, dict) else None
+    tag = current.get("release_tag") if isinstance(current, dict) else None
+    return tag if isinstance(tag, str) and tag else None
+
+
+def redeploy_label(environment: str, ref: str, now: Optional[datetime] = None) -> str:
+    """A fresh ledger name for the release that already serves.
+
+    The host treats a dispatch under the current name as a no-op; a new name
+    makes it a full deployment of the same image — migrations, restart,
+    healthcheck — and a rollback target of its own.
+    """
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%MZ")
+    return f"{environment}-{ref}-again-{stamp}"
 
 
 def dispatch_arguments(

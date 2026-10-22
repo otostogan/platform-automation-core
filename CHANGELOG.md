@@ -7,6 +7,13 @@ release.
 
 ## [Unreleased]
 
+- Console Deploy: when the chosen tag is the release serving the environment
+  now, the console says a plain dispatch would be a no-op on the host and
+  offers to run the whole flow again — migrations, seeds, restart — under a
+  new label, `<environment>-<tag>-again-<timestamp>`.
+  Without the host's answer the console asks for a label instead, and the
+  reusable deploy workflow warns in Actions when a dispatch was such a no-op.
+
 ## [0.29.0] - 2026-10-19
 
 - `domains[].auth.paths` puts only the listed paths of a domain behind the

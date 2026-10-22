@@ -3,18 +3,68 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from datetime import datetime, timezone
+
+from platform_automation.deployment_request import RELEASE_TAG_PATTERN
 from platform_automation.operator.deploy import (
     DeployError,
+    default_label,
     dispatch_arguments,
     find_run,
+    latest_release,
     list_run_ids,
     parse_runs,
+    redeploy_label,
     release_tags,
+    serving_release_tag,
 )
 
 
 def completed(stdout: str, code: int = 0):
     return subprocess.CompletedProcess([], code, stdout.encode(), b"")
+
+
+class RedeployTest(unittest.TestCase):
+    """A dispatch of the serving release is a no-op unless it gets a new name."""
+
+    def test_the_latest_release_is_what_github_says(self) -> None:
+        def runner(command, **kwargs):
+            self.assertEqual(command[:4], ["gh", "release", "view", "--json"])
+            return completed("v0.1.9\n")
+
+        self.assertEqual(latest_release(Path("."), runner=runner), "v0.1.9")
+
+        def failing(command, **kwargs):
+            return completed("", code=1)
+
+        self.assertIsNone(latest_release(Path("."), runner=failing))
+
+        def odd(command, **kwargs):
+            return completed("release-candidate\n")
+
+        self.assertIsNone(latest_release(Path("."), runner=odd))
+
+    def test_the_default_label_mirrors_the_workflow(self) -> None:
+        self.assertEqual(default_label("lab", "v0.1.9"), "lab-v0.1.9")
+        # a branch or commit is named after the short sha, unknown here
+        self.assertIsNone(default_label("lab", "main"))
+        self.assertIsNone(default_label("lab", ""))
+
+    def test_the_serving_release_is_read_from_status(self) -> None:
+        status = {"current": {"release_tag": "lab-v0.1.9", "status": "deployed"}}
+        self.assertEqual(serving_release_tag(status), "lab-v0.1.9")
+        self.assertIsNone(serving_release_tag({"current": None}))
+        self.assertIsNone(serving_release_tag({}))
+        self.assertIsNone(serving_release_tag("not a document"))
+
+    def test_the_new_label_is_a_valid_distinct_release_tag(self) -> None:
+        when = datetime(2026, 10, 22, 15, 30, tzinfo=timezone.utc)
+        label = redeploy_label("lab", "v0.1.9", when)
+
+        self.assertEqual(label, "lab-v0.1.9-again-20261022T1530Z")
+        self.assertNotEqual(label, default_label("lab", "v0.1.9"))
+        self.assertTrue(RELEASE_TAG_PATTERN.fullmatch(label))
+        self.assertTrue(RELEASE_TAG_PATTERN.fullmatch(redeploy_label("lab", "v0.1.9")))
 
 
 class DispatchArgumentsTest(unittest.TestCase):
