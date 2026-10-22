@@ -315,18 +315,24 @@ def edge_addresses(docker: Path, network: str, runner=subprocess.run) -> list:
             "--filter",
             f"network={network}",
             "--format",
-            '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}',
+            '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.oneoff"}}',
         ],
         runner,
     )
     known = {}
     for line in listing:
         parts = line.split("|")
-        if len(parts) == 4:
-            known[parts[0]] = {
-                **scope_labels(parts[2], parts[3]),
-                "container": parts[1],
-            }
+        if len(parts) != 5:
+            continue
+        # A `compose run` container gets the service's configuration, edge
+        # network included; a task is never a scrape target, or its numbers
+        # would land under the service it borrowed the image from.
+        if service_name(parts[3], parts[4]) != parts[3]:
+            continue
+        known[parts[0]] = {
+            **scope_labels(parts[2], parts[3]),
+            "container": parts[1],
+        }
     if not known:
         return []
     template = (

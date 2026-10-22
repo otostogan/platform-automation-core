@@ -333,9 +333,15 @@ class ApplicationMetricsTest(unittest.TestCase):
             if "ps" in command:
                 self.assertIn("network=platform-edge", command)
                 self.assertIn("status=running", command)
-                out = "aaa|shop-lab-web-1|shop-lab|web\nbbb|platform-nginx|platform-proxy|nginx\n"
+                out = (
+                    "aaa|shop-lab-web-1|shop-lab|web|False\n"
+                    "bbb|platform-nginx|platform-proxy|nginx|\n"
+                    # a task on the web image: on the edge network, never a target
+                    "ccc|shop-lab-web-run-9f8e7d|shop-lab|web|True\n"
+                )
             else:
                 self.assertIn('"platform-edge"', command[command.index("--format") + 1])
+                self.assertNotIn("ccc", command)
                 out = "aaa|192.0.2.11\nbbb|\n"
             return subprocess.CompletedProcess(command, 0, out.encode(), b"")
 
