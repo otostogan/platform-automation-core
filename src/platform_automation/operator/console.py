@@ -781,11 +781,15 @@ def deploy_action(
     from .deploy import (
         DeployError,
         current_branch,
+        default_label,
         dispatch,
         dispatch_arguments,
         find_run,
+        latest_release,
         list_run_ids,
+        redeploy_label,
         release_tags,
+        serving_release_tag,
         watch,
     )
 
@@ -838,7 +842,54 @@ def deploy_action(
                 return 130
             branch = answer.strip()
 
-        arguments = dispatch_arguments(inputs, scope.environment, ref, "", branch)
+        label = ""
+        # The host answers a dispatch of the release it already serves with
+        # a no-op. Say so before the dispatch, and offer the full flow under
+        # a new name — what an operator who just emptied the database wants.
+        # An empty ref deploys GitHub's latest release — ask GitHub which, as
+        # the workflow does, rather than guess from local tags.
+        effective = ref or (latest_release(root) if "ref" in inputs else "") or ""
+        expected = default_label(scope.environment, effective) if effective else None
+        if expected and "label" in inputs:
+            status = None
+            if context.target_host and tailnet_gate(read_tailnet()) is None:
+                status = run_platform(context.target_host, "ops", ["status", *ident])
+            if status is None or not status.ok:
+                # Without the host's answer the operator knows better than
+                # the console whether this tag already serves.
+                answer = text(
+                    f"Label (Enter keeps {expected}; a new one redeploys a release"
+                    " that already serves)",
+                    "",
+                    lambda v: True,
+                )
+                if answer in (BACK, CANCEL):
+                    print("cancelled — nothing dispatched")
+                    return 130
+                label = answer.strip()
+            elif serving_release_tag(status.document) == expected:
+                print()
+                print(
+                    f"{BOLD}{effective} is the release serving {scope.environment} now.{RESET}"
+                )
+                print(
+                    f"{DIM}  dispatched as-is the host only refreshes the image and secrets:"
+                    f" no migrations, no restart{RESET}"
+                )
+                again = questionary.confirm(
+                    "Run the whole flow again — migrations, seeds, restart — under a new label?",
+                    default=False,
+                    style=style,
+                ).ask()
+                if not again:
+                    print("cancelled — nothing dispatched")
+                    return 130
+                label = redeploy_label(scope.environment, effective)
+                # The label names this tag; deploy exactly it, not "latest"
+                # as GitHub may see it a moment later.
+                ref = effective
+
+        arguments = dispatch_arguments(inputs, scope.environment, ref, label, branch)
         print()
         print(f"{DIM}→ gh {' '.join(arguments)}{RESET}")
         if scope.environment == "production":

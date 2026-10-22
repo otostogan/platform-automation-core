@@ -200,6 +200,7 @@ jobs:
                   REMOTE_BUNDLE: ${{ steps.runtime.outputs.remote_path }}
                   TARGET_HOST: ${{ inputs.target_host }}
               run: |
+                  set -o pipefail
                   test -n "${REGISTRY_TOKEN}"
 
                   printf '%s\n' "${REGISTRY_TOKEN}" |
@@ -212,7 +213,14 @@ jobs:
                               --release-tag '${RELEASE_TAG}' \
                               --registry-username '${REGISTRY_USERNAME}' \
                               --registry-token-stdin \
-                              --json"
+                              --json" |
+                      tee deploy-result.json
+
+                  # The host answers a dispatch of the release it already serves
+                  # with a no-op; say so where the operator looks, with the way out.
+                  if [ "$(jq -r '.reused // false' deploy-result.json)" = "true" ]; then
+                      echo "::warning title=Nothing redeployed::${RELEASE_TAG} already serves ${ENVIRONMENT}: the host refreshed the image and secrets and touched nothing else (no migrations, no restart). Dispatch again with a label to run the full flow."
+                  fi
 
             - name: Verify deployed release
               env:
