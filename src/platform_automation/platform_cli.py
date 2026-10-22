@@ -2069,13 +2069,18 @@ def run_exec(
     secrets_materializer,
     docker_executable: Path,
     minimum_age_recipients: int,
+    databases_root: Path,
+    database_ensurer=ensure_project_database,
     compose_runtime_module=compose_runtime,
 ) -> int:
     """A one-off command in the serving release, the way its migration runs.
 
     No lock: a task may run for hours, and a deployment meanwhile is the
     operator's call. The container is the release's own — image, secrets,
-    networks — so what the command sees is what the application sees.
+    networks — so what the command sees is what the application sees. The
+    environment file is rebuilt the way a redeploy of the serving release
+    rebuilds it: decrypted from the bundle, then the platform's database
+    URL put back — the bundle never carries that one.
     """
     command = list(arguments.argv)
     if command and command[0] == "--":
@@ -2109,6 +2114,16 @@ def run_exec(
             sops_executable=sops_executable,
             secrets_materializer=secrets_materializer,
         )
+        prepare_release_database(
+            request=request,
+            runtime_secrets_path=runtime_secrets_path,
+            databases_root=databases_root,
+            runtime_secrets_root=runtime_secrets_root,
+            age_key_file=age_key_file,
+            sops_executable=sops_executable,
+            docker_executable=docker_executable,
+            database_ensurer=database_ensurer,
+        )
         print(
             f"→ {record['release_tag']} · service {service} · {' '.join(command)}",
             file=sys.stderr,
@@ -2124,6 +2139,7 @@ def run_exec(
         )
     except (
         ComposeRuntimeError,
+        DatabaseRuntimeError,
         ReleaseLedgerError,
         RuntimeSecretsError,
         OSError,
@@ -3017,6 +3033,8 @@ def main(
             secrets_materializer,
             docker_executable,
             arguments.minimum_age_recipients,
+            databases_root,
+            database_ensurer,
             compose_runtime_module,
         )
 

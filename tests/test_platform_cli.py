@@ -1297,6 +1297,7 @@ class PlatformCliTest(unittest.TestCase):
     def test_exec_runs_in_the_serving_release_with_the_web_service_by_default(
         self,
     ) -> None:
+        self.database_password = "pw-test"
         self.run_cli(*self.deploy_arguments())
 
         code, stdout, stderr = self.run_cli(
@@ -1321,6 +1322,11 @@ class PlatformCliTest(unittest.TestCase):
         self.assertEqual(call["image"], current["image"]["reference"])
         self.assertEqual(call["service"], call["manifest"]["service"]["web"])
         self.assertIn("service", stderr)
+        # the env file the task gets carries the platform's database URL,
+        # which the bundle never does: deploy injects it, and so must exec
+        content = call["runtime_secrets_path"].read_text(encoding="utf-8")
+        self.assertIn("DATABASE_URL=", content)
+        self.assertEqual(len(self.database_ensures), 2)
 
     def test_exec_takes_another_service_and_refuses_an_empty_command(self) -> None:
         self.run_cli(*self.deploy_arguments())
