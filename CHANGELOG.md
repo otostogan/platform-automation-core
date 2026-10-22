@@ -7,6 +7,11 @@ release.
 
 ## [Unreleased]
 
+- A `compose run` container — a migration, a one-off command — is labelled
+  `<service> · one-off` in metrics and logs instead of borrowing the
+  service's plain name, so the dashboards no longer show a second `web`
+  that lived for seconds.
+
 ## [0.30.0] - 2026-10-22
 
 - `platform exec --project … --environment … [--service …] -- <command>`

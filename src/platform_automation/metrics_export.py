@@ -72,6 +72,22 @@ STAMP = re.compile(r"^(\d{8}T\d{6}Z)")
 LABEL_ESCAPE = str.maketrans({"\\": "\\\\", '"': '\\"', "\n": "\\n"})
 
 
+ONE_OFF_SUFFIX = " · one-off"
+
+
+def service_name(service: str, one_off: str) -> str:
+    """The compose service, marked when the container is a one-off run.
+
+    ``compose run`` gives the task container the service's own label, so
+    the dashboards would show a second ``web`` living for seconds. Compose
+    also marks it ``com.docker.compose.oneoff=True``; that mark becomes a
+    visible suffix, and the serving container keeps its plain name.
+    """
+    if (one_off or "").strip().lower() == "true":
+        return f"{service}{ONE_OFF_SUFFIX}"
+    return service
+
+
 def scope_labels(compose_project: str, service: str) -> dict:
     """project / environment / service the way the platform names things."""
     match = DATABASE.match(compose_project or "")
@@ -202,17 +218,20 @@ def container_samples(samples: Samples, docker: Path, runner=subprocess.run) -> 
             "--all",
             "--no-trunc",
             "--format",
-            '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}|{{.State}}',
+            '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}|{{.State}}|{{.Label "com.docker.compose.oneoff"}}',
         ],
         runner,
     )
     known = {}
     for line in listing:
         parts = line.split("|")
-        if len(parts) != 5:
+        if len(parts) != 6:
             continue
-        identifier, name, project, service, state = parts
-        labels = {**scope_labels(project, service), "container": name}
+        identifier, name, project, service, state, one_off = parts
+        labels = {
+            **scope_labels(project, service_name(service, one_off)),
+            "container": name,
+        }
         known[identifier] = labels
         samples.add(
             "platform_container_up",
