@@ -22,9 +22,10 @@ from platform_automation.metrics_export import (
 from platform_automation.release_ledger import ReleaseLedgerError
 
 PS = (
-    "aaa|my-app-lab-web-1|my-app-lab|web|running\n"
-    "bbb|platform-db-my-app-lab-postgres-1|platform-db-my-app-lab|postgres|exited\n"
-    "ccc|platform-nginx|platform-proxy|nginx|running\n"
+    "aaa|my-app-lab-web-1|my-app-lab|web|running|False\n"
+    "bbb|platform-db-my-app-lab-postgres-1|platform-db-my-app-lab|postgres|exited|False\n"
+    "ccc|platform-nginx|platform-proxy|nginx|running|\n"
+    "ddd|my-app-lab-web-run-1a2b3c|my-app-lab|web|running|True\n"
 )
 STATS = "\n".join(
     json.dumps(row)
@@ -50,7 +51,7 @@ def runner(command, **_):
     if "ps" in command:
         out = PS
     elif "inspect" in command:
-        out = "aaa|2\nbbb|0\nccc|0\n"
+        out = "aaa|2\nbbb|0\nccc|0\nddd|0\n"
     elif "stats" in command:
         out = STATS
     else:
@@ -111,6 +112,12 @@ class MetricsExportTest(unittest.TestCase):
             text,
         )
         self.assertNotIn("zzz", text)
+        # a `compose run` container is the service's image on a task, not
+        # the service: it is marked, and the serving container stays plain
+        self.assertIn(
+            'platform_container_up{container="my-app-lab-web-run-1a2b3c",environment="lab",project="my-app",service="web · one-off"} 1',
+            text,
+        )
         self.assertIn("platform_ledger_readable 1", text)
         self.assertIn("# TYPE platform_container_restarts_total counter", text)
 
@@ -326,9 +333,15 @@ class ApplicationMetricsTest(unittest.TestCase):
             if "ps" in command:
                 self.assertIn("network=platform-edge", command)
                 self.assertIn("status=running", command)
-                out = "aaa|shop-lab-web-1|shop-lab|web\nbbb|platform-nginx|platform-proxy|nginx\n"
+                out = (
+                    "aaa|shop-lab-web-1|shop-lab|web|False\n"
+                    "bbb|platform-nginx|platform-proxy|nginx|\n"
+                    # a task on the web image: on the edge network, never a target
+                    "ccc|shop-lab-web-run-9f8e7d|shop-lab|web|True\n"
+                )
             else:
                 self.assertIn('"platform-edge"', command[command.index("--format") + 1])
+                self.assertNotIn("ccc", command)
                 out = "aaa|192.0.2.11\nbbb|\n"
             return subprocess.CompletedProcess(command, 0, out.encode(), b"")
 

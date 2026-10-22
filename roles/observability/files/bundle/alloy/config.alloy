@@ -26,6 +26,16 @@ discovery.relabel "containers" {
 		target_label  = "service"
 	}
 
+	// A `compose run` container carries the service's own label; mark it so
+	// the task's lines do not read as the application's.
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service", "__meta_docker_container_label_com_docker_compose_oneoff"]
+		separator     = "|"
+		regex         = "(.+)\\|True"
+		target_label  = "service"
+		replacement   = "$1 · one-off"
+	}
+
 	rule {
 		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
 		regex         = "(.+)-(lab|staging|production)"

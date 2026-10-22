@@ -65,6 +65,11 @@ class ObservabilityBundleTest(unittest.TestCase):
         for verb in ("exec", "start", "stop", "kill", "create", "delete"):
             self.assertNotRegex(policy, rf"containers/[^\n]*/{verb}\b")
 
+    def test_a_one_off_container_is_marked_in_the_log_labels(self) -> None:
+        config = (BUNDLE / "alloy/config.alloy").read_text(encoding="utf-8")
+        self.assertIn("com_docker_compose_oneoff", config)
+        self.assertIn('replacement   = "$1 · one-off"', config)
+
     def test_the_collector_writes_by_url_so_the_backend_can_move(self) -> None:
         alloy = compose("collector.yml")["services"]["alloy"]["environment"]
         self.assertIn("OBSERVABILITY_LOKI_PUSH_URL", alloy["LOKI_PUSH_URL"])

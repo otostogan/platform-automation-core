@@ -72,6 +72,22 @@ STAMP = re.compile(r"^(\d{8}T\d{6}Z)")
 LABEL_ESCAPE = str.maketrans({"\\": "\\\\", '"': '\\"', "\n": "\\n"})
 
 
+ONE_OFF_SUFFIX = " · one-off"
+
+
+def service_name(service: str, one_off: str) -> str:
+    """The compose service, marked when the container is a one-off run.
+
+    ``compose run`` gives the task container the service's own label, so
+    the dashboards would show a second ``web`` living for seconds. Compose
+    also marks it ``com.docker.compose.oneoff=True``; that mark becomes a
+    visible suffix, and the serving container keeps its plain name.
+    """
+    if (one_off or "").strip().lower() == "true":
+        return f"{service}{ONE_OFF_SUFFIX}"
+    return service
+
+
 def scope_labels(compose_project: str, service: str) -> dict:
     """project / environment / service the way the platform names things."""
     match = DATABASE.match(compose_project or "")
@@ -202,17 +218,20 @@ def container_samples(samples: Samples, docker: Path, runner=subprocess.run) -> 
             "--all",
             "--no-trunc",
             "--format",
-            '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}|{{.State}}',
+            '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}|{{.State}}|{{.Label "com.docker.compose.oneoff"}}',
         ],
         runner,
     )
     known = {}
     for line in listing:
         parts = line.split("|")
-        if len(parts) != 5:
+        if len(parts) != 6:
             continue
-        identifier, name, project, service, state = parts
-        labels = {**scope_labels(project, service), "container": name}
+        identifier, name, project, service, state, one_off = parts
+        labels = {
+            **scope_labels(project, service_name(service, one_off)),
+            "container": name,
+        }
         known[identifier] = labels
         samples.add(
             "platform_container_up",
@@ -296,18 +315,24 @@ def edge_addresses(docker: Path, network: str, runner=subprocess.run) -> list:
             "--filter",
             f"network={network}",
             "--format",
-            '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}',
+            '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.oneoff"}}',
         ],
         runner,
     )
     known = {}
     for line in listing:
         parts = line.split("|")
-        if len(parts) == 4:
-            known[parts[0]] = {
-                **scope_labels(parts[2], parts[3]),
-                "container": parts[1],
-            }
+        if len(parts) != 5:
+            continue
+        # A `compose run` container gets the service's configuration, edge
+        # network included; a task is never a scrape target, or its numbers
+        # would land under the service it borrowed the image from.
+        if service_name(parts[3], parts[4]) != parts[3]:
+            continue
+        known[parts[0]] = {
+            **scope_labels(parts[2], parts[3]),
+            "container": parts[1],
+        }
     if not known:
         return []
     template = (
