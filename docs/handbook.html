@@ -12941,6 +12941,38 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
         </dl>
       </article>
 
+      <article class="card" id="ref-cli-exec">
+        <h3><code>platform exec</code></h3>
+        <p>Одна команда в свежем контейнере работающего релиза. Замок не берёт.</p>
+        <div class="note">
+          <span class="label">Из консоли</span>
+          <p><code>platform</code> в репозитории приложения → окружение →
+          <strong>Run a one-off command in the release</strong>: спросит сервис и команду,
+          покажет строку для хоста, выполнит по SSH с терминалом — вывод идёт как есть.</p>
+        </div>
+        <dl>
+          <dt>Флаги</dt>
+          <dd><code>--project</code>, <code>--environment</code>; <code>--service</code> — сервис
+          compose, чей образ, настройки и сети взять (по умолчанию <code>web</code>); сама
+          команда и её аргументы — после <code>--</code>, например
+          <code>-- node dist/generate-quarter.js 10000</code>.</dd>
+          <dt>Что делает</dt>
+          <dd>Тот же путь, что у миграции при выкатке: <code>compose run --rm</code> с образом
+          релиза, расшифрованным в tmpfs окружением и сетями до базы. Контейнер отдельный —
+          тот, что отвечает на запросы, не трогается; лимит памяти берётся из compose для
+          выбранного сервиса. Код выхода команды становится кодом выхода
+          <code>exec</code>.</dd>
+          <dt>Чего не делает</dt>
+          <dd>Не запускает shell: слова передаются как есть, конвейеры и перенаправления
+          не работают и не нужны. Не пишет в реестр релизов. Не доступна пользователю
+          <code>deploy</code> — только <code>ops</code>.</dd>
+          <dt>Что сломается</dt>
+          <dd>Без выкаченного релиза: <code>a command runs in a deployed release; none
+          exists</code>. Сервис не из compose — отказ с перечнем известных. Файловая
+          система контейнера только для чтения, писать можно в <code>/tmp</code>.</dd>
+        </dl>
+      </article>
+
       <article class="card" id="ref-cli-backup">
         <h3><code>platform backup</code></h3>
         <p>Снимает один зашифрованный дамп. Берёт замок.</p>
