@@ -11,6 +11,7 @@ from platform_automation.operator.deploy import (
     default_label,
     dispatch_arguments,
     find_run,
+    latest_release,
     list_run_ids,
     parse_runs,
     redeploy_label,
@@ -25,6 +26,23 @@ def completed(stdout: str, code: int = 0):
 
 class RedeployTest(unittest.TestCase):
     """A dispatch of the serving release is a no-op unless it gets a new name."""
+
+    def test_the_latest_release_is_what_github_says(self) -> None:
+        def runner(command, **kwargs):
+            self.assertEqual(command[:4], ["gh", "release", "view", "--json"])
+            return completed("v0.1.9\n")
+
+        self.assertEqual(latest_release(Path("."), runner=runner), "v0.1.9")
+
+        def failing(command, **kwargs):
+            return completed("", code=1)
+
+        self.assertIsNone(latest_release(Path("."), runner=failing))
+
+        def odd(command, **kwargs):
+            return completed("release-candidate\n")
+
+        self.assertIsNone(latest_release(Path("."), runner=odd))
 
     def test_the_default_label_mirrors_the_workflow(self) -> None:
         self.assertEqual(default_label("lab", "v0.1.9"), "lab-v0.1.9")

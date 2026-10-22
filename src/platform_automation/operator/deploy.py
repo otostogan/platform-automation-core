@@ -80,6 +80,19 @@ def release_tags(root: Path, runner=subprocess.run, limit: int = 8) -> list:
     return [tag for tag in tags if TAG_PATTERN.match(tag)][:limit]
 
 
+def latest_release(root: Path, runner=subprocess.run) -> Optional[str]:
+    """The tag the workflow deploys for an empty ref: GitHub's latest release.
+
+    Not the newest local tag — a stale clone or an unreleased tag would name
+    a different release than the one the workflow resolves.
+    """
+    result = gh(
+        root, ["release", "view", "--json", "tagName", "-q", ".tagName"], runner
+    )
+    tag = _text(result.stdout).strip()
+    return tag if result.returncode == 0 and TAG_PATTERN.fullmatch(tag) else None
+
+
 def default_label(environment: str, ref: str) -> Optional[str]:
     """What the workflow names the release when no label is given.
 

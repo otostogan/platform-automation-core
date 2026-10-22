@@ -785,6 +785,7 @@ def deploy_action(
         dispatch,
         dispatch_arguments,
         find_run,
+        latest_release,
         list_run_ids,
         redeploy_label,
         release_tags,
@@ -809,7 +810,6 @@ def deploy_action(
             return 1
 
         ref = preset_ref or ""
-        tags: list = []
         if "ref" in inputs and preset_ref is None:
             tags = release_tags(root)
             LATEST, OTHER = "latest release", "another ref…"
@@ -846,7 +846,9 @@ def deploy_action(
         # The host answers a dispatch of the release it already serves with
         # a no-op. Say so before the dispatch, and offer the full flow under
         # a new name — what an operator who just emptied the database wants.
-        effective = ref or (tags[0] if tags else "")
+        # An empty ref deploys GitHub's latest release — ask GitHub which, as
+        # the workflow does, rather than guess from local tags.
+        effective = ref or (latest_release(root) if "ref" in inputs else "") or ""
         expected = default_label(scope.environment, effective) if effective else None
         if expected and "label" in inputs:
             status = None
@@ -883,6 +885,9 @@ def deploy_action(
                     print("cancelled — nothing dispatched")
                     return 130
                 label = redeploy_label(scope.environment, effective)
+                # The label names this tag; deploy exactly it, not "latest"
+                # as GitHub may see it a moment later.
+                ref = effective
 
         arguments = dispatch_arguments(inputs, scope.environment, ref, label, branch)
         print()
