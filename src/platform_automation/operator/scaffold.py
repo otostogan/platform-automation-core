@@ -25,6 +25,9 @@ from ..validate_manifest import (
 )
 
 TOKEN = re.compile(r"\{\{(\w+)\}\}")
+# A ghcr.io owner is one lowercase image-path segment: GHCR lowercases image
+# names, and the platform-v1 schema accepts nothing else in image.repository.
+OWNER_PATTERN = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
 DOMAIN_PATTERN = re.compile(
     r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
@@ -153,6 +156,11 @@ def validate_answers(answers: AppAnswers) -> list:
         errors.append("project must match ^[a-z][a-z0-9-]{1,62}$")
     if not answers.owner:
         errors.append("owner (the ghcr.io owner) is required")
+    elif not OWNER_PATTERN.match(answers.owner):
+        errors.append(
+            "owner (the ghcr.io owner) must be lowercase letters, digits and"
+            f" separators — GHCR lowercases image names: {answers.owner}"
+        )
     if not answers.environments:
         errors.append("at least one environment is required")
     for environment in answers.environments:
@@ -395,8 +403,17 @@ def validate_app(root: Path, files: dict) -> dict:
     return report
 
 
+def normalize_owner(value: str) -> str:
+    """A typed or derived owner, the way GHCR will spell it: lowercase."""
+    return value.strip().lower()
+
+
 def git_org(root: Path, runner=subprocess.run) -> Optional[str]:
-    """The ghcr.io owner is the GitHub owner of origin, when there is one."""
+    """The ghcr.io owner is the GitHub owner of origin, when there is one.
+
+    GitHub keeps the owner's capitalisation in the remote URL; GHCR does
+    not keep it in image names, so the owner comes back lowercased.
+    """
     try:
         result = runner(
             ["git", "-C", str(root), "remote", "get-url", "origin"],
@@ -412,7 +429,7 @@ def git_org(root: Path, runner=subprocess.run) -> Optional[str]:
         return None
     url = (result.stdout or b"").decode("utf-8", "replace").strip()
     match = re.search(r"github\.com[:/]([^/]+)/", url)
-    return match.group(1) if match else None
+    return normalize_owner(match.group(1)) if match else None
 
 
 def next_steps(answers: AppAnswers, written: list) -> str:

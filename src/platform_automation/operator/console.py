@@ -2360,9 +2360,11 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         AppAnswers,
         DOMAIN_PATTERN,
         ENVIRONMENTS,
+        OWNER_PATTERN,
         PROJECT_PATTERN,
         SECRET_NAME_PATTERN,
         git_org,
+        normalize_owner,
     )
     from .wizard import BACK, CANCEL, Step, is_back, run_wizard
 
@@ -2393,11 +2395,14 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         )
 
     def ask_owner(state):
-        return text(
+        # Typed as the org spells itself, kept as GHCR spells it: lowercase.
+        answer = text(
             "ghcr.io owner (org)",
             state.get("owner") or git_org(root) or "",
-            lambda v: bool(v) or "required",
+            lambda v: bool(OWNER_PATTERN.match(normalize_owner(v)))
+            or "letters, digits, dashes — lowercased for ghcr.io",
         )
+        return answer if answer in (BACK, CANCEL) else normalize_owner(answer)
 
     def ask_environments(state):
         chosen = set(state.get("environments") or ("lab", "production"))

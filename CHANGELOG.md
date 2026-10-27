@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+- `platform new app` lowercases the ghcr.io owner, whether it is derived
+  from the git remote or typed into the wizard, and `validate_answers`
+  rejects a mixed-case one. An org named `ParadigmaDev` used to produce
+  `ghcr.io/ParadigmaDev/<project>`, which the manifest schema refuses and
+  GHCR would have lowercased anyway.
+
 ## [0.30.1] - 2026-10-22
 
 - A `compose run` container — a migration, a one-off command — is labelled
