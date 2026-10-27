@@ -64,6 +64,23 @@ class FilterTest(unittest.TestCase):
         self.assertEqual(dropped, ())
         self.assertIn("DATABASE_URL", values)
 
+    def test_no_database_neither_requires_nor_drops_the_url(self) -> None:
+        """Nothing to connect to, so the platform has no opinion on the file."""
+        values, dropped = filter_for_manifest(
+            {"API_TOKEN": "x"}, {"database": {"mode": "none"}}
+        )
+        self.assertEqual(values, {"API_TOKEN": "x"})
+        self.assertEqual(dropped, ())
+
+        values, dropped = filter_for_manifest(
+            {"DATABASE_URL": "sqlite:///local.db", "API_TOKEN": "x"},
+            {"database": {"mode": "none"}},
+        )
+        self.assertEqual(
+            values, {"DATABASE_URL": "sqlite:///local.db", "API_TOKEN": "x"}
+        )
+        self.assertEqual(dropped, ())
+
 
 class EncryptTest(unittest.TestCase):
     def setUp(self) -> None:

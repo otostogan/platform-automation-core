@@ -7,6 +7,25 @@ release.
 
 ## [Unreleased]
 
+- `database.mode: none` for a static site or an application without a
+  database. The block then carries only `mode` and `backup_enabled: false`;
+  `postgres_major`, `backup`, `resources` and the top-level
+  `restore_validation` are refused. `platform secrets push` neither requires
+  nor drops `DATABASE_URL`, no backup timer is reconciled, `platform backup`,
+  `restore` and `verify-backup` refuse with the reason (`restore` and
+  `verify-backup` now refuse an external database up front too, instead of
+  failing on a credential that does not exist), and the Compose check
+  forbids `PLATFORM_DB_NETWORK` as it does for an external database.
+  `platform new app` offers "none — a static site or an app without a
+  database" and writes the manifest from `database_none.yml`. A placeholder
+  `DATABASE_URL` and a `restore_validation` nobody can run are no longer
+  needed in such a manifest.
+
+- `platform new app` writes a Compose file without the `db` network when
+  the database is external or absent. It used to name
+  `PLATFORM_DB_NETWORK` regardless, which the deployment check refuses for
+  anything but a platform-owned database.
+
 - `platform new app` lowercases the ghcr.io owner, whether it is derived
   from the git remote or typed into the wizard, and `validate_answers`
   rejects a mixed-case one. An org named `ParadigmaDev` used to produce

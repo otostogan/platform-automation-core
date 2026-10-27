@@ -35,6 +35,7 @@ DOMAIN_PATTERN = re.compile(
 )
 SECRET_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENVIRONMENTS = ("lab", "staging", "production")
+DATABASE_MODES = ("docker", "external", "none")
 POSTGRES_MAJORS = (16, 17, 18)
 PLACEHOLDER_VALUE = "замените-на-настоящее"
 
@@ -191,8 +192,8 @@ def validate_answers(answers: AppAnswers) -> list:
         errors.append("healthcheck path must start with /")
     if answers.healthcheck_timeout < 1:
         errors.append("healthcheck timeout must be positive")
-    if answers.database_mode not in ("docker", "external"):
-        errors.append("database mode must be docker or external")
+    if answers.database_mode not in DATABASE_MODES:
+        errors.append(f"database mode must be one of {', '.join(DATABASE_MODES)}")
     if answers.postgres_major not in POSTGRES_MAJORS:
         errors.append(f"postgres_major must be one of {POSTGRES_MAJORS}")
     if not 15 <= answers.backup_interval <= 1440:
@@ -262,13 +263,11 @@ def render_app(answers: AppAnswers) -> dict:
         text = render(template(name), common)
         if destination == DEPLOY_WORKFLOW:
             text = environment_options(text, tuple(answers.environments))
+        if name == "compose.yml" and answers.database_mode != "docker":
+            text = without_db_network(text)
         files[destination] = with_marker(text) if destination in MANAGED else text
 
-    database = template(
-        "database_docker.yml"
-        if answers.database_mode == "docker"
-        else "database_external.yml"
-    )
+    database = template(f"database_{answers.database_mode}.yml")
     if answers.database_mode == "docker" and not answers.backup_enabled:
         database = without_schedule(database)
     dotenv = "".join(f"{name}={PLACEHOLDER_VALUE}\n" for name in answers.secret_names)
@@ -303,6 +302,31 @@ def without_schedule(database_block: str) -> str:
             continue
         skipping = False
         lines.append(line.replace("backup_enabled: true", "backup_enabled: false"))
+    return "".join(lines)
+
+
+def without_db_network(compose: str) -> str:
+    """The Compose file of an application whose database the platform does not run.
+
+    ``PLATFORM_DB_NETWORK`` is empty for an external database and for none at
+    all, and the contract refuses a file that names it; so the web service
+    leaves the ``db`` network and the network itself goes.
+    """
+    lines = []
+    skipping = False
+    for line in compose.splitlines(keepends=True):
+        if line.startswith("    db:"):
+            skipping = True
+            # the blank line that separated the networks goes with it
+            if lines and lines[-1].strip() == "":
+                lines.pop()
+            continue
+        if skipping and line.startswith("        "):
+            continue
+        skipping = False
+        if line.strip() == "- db":
+            continue
+        lines.append(line)
     return "".join(lines)
 
 

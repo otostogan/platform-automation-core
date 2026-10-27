@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from platform_automation.operator.wizard import (
     BACK,
@@ -85,6 +86,123 @@ class RunWizardTest(unittest.TestCase):
         self.assertTrue(is_back("Back"))
         self.assertFalse(is_back("lab.example.com"))
         self.assertFalse(is_back(None))
+
+
+class ScriptedQuestionary:
+    """Answers each prompt by its message; records the messages asked."""
+
+    class Choice:
+        def __init__(self, title, value=None, checked=False):
+            self.title = title
+            self.value = value
+            self.checked = checked
+
+    def __init__(self, answers: dict):
+        self.answers = answers
+        self.asked = []
+
+    def _prompt(self, message, choices=None):
+        self.asked.append(message)
+        answer = self.answers[message]
+        if choices is not None and callable(answer):
+            answer = answer(choices)
+
+        class Prompt:
+            def ask(_):
+                return answer
+
+        return Prompt()
+
+    def text(self, message, **options):
+        return self._prompt(message)
+
+    def select(self, message, choices, **options):
+        return self._prompt(message, choices)
+
+    def checkbox(self, message, choices, **options):
+        return self._prompt(message, choices)
+
+
+class NewAppQuestionnaireTest(unittest.TestCase):
+    """The questions that only make sense with a database are not asked without one."""
+
+    def answers(self, database_mode: str) -> dict:
+        return {
+            "Project": "site-checker",
+            "ghcr.io owner (org)": "example",
+            "Environments": ["production"],
+            "Domain for production": "panel.example.invalid",
+            "Target host (MagicDNS name)": "host-1.tail.example.invalid",
+            "Host age recipient (age1…)": "age1hostfixture",
+            "Recovery age recipient (age1…)": "age1recoveryfixture",
+            "Internal port": "8080",
+            "Healthcheck path": "/",
+            "Healthcheck timeout, seconds": "60",
+            "Database": database_mode,
+            "PostgreSQL major": 17,
+            "Scheduled backups": False,
+            "Restore validation query": "SELECT count(*) FROM checks",
+            "Secret names, comma-separated (values come later via sops)": "API_TOKEN",
+            "Write these files?": lambda choices: choices[0].value,
+        }
+
+    def ask(self, database_mode: str):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from platform_automation.operator import console
+
+        questionary = ScriptedQuestionary(self.answers(database_mode))
+        context = SimpleNamespace(root=Path("/nonexistent/site-checker"))
+        with mock.patch("platform_automation.operator.config.infras", lambda: []):
+            answers = console.ask_app(context, questionary, style=None)
+        return answers, questionary.asked
+
+    def test_without_a_database_neither_major_nor_query_is_asked(self) -> None:
+        answers, asked = self.ask("none")
+
+        self.assertEqual(answers.database_mode, "none")
+        self.assertNotIn("PostgreSQL major", asked)
+        self.assertNotIn("Scheduled backups", asked)
+        self.assertNotIn("Restore validation query", asked)
+        self.assertEqual(answers.project, "site-checker")
+        self.assertEqual(answers.secret_names, ("API_TOKEN",))
+
+    def test_an_external_database_still_asks_for_major_and_query(self) -> None:
+        answers, asked = self.ask("external")
+
+        self.assertEqual(answers.database_mode, "external")
+        self.assertIn("PostgreSQL major", asked)
+        self.assertNotIn("Scheduled backups", asked)
+        self.assertIn("Restore validation query", asked)
+        self.assertEqual(answers.postgres_major, 17)
+        self.assertEqual(answers.restore_query, "SELECT count(*) FROM checks")
+
+    def test_the_database_question_offers_none(self) -> None:
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from platform_automation.operator import console
+
+        seen = {}
+
+        def record(choices):
+            seen["titles"] = [c.title for c in choices]
+            return "none"
+
+        answers = {**self.answers("none"), "Database": record}
+        questionary = ScriptedQuestionary(answers)
+        context = SimpleNamespace(root=Path("/nonexistent/site-checker"))
+        with mock.patch("platform_automation.operator.config.infras", lambda: []):
+            console.ask_app(context, questionary, style=None)
+
+        self.assertTrue(
+            any(
+                t.startswith("none — a static site or an app without a database")
+                for t in seen["titles"]
+            ),
+            seen,
+        )
 
 
 if __name__ == "__main__":

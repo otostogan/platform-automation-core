@@ -123,9 +123,30 @@ def validate_manifest(
     formatted_errors.extend(validate_unique_domain_hosts(manifest))
     formatted_errors.extend(validate_web_domain_present(manifest))
     formatted_errors.extend(validate_database_resources(manifest))
+    formatted_errors.extend(validate_no_database(manifest))
     formatted_errors.extend(validate_auth_paths(manifest))
 
     return formatted_errors
+
+
+def validate_no_database(manifest: Any) -> list[str]:
+    """Name the field the schema refuses without naming it.
+
+    With ``database.mode: none`` the schema forbids ``restore_validation``
+    — nothing can be restored, so a query there is a promise nobody keeps —
+    but a ``false`` subschema reports at the manifest root, so the path is
+    spelled out here.
+    """
+    try:
+        mode = manifest["database"]["mode"]
+    except (KeyError, TypeError):
+        return []
+    if mode != "none" or "restore_validation" not in manifest:
+        return []
+    return [
+        "$.restore_validation: not allowed with database.mode none —"
+        " there is no database to restore"
+    ]
 
 
 # One path component on the host's filesystem; the suffix must fit beside the host.
@@ -412,9 +433,10 @@ def validate_database_network(
 ) -> list[str]:
     # A docker-mode application must reach its database, and it does so
     # through the PLATFORM_DB_NETWORK interpolation, so the compose file
-    # itself stays environment-agnostic. An external-mode application
-    # referencing that variable would start with an empty network name,
-    # so it is refused here, where the mistake is legible.
+    # itself stays environment-agnostic. An application with an external
+    # database, or none at all, referencing that variable would start with
+    # an empty network name, so it is refused here, where the mistake is
+    # legible.
     mode = manifest["database"]["mode"]
     db = networks.get("db") if isinstance(networks, dict) else None
     errors: list[str] = []
@@ -422,6 +444,11 @@ def validate_database_network(
     if mode != "docker":
         # The key "db" stays free for application-owned helpers; only a
         # reference to the platform interpolation is a contradiction here.
+        reason = (
+            "for an external database"
+            if mode == "external"
+            else "when the manifest declares no database"
+        )
         if isinstance(networks, dict):
             for key, network in networks.items():
                 name = network.get("name") if isinstance(network, dict) else None
@@ -431,7 +458,7 @@ def validate_database_network(
                 ):
                     errors.append(
                         f"$.compose.networks.{key}.name: PLATFORM_DB_NETWORK "
-                        "is forbidden for an external database"
+                        f"is forbidden {reason}"
                     )
         return errors
 

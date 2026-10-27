@@ -104,6 +104,7 @@ class TemplatesMatchHandbookTest(unittest.TestCase):
             "platform.yml",
             "database_docker.yml",
             "database_external.yml",
+            "database_none.yml",
             "compose.yml",
         ):
             self.assert_block(name)
@@ -179,6 +180,58 @@ class RenderAppTest(unittest.TestCase):
         self.assertIn("backup_enabled: false", files["deploy/platform.lab.yml"])
         self.assertNotIn("interval_minutes", files["deploy/platform.lab.yml"])
 
+    def test_no_database_leaves_out_what_cannot_apply(self) -> None:
+        files = render_app(AppAnswers(**{**ANSWERS.__dict__, "database_mode": "none"}))
+        manifest = files["deploy/platform.lab.yml"]
+
+        self.assertIn("mode: none", manifest)
+        self.assertIn("backup_enabled: false", manifest)
+        self.assertNotIn("postgres_major", manifest)
+        self.assertNotIn("backup:", manifest)
+        self.assertNotIn("resources", manifest)
+        self.assertNotIn("restore_validation", manifest)
+        self.assertNotIn("DATABASE_URL", files[".env.lab"])
+
+    def test_without_a_platform_database_the_compose_file_has_no_db_network(
+        self,
+    ) -> None:
+        for mode in ("external", "none"):
+            with self.subTest(mode=mode):
+                files = render_app(
+                    AppAnswers(**{**ANSWERS.__dict__, "database_mode": mode})
+                )
+                compose = files["deploy/compose.yml"]
+
+                self.assertNotIn("PLATFORM_DB_NETWORK", compose)
+                self.assertNotIn("- db", compose)
+                self.assertIn("- edge", compose)
+                self.assertIn("name: platform-edge", compose)
+                self.assertNotIn("\n\n\n", compose)
+
+        docker = render_app(ANSWERS)["deploy/compose.yml"]
+        self.assertIn("PLATFORM_DB_NETWORK", docker)
+
+    def test_no_database_lets_the_application_name_its_own_database_url(self) -> None:
+        """The platform owns the variable only when it runs the database."""
+        errors = validate_answers(
+            AppAnswers(
+                **{
+                    **ANSWERS.__dict__,
+                    "database_mode": "none",
+                    "secret_names": ("DATABASE_URL",),
+                }
+            )
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_an_unknown_database_mode_is_refused(self) -> None:
+        errors = validate_answers(
+            AppAnswers(**{**ANSWERS.__dict__, "database_mode": "sqlite"})
+        )
+
+        self.assertTrue(any("database mode" in e for e in errors), errors)
+
     def test_invalid_answers_are_named_before_anything_is_written(self) -> None:
         errors = validate_answers(
             AppAnswers(
@@ -216,6 +269,24 @@ class WriteAndValidateTest(unittest.TestCase):
 
     def test_unscheduled_database_also_passes_the_deployment_checks(self) -> None:
         files = render_app(AppAnswers(**{**ANSWERS.__dict__, "backup_enabled": False}))
+
+        write_files(self.root, files)
+        report = validate_app(self.root, files)
+
+        self.assertEqual({k: v for k, v in report.items() if v}, {}, report)
+
+    def test_no_database_also_passes_the_deployment_checks(self) -> None:
+        files = render_app(AppAnswers(**{**ANSWERS.__dict__, "database_mode": "none"}))
+
+        write_files(self.root, files)
+        report = validate_app(self.root, files)
+
+        self.assertEqual({k: v for k, v in report.items() if v}, {}, report)
+
+    def test_an_external_database_also_passes_the_deployment_checks(self) -> None:
+        files = render_app(
+            AppAnswers(**{**ANSWERS.__dict__, "database_mode": "external"})
+        )
 
         write_files(self.root, files)
         report = validate_app(self.root, files)

@@ -83,7 +83,13 @@ def parse_dotenv(text: str) -> dict:
 
 
 def filter_for_manifest(values: dict, manifest: dict) -> tuple:
-    """Apply the host's own rule about who provides the database address."""
+    """Apply the host's own rule about who provides the database address.
+
+    ``docker``: the host writes the address, so one in the file is dropped.
+    ``external``: the application brings it, so it is required.
+    ``none``: there is no database, so the platform has no opinion — the
+    file is encrypted as it is.
+    """
     database = (
         manifest.get("database") if isinstance(manifest.get("database"), dict) else {}
     )

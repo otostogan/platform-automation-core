@@ -134,6 +134,9 @@ class ScheduledTest(unittest.TestCase):
             backups_are_scheduled(manifest(mode="external", enabled=False))
         )
 
+    def test_no_database_is_never_scheduled(self) -> None:
+        self.assertFalse(backups_are_scheduled(manifest(mode="none", enabled=False)))
+
 
 class TimerLifecycleTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -211,6 +214,11 @@ class TimerLifecycleTest(unittest.TestCase):
 
     def test_an_external_database_never_schedules(self) -> None:
         result = self.reconcile(manifest(mode="external", enabled=False))
+
+        self.assertEqual(result["state"], "disabled")
+
+    def test_no_database_never_schedules(self) -> None:
+        result = self.reconcile(manifest(mode="none", enabled=False))
 
         self.assertEqual(result["state"], "disabled")
 

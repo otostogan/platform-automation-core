@@ -1837,6 +1837,94 @@ class PlatformCliTest(unittest.TestCase):
         self.bundle_path = self.base / "docker-db.bundle.tar.gz"
         create_bundle(manifest_path, self.bundle_path)
 
+    def use_no_database_bundle(self) -> None:
+        """Rebuild the bundle as an application that declares no database."""
+        import shutil
+
+        import yaml
+
+        app_root = self.base / "no-db-app"
+        deploy = app_root / "deploy"
+        deploy.mkdir(parents=True)
+
+        for name in ("platform.yml", "compose.yml", "secrets.lab.sops.yaml"):
+            shutil.copy2(EXAMPLE_MANIFEST.parent / name, deploy / name)
+
+        manifest_path = deploy / "platform.yml"
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        manifest["database"] = {"mode": "none", "backup_enabled": False}
+        del manifest["restore_validation"]
+        manifest_path.write_text(
+            yaml.safe_dump(manifest, sort_keys=False),
+            encoding="utf-8",
+        )
+
+        self.bundle_path = self.base / "no-db.bundle.tar.gz"
+        create_bundle(manifest_path, self.bundle_path)
+
+    def test_an_application_without_a_database_deploys_with_the_timer_off(
+        self,
+    ) -> None:
+        self.use_no_database_bundle()
+
+        code, stdout, stderr = self.run_cli(*self.deploy_arguments())
+
+        self.assertEqual(code, 0, stderr)
+        document = json.loads(stdout)
+        # the reconciler is the stub here; it is handed the manifest that
+        # backups_are_scheduled reads, which is tested with it
+        self.assertEqual(
+            self.timer_calls[0]["manifest"]["database"],
+            {"mode": "none", "backup_enabled": False},
+        )
+        self.assertEqual(self.backup_calls, [])
+        self.assertEqual(
+            self.database_ensures[0]["manifest"]["database"]["mode"], "none"
+        )
+        content = Path(document["runtime_secrets_path"]).read_text(encoding="utf-8")
+        self.assertNotIn("DATABASE_URL", content)
+
+    def test_restore_refuses_an_application_without_a_database(self) -> None:
+        self.use_no_database_bundle()
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, stderr = self.run_cli(
+            *self.restore_arguments("--confirm-destructive")
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("restore error:", stderr)
+        self.assertIn("declares no database (mode: none)", stderr)
+        self.assertIn("nothing to restore", stderr)
+
+    def test_verify_backup_refuses_an_application_without_a_database(self) -> None:
+        self.use_no_database_bundle()
+        self.run_cli(*self.deploy_arguments())
+
+        code, stdout, stderr = self.run_cli(
+            "verify-backup",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--json",
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("verify-backup error:", stderr)
+        self.assertIn("declares no database (mode: none)", stderr)
+
+    def test_restore_refuses_an_external_database_too(self) -> None:
+        """The shared fixture is external; a dump of it cannot exist."""
+        self.run_cli(*self.deploy_arguments())
+
+        code, _, stderr = self.run_cli(*self.restore_arguments("--confirm-destructive"))
+
+        self.assertEqual(code, 1)
+        self.assertIn("platform-owned database", stderr)
+
     def test_a_migration_takes_a_backup_first(self) -> None:
         self.use_docker_database_bundle()
 

@@ -2358,6 +2358,7 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
     from .recipients import host_recipient, read_recipients, recovery_recipient
     from .scaffold import (
         AppAnswers,
+        DATABASE_MODES,
         DOMAIN_PATTERN,
         ENVIRONMENTS,
         OWNER_PATTERN,
@@ -2497,13 +2498,16 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
     def ask_database(state):
         return select(
             "Database",
-            ["docker", "external"],
-            lambda m: (
-                "platform-owned (docker)"
-                if m == "docker"
-                else "external — the platform will not back it up"
-            ),
+            list(DATABASE_MODES),
+            lambda m: {
+                "docker": "platform-owned (docker)",
+                "external": "external — the platform will not back it up",
+                "none": "none — a static site or an app without a database",
+            }[m],
         )
+
+    def has_database(state):
+        return state.get("database_mode") != "none"
 
     def ask_major(state):
         return select("PostgreSQL major", [18, 17, 16], str)
@@ -2582,7 +2586,7 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
             label="Healthcheck timeout",
         ),
         Step("database_mode", ask_database, label="Database"),
-        Step("postgres_major", ask_major, label="PostgreSQL major"),
+        Step("postgres_major", ask_major, has_database, label="PostgreSQL major"),
         Step(
             "backup_enabled",
             ask_schedule,
@@ -2603,7 +2607,7 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
             and st.get("backup_enabled", True),
             label="Dumps to keep",
         ),
-        Step("restore_query", ask_query, label="Restore query"),
+        Step("restore_query", ask_query, has_database, label="Restore query"),
         Step("secret_names", ask_secret_names, label="Secret names"),
     ]
 
@@ -2635,10 +2639,10 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         healthcheck_timeout=state["healthcheck_timeout"],
         database_mode=state["database_mode"],
         backup_enabled=state.get("backup_enabled", True),
-        postgres_major=state["postgres_major"],
+        postgres_major=state.get("postgres_major", 18),
         backup_interval=state.get("backup_interval", 15),
         backup_retain=state.get("backup_retain", 3),
-        restore_query=state["restore_query"],
+        restore_query=state.get("restore_query", "SELECT 1"),
         secret_names=state["secret_names"],
         **({"core_pin": infra["core_pin"]} if infra.get("core_pin") else {}),
     )
