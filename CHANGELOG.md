@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-27
+
 - `database.mode: none` for a static site or an application without a
   database. The block then carries only `mode` and `backup_enabled: false`;
   `postgres_major`, `backup`, `resources` and the top-level
