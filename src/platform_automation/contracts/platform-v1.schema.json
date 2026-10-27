@@ -13,8 +13,7 @@
 		"domains",
 		"deployment",
 		"database",
-		"secrets",
-		"restore_validation"
+		"secrets"
 	],
 	"properties": {
 		"api_version": {
@@ -64,6 +63,37 @@
 			"$ref": "#/$defs/observability"
 		}
 	},
+	"allOf": [
+		{
+			"if": {
+				"properties": {
+					"database": {
+						"properties": {
+							"mode": {
+								"const": "none"
+							}
+						},
+						"required": [
+							"mode"
+						]
+					}
+				},
+				"required": [
+					"database"
+				]
+			},
+			"then": {
+				"properties": {
+					"restore_validation": false
+				}
+			},
+			"else": {
+				"required": [
+					"restore_validation"
+				]
+			}
+		}
+	],
 	"$defs": {
 		"slug": {
 			"type": "string",
@@ -334,14 +364,14 @@
 			"additionalProperties": false,
 			"required": [
 				"mode",
-				"postgres_major",
 				"backup_enabled"
 			],
 			"properties": {
 				"mode": {
 					"enum": [
 						"external",
-						"docker"
+						"docker",
+						"none"
 					]
 				},
 				"postgres_major": {
@@ -417,6 +447,46 @@
 								"resources"
 							]
 						}
+					}
+				},
+				{
+					"if": {
+						"properties": {
+							"mode": {
+								"const": "none"
+							}
+						},
+						"required": [
+							"mode"
+						]
+					},
+					"then": {
+						"properties": {
+							"backup_enabled": {
+								"const": false
+							}
+						},
+						"allOf": [
+							{
+								"not": {
+									"required": [
+										"postgres_major"
+									]
+								}
+							},
+							{
+								"not": {
+									"required": [
+										"resources"
+									]
+								}
+							}
+						]
+					},
+					"else": {
+						"required": [
+							"postgres_major"
+						]
 					}
 				},
 				{

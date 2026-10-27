@@ -319,6 +319,13 @@ class EnsureProjectDatabaseTest(unittest.TestCase):
         self.assertEqual(self.runner.calls, [])
         self.assertFalse(self.databases_root.exists())
 
+    def test_no_database_owns_nothing_either(self) -> None:
+        manifest = {"database": {"mode": "none"}}
+
+        self.assertIsNone(self.ensure(manifest=manifest))
+        self.assertEqual(self.runner.calls, [])
+        self.assertFalse(self.databases_root.exists())
+
     def test_first_deploy_creates_everything_and_starts_the_database(
         self,
     ) -> None:

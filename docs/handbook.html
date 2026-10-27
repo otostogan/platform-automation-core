@@ -4057,7 +4057,10 @@ tailscale_auth_key_source: {{keydir}}/tailscale-auth.key</code></pre>
 									Да, пусть её держит платформа
 								</button>
 								<button class="btn" data-value="external">
-									База внешняя или не нужна
+									База внешняя
+								</button>
+								<button class="btn" data-value="none">
+									Базы нет — статический сайт
 								</button>
 							</div>
 						</div>
@@ -4377,6 +4380,19 @@ git commit -m "chore: platform deployment"</code></pre>
 											откажет.
 										</p>
 									</div>
+									<div class="note" data-when="db=none">
+										<span class="label"
+											>DATABASE_URL не нужен</span
+										>
+										<p>
+											Базы нет, и платформа ничего про неё
+											не спрашивает: ни требовать
+											<code>DATABASE_URL</code>, ни
+											подставлять его она не будет. В
+											<code>.env.{{env}}</code> — только то,
+											что приложению действительно нужно.
+										</p>
+									</div>
 
 									<h3>Прочитать обратно</h3>
 									<p>
@@ -4539,6 +4555,16 @@ restore_validation:
     query: SELECT 1</code></pre>
 									</div>
 
+									<div data-when="db=none">
+										<pre><code>database:
+    mode: none
+    backup_enabled: false
+
+secrets:
+    source: deploy/secrets.{{env}}.sops.yaml
+    delivery: env</code></pre>
+									</div>
+
 									<h3>Что означает каждое поле</h3>
 									<p>
 										Разбор каждого поля со всеми
@@ -4610,8 +4636,10 @@ restore_validation:
 												data-ref="mf-restore_validation"
 												>restore_validation</a
 											>
-											— последнее обязательно всегда, даже
-											без базы платформы.
+											— последнее обязательно при любой
+											базе, даже внешней; при
+											<code>mode: none</code> его,
+											наоборот, быть не должно.
 										</li>
 									</ul>
 
@@ -4655,6 +4683,29 @@ restore_validation:
 											подключения приложение приносит
 											само, в своих зашифрованных
 											секретах.
+										</p>
+									</div>
+									<div class="note" data-when="db=none">
+										<span class="label"
+											>Без базы</span
+										>
+										<p>
+											При <code>mode: none</code> в блоке
+											<code>database</code> остаются два
+											поля: сам <code>mode</code> и
+											<code>backup_enabled: false</code>.
+											<code>postgres_major</code>,
+											<code>backup</code> и
+											<code>resources</code> схема
+											отвергает, как и
+											<code>restore_validation</code>
+											наверху манифеста: восстанавливать
+											нечего, и обещание проверить
+											восстановление было бы пустым.
+											Таймер бэкапов не заводится,
+											<code>platform backup</code> и
+											<code>restore</code> отвечают
+											отказом с объяснением.
 										</p>
 									</div>
 
@@ -4753,7 +4804,9 @@ restore_validation:
 												<dt><code>invalid manifest: …</code> со списком путей</dt>
 												<dd>Каждая строка после <code>-</code> называет поле, которое не сошлось. Читать надо все: проверка не останавливается на первой.</dd>
 												<dt>Жалоба на <code>backup</code> или <code>backup_enabled</code></dt>
-												<dd>Они связаны жёстко: при <code>true</code> блок <code>backup</code> обязателен, при <code>false</code> — запрещён. А при <code>mode: external</code> флаг обязан быть <code>false</code>.</dd>
+												<dd>Они связаны жёстко: при <code>true</code> блок <code>backup</code> обязателен, при <code>false</code> — запрещён. А при <code>mode: external</code> и <code>mode: none</code> флаг обязан быть <code>false</code>.</dd>
+												<dt>Жалоба на <code>restore_validation</code> или <code>postgres_major</code> при <code>mode: none</code></dt>
+												<dd>Без базы этих полей быть не должно: уберите <code>restore_validation</code> из манифеста, а из блока <code>database</code> — всё, кроме <code>mode</code> и <code>backup_enabled: false</code>.</dd>
 												<dt>Жалоба на <code>domains</code></dt>
 												<dd>Доменов от одного до двадцати, имя — только строчные буквы и хотя бы одна точка. Размеры пишутся с суффиксом (<code>10m</code>), времена — с <code>ms</code>, <code>s</code>, <code>m</code> или <code>h</code>.</dd>
 												<dt>Жалоба на <code>postgres_major</code></dt>
@@ -4900,15 +4953,19 @@ restore_validation:
 											</p>
 										</div>
 									</div>
-									<div data-when="db=external">
+									<div data-when="db=external|none">
 										<p>
-											<strong>Раз база внешняя:</strong>
+											<strong>Раз базу платформа не держит:</strong>
 											ссылаться на
 											<code>${PLATFORM_DB_NETWORK}</code>
 											нельзя ни в одной сети — это прямое
 											противоречие манифесту, и оно
 											отвергается там, где ошибка ещё
-											читаема.
+											читаема. <code>new app</code> пишет
+											файл ниже без сети <code>db</code>;
+											если собираете его руками — уберите
+											её и из <code>networks</code>
+											веб-сервиса.
 										</p>
 									</div>
 
@@ -11632,14 +11689,16 @@ restore_validation:
 						<dl>
 							<dt>Обязательные поля</dt>
 							<dd>
-								<code>mode</code>, <code>postgres_major</code>,
-								<code>backup_enabled</code>
+								<code>mode</code>, <code>backup_enabled</code>;
+								<code>postgres_major</code> — при любом
+								<code>mode</code>, кроме <code>none</code>.
 							</dd>
 							<dt><code>mode</code></dt>
 							<dd>
 								<code>docker</code> — базу держит платформа;
 								<code>external</code> — приложение подключается
-								само.
+								само; <code>none</code> — базы нет вовсе:
+								статический сайт или приложение без неё.
 							</dd>
 							<dt><code>postgres_major</code></dt>
 							<dd>
@@ -11647,17 +11706,37 @@ restore_validation:
 								<strong
 									>На существующем томе не меняется</strong
 								>
-								— выкатка откажет.
+								— выкатка откажет. При <code>mode: none</code>
+								поля быть не должно.
 							</dd>
 							<dt>Правила схемы</dt>
 							<dd>
-								При <code>mode: external</code> поле
+								При <code>mode: external</code> и
+								<code>mode: none</code> поле
 								<code>backup_enabled</code> обязано быть
 								<code>false</code>: платформа не делает бэкапы
-								базы, которой не владеет. При
+								базы, которой не владеет или которой нет. При
 								<code>backup_enabled: true</code> блок
 								<code>backup</code> обязателен, при
 								<code>false</code> — <strong>запрещён</strong>.
+							</dd>
+							<dt><code>mode: none</code></dt>
+							<dd>
+								В блоке остаются только <code>mode</code> и
+								<code>backup_enabled: false</code>;
+								<code>postgres_major</code>, <code>backup</code>
+								и <code>resources</code> отвергаются, а
+								<code>restore_validation</code> наверху
+								манифеста — <strong>запрещён</strong>.
+								<code>DATABASE_URL</code> ни требуется, ни
+								подставляется; таймер бэкапов не заводится;
+								<code>platform backup</code>,
+								<code>restore</code> и
+								<code>verify-backup</code> отвечают отказом:
+								<code>the application declares no database
+								(mode: none)</code>. В Compose ссылка на
+								<code>PLATFORM_DB_NETWORK</code> отвергается, как
+								и при внешней базе.
 							</dd>
 							<dt><code>resources</code> (необязательно)</dt>
 							<dd>
@@ -11744,8 +11823,11 @@ restore_validation:
 							<dd>Запрос от 1 до 4096 символов.</dd>
 							<dt>Обязательно</dt>
 							<dd>
-								да — <strong>всегда</strong>, даже когда базы
-								платформы нет
+								да при <code>database.mode: docker</code> и
+								<code>external</code> — даже когда базы
+								платформы нет; при <code>mode: none</code> —
+								<strong>запрещено</strong>: восстанавливать
+								нечего.
 							</dd>
 							<dt>Что делает</dt>
 							<dd>
@@ -11908,13 +11990,14 @@ restore_validation:
 								Имя внутренней сети базы,
 								<code>platform-db-{проект}-{окружение}</code>.
 							</dd>
-							<dt>При внешней базе</dt>
+							<dt>При внешней базе или без базы</dt>
 							<dd>
 								<strong>Пустая строка</strong> — намеренно.
 								Файл, который зря её упомянул, упадёт при
 								запуске заметно, вместо того чтобы подняться в
 								неправильную сеть. Ссылка на неё при
-								<code>mode: external</code> отвергается ещё на
+								<code>mode: external</code> и
+								<code>mode: none</code> отвергается ещё на
 								проверке.
 							</dd>
 						</dl>

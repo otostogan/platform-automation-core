@@ -467,7 +467,15 @@ def create_backup(
     from .database_runtime import declared_database_mode
     from .sops_validation import valid_age_recipients
 
-    if declared_database_mode(manifest) != "docker":
+    mode = declared_database_mode(manifest)
+
+    if mode == "none":
+        raise BackupRuntimeError(
+            "the application declares no database (mode: none); "
+            "there is nothing to back up"
+        )
+
+    if mode != "docker":
         raise BackupRuntimeError(
             "backups require a platform-owned database (mode: docker)"
         )

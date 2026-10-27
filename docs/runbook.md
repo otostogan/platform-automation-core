@@ -341,8 +341,9 @@ What an operator needs to know:
 A deployment reconciles the host timer with what the release declares. An
 application with `backup_enabled: true` gets
 `platform-backup@{project}-{environment}.timer` running at its declared
-`interval_minutes`; one that turns backups off, or moves to an external
-database, has its timer disabled and its override removed. Host state that
+`interval_minutes`; one that turns backups off, moves to an external
+database, or declares no database at all (`mode: none`), has its timer
+disabled and its override removed. Host state that
 outlives the release which created it needs a removal path, and this is it.
 
 ```sh

@@ -145,6 +145,121 @@ class ManifestValidatorTest(unittest.TestCase):
             errors,
         )
 
+    def none_database_manifest(self) -> dict:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["database"] = {"mode": "none", "backup_enabled": False}
+        del manifest["restore_validation"]
+        return manifest
+
+    def test_accepts_an_application_without_a_database(self) -> None:
+        self.assertEqual(self.validate(self.none_database_manifest()), [])
+
+    def test_no_database_still_lets_backup_enabled_false_be_spelled_out(self) -> None:
+        manifest = self.none_database_manifest()
+        del manifest["database"]["backup_enabled"]
+
+        errors = self.validate(manifest)
+
+        self.assertTrue(
+            any("backup_enabled" in error for error in errors),
+            errors,
+        )
+
+    def test_no_database_forbids_restore_validation(self) -> None:
+        manifest = self.none_database_manifest()
+        manifest["restore_validation"] = {"query": "SELECT 1"}
+
+        errors = self.validate(manifest)
+
+        self.assertTrue(
+            any(
+                error.startswith("$.restore_validation:") and "none" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_a_database_still_requires_restore_validation(self) -> None:
+        for mode in ("external", "docker"):
+            with self.subTest(mode=mode):
+                manifest = (
+                    self.docker_database_manifest()
+                    if mode == "docker"
+                    else copy.deepcopy(self.valid_manifest)
+                )
+                del manifest["restore_validation"]
+
+                errors = self.validate(manifest)
+
+                self.assertTrue(
+                    any("restore_validation" in error for error in errors),
+                    errors,
+                )
+
+    def test_no_database_forbids_postgres_major_backup_and_resources(self) -> None:
+        for field, value in (
+            ("postgres_major", 18),
+            ("backup", {"interval_minutes": 15, "retain": 3}),
+            ("resources", {"memory": "512m"}),
+        ):
+            with self.subTest(field=field):
+                manifest = self.none_database_manifest()
+                manifest["database"][field] = value
+
+                errors = self.validate(manifest)
+
+                self.assertTrue(
+                    any(error.startswith("$.database") for error in errors),
+                    errors,
+                )
+
+    def test_no_database_cannot_schedule_backups(self) -> None:
+        manifest = self.none_database_manifest()
+        manifest["database"]["backup_enabled"] = True
+        manifest["database"]["backup"] = {"interval_minutes": 15, "retain": 3}
+
+        errors = self.validate(manifest)
+
+        self.assertTrue(
+            any(error.startswith("$.database.backup_enabled:") for error in errors),
+            errors,
+        )
+
+    def test_a_database_still_requires_postgres_major(self) -> None:
+        manifest = copy.deepcopy(self.valid_manifest)
+        del manifest["database"]["postgres_major"]
+
+        errors = self.validate(manifest)
+
+        self.assertTrue(
+            any("postgres_major" in error for error in errors),
+            errors,
+        )
+
+    def test_no_database_must_not_reference_db_network(self) -> None:
+        _, compose = self.docker_database_compose()
+
+        errors = self.validate_compose_contract(compose, self.none_database_manifest())
+
+        self.assertTrue(
+            any(
+                error.startswith("$.compose.networks.db.name:")
+                and "forbidden" in error
+                and "no database" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_no_database_may_keep_its_own_db_network(self) -> None:
+        compose = copy.deepcopy(self.valid_compose)
+        compose["networks"]["db"] = {"name": "helper-net", "external": True}
+
+        self.assertEqual(
+            self.validate_compose_contract(compose, self.none_database_manifest()),
+            [],
+        )
+
     def docker_database_manifest(self) -> dict:
         manifest = copy.deepcopy(self.valid_manifest)
         manifest["database"] = {

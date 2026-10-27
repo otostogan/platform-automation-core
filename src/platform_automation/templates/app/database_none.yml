@@ -1,0 +1,7 @@
+database:
+    mode: none
+    backup_enabled: false
+
+secrets:
+    source: deploy/secrets.{{env}}.sops.yaml
+    delivery: env

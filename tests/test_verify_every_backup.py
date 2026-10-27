@@ -17,6 +17,7 @@ SCOPES = [
     ("bravo", "production"),
     ("retired", "lab"),
     ("empty", "lab"),
+    ("static", "lab"),
 ]
 
 
@@ -33,7 +34,12 @@ class VerifyEveryBackupTest(unittest.TestCase):
                 list_project_scopes=lambda _: SCOPES,
                 is_retired=lambda _, project, __: project == "retired",
                 load_current_manifest=lambda _, __, project, *___: (
-                    {"name": project},
+                    {
+                        "name": project,
+                        "database": {
+                            "mode": "none" if project == "static" else "docker"
+                        },
+                    },
                     {},
                 ),
                 list_backups=lambda directory: (
@@ -92,6 +98,7 @@ class VerifyEveryBackupTest(unittest.TestCase):
                 "bravo": ("succeeded", None),
                 "retired": ("skipped", "retired"),
                 "empty": ("skipped", "no backup yet"),
+                "static": ("skipped", "no database"),
             },
         )
 
@@ -117,6 +124,7 @@ class VerifyEveryBackupTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("alpha/lab: succeeded (20260101T000000Z-a)", stdout)
         self.assertIn("retired/lab: skipped (retired)", stdout)
+        self.assertIn("static/lab: skipped (no database)", stdout)
 
     def test_all_and_a_named_application_exclude_each_other(self) -> None:
         root = Path("/nonexistent")

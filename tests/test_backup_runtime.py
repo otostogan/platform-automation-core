@@ -495,6 +495,13 @@ class CreateBackupTest(unittest.TestCase):
         with self.assertRaises(BackupRuntimeError):
             self.backup(document=manifest(mode="external"))
 
+    def test_no_database_says_so_instead_of_asking_for_a_docker_one(self) -> None:
+        with self.assertRaises(BackupRuntimeError) as raised:
+            self.backup(document={"database": {"mode": "none"}})
+
+        self.assertIn("declares no database (mode: none)", str(raised.exception))
+        self.assertEqual(self.commands, [])
+
     def test_secrets_without_recipients_are_refused(self) -> None:
         with self.assertRaises(BackupRuntimeError):
             self.backup(secrets={})

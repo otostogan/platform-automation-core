@@ -2272,6 +2272,22 @@ def load_current_manifest(
     return bundle.manifest, record
 
 
+def require_platform_database(manifest: dict[str, Any], verb: str) -> None:
+    """A dump exists only for a database the platform runs; say which case this is."""
+    mode = manifest["database"]["mode"]
+
+    if mode == "none":
+        raise RestoreRuntimeError(
+            f"the application declares no database (mode: none); "
+            f"there is nothing to {verb}"
+        )
+
+    if mode != "docker":
+        raise RestoreRuntimeError(
+            f"{verb} requires a platform-owned database (mode: docker)"
+        )
+
+
 def run_restore(
     arguments: argparse.Namespace,
     projects_root: Path,
@@ -2320,13 +2336,14 @@ def run_restore(
             arguments.environment,
             "restore",
         ):
-            _, record = load_current_manifest(
+            manifest, record = load_current_manifest(
                 projects_root,
                 releases_root,
                 arguments.project,
                 arguments.environment,
                 minimum_age_recipients,
             )
+            require_platform_database(manifest, "restore")
 
             document = restorer(
                 project=arguments.project,
@@ -2405,6 +2422,9 @@ def run_verify_every_backup(
                 environment,
                 minimum_age_recipients,
             )
+            if (manifest.get("database") or {}).get("mode") == "none":
+                entry.update(outcome="skipped", reason="no database")
+                continue
             # Not narrowed to releases that schedule dumps: a pre-migration
             # dump of an application that schedules none is still what a
             # restore would start from, and the alert watches it too.
@@ -2515,6 +2535,7 @@ def run_verify_backup(
             arguments.environment,
             minimum_age_recipients,
         )
+        require_platform_database(manifest, "verify")
 
         document = verifier(
             manifest=manifest,
