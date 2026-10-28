@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from .context import INFRA_REQUIREMENTS
+from .remote import checked_run
 
 CORE_REPOSITORY = "otostogan/platform-automation-core"
 RUNTIME_VERSION_FILE = "/opt/platform/runtime/platform_automation/__init__.py"
@@ -103,7 +104,7 @@ def parse_runtime_version(text: str) -> Optional[str]:
 
 
 def host_version(
-    address: str, user: str, identity: Optional[Path], runner=subprocess.run
+    address: str, user: str, identity: Optional[Path], runner=checked_run
 ) -> HostVersion:
     """What the host runs, read from the runtime the last converge installed."""
     command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
