@@ -119,9 +119,9 @@ def checked_run(
     for reader in readers:
         reader.start()
 
-    started = clock()
     expired: Optional[subprocess.TimeoutExpired] = None
     try:
+        started = clock()
         while True:
             try:
                 process.wait(timeout=POLL_SECONDS)
