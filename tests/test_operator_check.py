@@ -167,6 +167,21 @@ class CheckedRunTest(unittest.TestCase):
         self.assertNotIsInstance(caught.exception, CheckExpired)
         self.assertTrue(process.killed)
 
+    def test_an_interrupt_while_waiting_kills_the_ssh_child(self):
+        class Interrupting(FakeSsh):
+            def wait(self, timeout=None):
+                if not self.killed:
+                    raise KeyboardInterrupt
+                return super().wait(timeout)
+
+        process = Interrupting([PROMPT, LINK], [], waits=1)
+
+        with self.assertRaises(KeyboardInterrupt):
+            checked_run(["ssh"], popen=fake_popen(process), notify=lambda _: None)
+
+        self.assertTrue(process.killed)
+        self.assertIsNotNone(process.returncode)
+
     def test_other_stderr_is_kept_and_the_check_lines_are_not(self):
         process = FakeSsh(
             [PROMPT, LINK], [DONE, b"status error: no such project\n"], returncode=1

@@ -121,28 +121,35 @@ def checked_run(
 
     started = clock()
     expired: Optional[subprocess.TimeoutExpired] = None
-    while True:
-        try:
-            process.wait(timeout=POLL_SECONDS)
-            break
-        except subprocess.TimeoutExpired:
-            pass
-        now = clock()
-        with lock:
-            pending = state["pending"]
-            asked_at = state["asked_at"]
-            resumed_at = state["resumed_at"]
-        if pending:
-            if now - asked_at > check_timeout:
-                expired = CheckExpired(command, check_timeout)
-        elif timeout is not None:
-            since = resumed_at if resumed_at is not None else started
-            if now - since > timeout:
-                expired = subprocess.TimeoutExpired(command, timeout)
-        if expired is not None:
-            process.kill()
-            process.wait()
-            break
+    try:
+        while True:
+            try:
+                process.wait(timeout=POLL_SECONDS)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            now = clock()
+            with lock:
+                pending = state["pending"]
+                asked_at = state["asked_at"]
+                resumed_at = state["resumed_at"]
+            if pending:
+                if now - asked_at > check_timeout:
+                    expired = CheckExpired(command, check_timeout)
+            elif timeout is not None:
+                since = resumed_at if resumed_at is not None else started
+                if now - since > timeout:
+                    expired = subprocess.TimeoutExpired(command, timeout)
+            if expired is not None:
+                process.kill()
+                process.wait()
+                break
+    except BaseException:
+        # Ctrl-C while waiting, as subprocess.run would: the ssh child does
+        # not outlive the console, nor does whatever it was running.
+        process.kill()
+        process.wait()
+        raise
 
     for reader in readers:
         reader.join()
