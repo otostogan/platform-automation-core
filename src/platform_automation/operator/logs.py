@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from .remote import checked_run
+
 PROXY_CONTAINERS = (
     ("platform-nginx", "nginx (every site on this host)"),
     ("platform-docker-gen", "docker-gen (proxy config renders)"),
@@ -84,7 +86,7 @@ def list_containers(
     user: str,
     projects: Optional[list] = None,
     identity: Optional[Path] = None,
-    runner=subprocess.run,
+    runner=checked_run,
 ) -> list:
     try:
         result = runner(

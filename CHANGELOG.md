@@ -7,6 +7,19 @@ release.
 
 ## [Unreleased]
 
+- The console no longer crashes with a `subprocess.TimeoutExpired` traceback
+  when the tailnet's ssh policy has `action: check`. Every remote call that
+  captures ssh output — `platform … --json` over ssh, the Grafana inspect,
+  `docker ps` for the logs menu, the host version read, the bootstrap
+  probes — now watches stderr: when Tailscale SSH asks for the browser
+  check, the console prints the link and a one-line explanation (the check
+  is per session and lasts the policy's `checkPeriod`), waits up to fifteen
+  minutes for the confirmation without counting it against the command's
+  own patience, and continues once stderr reports
+  `# Authentication checked with Tailscale SSH.`. An unconfirmed check is
+  reported in one line, like any other refusal. Interactive actions (logs,
+  exec, psql) show the same link in the terminal as before.
+
 ## [0.31.0] - 2026-10-27
 
 - `database.mode: none` for a static site or an application without a

@@ -26,7 +26,7 @@ from ..validate_manifest import (
 )
 from .context import Context, detect
 from .doctor import diagnose
-from .remote import run_platform
+from .remote import checked_run, run_platform
 from .tailnet import read_tailnet
 
 INSTALL_HINT = "pip install 'platform-automation-runtime[operator]'"
@@ -503,7 +503,7 @@ def bootstrap_action(
 
     address, user, identity = host_connection(host)
     root = context.root
-    runner = runner or subprocess.run
+    runner = runner or checked_run
     play = play or run_playbook
     sleeper = sleeper or time.sleep
 
@@ -1156,7 +1156,7 @@ def grafana_action(context: Context, host, prompts) -> Action:
         finally:
             probe.close()
         print(f"{DIM}→ ssh {user}@{address} '{inspect}'{RESET}")
-        found = subprocess.run(
+        found = checked_run(
             ssh_command(address, user, inspect, identity),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,

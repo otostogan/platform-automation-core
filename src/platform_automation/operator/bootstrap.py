@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from .context import load_yaml
+from .remote import checked_run
 
 BOOTSTRAP_INVENTORY = "inventory/bootstrap.yml"
 SHARED_SECRETS = "inventory/group_vars/all/local-secrets.yml"
@@ -103,7 +104,7 @@ def shown(command: list) -> str:
     return shlex.join(command)
 
 
-def answers(command: list, runner=subprocess.run) -> tuple:
+def answers(command: list, runner=checked_run) -> tuple:
     """``(True, output)`` when the command exits 0, else ``(False, reason)``."""
     try:
         result = runner(
@@ -124,7 +125,7 @@ def answers(command: list, runner=subprocess.run) -> tuple:
 
 def wait_for_handover(
     command: list,
-    runner=subprocess.run,
+    runner=checked_run,
     sleeper=time.sleep,
     attempts: int = 12,
     pause: int = 10,
