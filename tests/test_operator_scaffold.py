@@ -479,3 +479,42 @@ class GitOrgTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PreCommitHookTest(unittest.TestCase):
+    """The hook refuses plaintext secrets, not the documented example file."""
+
+    def run_hook(self, staged: str) -> subprocess.CompletedProcess:
+        hook_text = template("hook_pre-commit")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+            subprocess.run([*git, "init", "-q"], cwd=root, check=True)
+            (root / staged).write_text("KEY=value\n", encoding="utf-8")
+            subprocess.run([*git, "add", staged], cwd=root, check=True)
+            hook = root / "pre-commit"
+            hook.write_text(hook_text, encoding="utf-8")
+            hook.chmod(0o755)
+            # A stand-in console: the hook only has to reach it.
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            console = bin_dir / "platform"
+            console.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            console.chmod(0o755)
+            return subprocess.run(
+                [str(hook)],
+                cwd=root,
+                env={"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": directory},
+                capture_output=True,
+                text=True,
+            )
+
+    def test_refuses_a_plaintext_environment_file(self) -> None:
+        result = self.run_hook(".env.lab")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("никогда не коммитится", result.stderr)
+
+    def test_lets_the_example_file_through(self) -> None:
+        result = self.run_hook(".env.example")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("никогда не коммитится", result.stderr)

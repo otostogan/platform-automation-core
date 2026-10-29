@@ -4451,7 +4451,7 @@ git commit -m "chore: platform deployment"</code></pre>
 										<div class="inner">
 											<dl>
 												<dt><code>pre-commit: .env.* никогда не коммитится</code></dt>
-												<dd>Файл с открытым текстом попал в индекс — обычно через <code>git add -A</code> при отсутствующем <code>.gitignore</code>. Уберите его: <code>git reset .env.{{env}}</code>, проверьте, что <code>.env.*</code> стоит в <code>.gitignore</code>. Ничего не утекло: коммит не состоялся.</dd>
+												<dd>Файл с открытым текстом попал в индекс — обычно через <code>git add -A</code> при отсутствующем <code>.gitignore</code>. Уберите его: <code>git reset .env.{{env}}</code>, проверьте, что <code>.env.*</code> стоит в <code>.gitignore</code>. Ничего не утекло: коммит не состоялся. Единственное исключение — <code>.env.example</code>: это документация переменных без значений, хук его пропускает.</dd>
 												<dt><code>pre-commit: нужна консоль platform</code></dt>
 												<dd>Хук зовёт консоль, а её нет в <code>PATH</code> этой оболочки. Поставьте <code>pip install 'platform-automation-runtime[operator]'</code> в тот же venv, из которого коммитите, или активируйте его.</dd>
 												<dt>Хук не сработал, шифртекст не изменился</dt>
@@ -5998,7 +5998,8 @@ exit "${status}"</code></pre>
 # Шифрует консоль платформы теми же правилами, что проверяет хост.
 set -eu
 
-if git diff --cached --name-only | grep -q &#x27;^\.env\.&#x27;; then
+# .env.example — документация переменных, без значений; ему можно.
+if git diff --cached --name-only | grep &#x27;^\.env\.&#x27; | grep -qv &#x27;^\.env\.example$&#x27;; then
     echo &quot;pre-commit: .env.* никогда не коммитится — в git идёт только шифртекст&quot; &gt;&amp;2
     exit 1
 fi
