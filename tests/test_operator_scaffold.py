@@ -476,11 +476,6 @@ class GitOrgTest(unittest.TestCase):
             rendered["deploy/platform.lab.yml"],
         )
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PreCommitHookTest(unittest.TestCase):
     """The hook refuses plaintext secrets, not the documented example file."""
 
@@ -518,3 +513,6 @@ class PreCommitHookTest(unittest.TestCase):
         result = self.run_hook(".env.example")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("никогда не коммитится", result.stderr)
+
+if __name__ == "__main__":
+    unittest.main()
