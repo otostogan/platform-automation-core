@@ -20,6 +20,11 @@ release.
   reported in one line, like any other refusal. Interactive actions (logs,
   exec, psql) show the same link in the terminal as before.
 
+- The application pre-commit hook lets `.env.example` through. It refused
+  every staged `.env.*`, including the example file that the scaffold's own
+  `.gitignore` un-ignores on purpose; only the real `.env.<environment>`
+  files are plaintext secrets.
+
 ## [0.31.0] - 2026-10-27
 
 - `database.mode: none` for a static site or an application without a
