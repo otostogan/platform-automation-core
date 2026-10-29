@@ -7,6 +7,10 @@ release.
 
 ## [Unreleased]
 
+- `platform secrets push` lets a staged `.env.example` through as well. The
+  pre-commit hook already did since v0.31.1, but the console repeated the
+  check without the exception, so the commit was still refused.
+
 ## [0.31.1] - 2026-10-29
 
 - The console no longer crashes with a `subprocess.TimeoutExpired` traceback

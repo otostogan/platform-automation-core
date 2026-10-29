@@ -234,13 +234,26 @@ def sync(
     return results
 
 
+# Documents the variables without their values; the scaffold's .gitignore
+# un-ignores it on purpose, and the pre-commit hook lets it through too.
+ENV_EXAMPLE = ".env.example"
+
+
 def staged_plaintext(root: Path, runner=subprocess.run) -> list:
-    """``.env.*`` files that are staged for commit — they must never be."""
+    """``.env.*`` files that are staged for commit — they must never be.
+
+    ``.env.example`` is the one exception: it carries names, not values.
+    """
     result = run(["git", "diff", "--cached", "--name-only"], root, runner)
     if result.returncode != 0:
         return []
     names = (result.stdout or b"").decode("utf-8", "replace").split()
-    return [n for n in names if os.path.basename(n).startswith(".env.")]
+    return [
+        n
+        for n in names
+        if os.path.basename(n).startswith(".env.")
+        and os.path.basename(n) != ENV_EXAMPLE
+    ]
 
 
 def stage(root: Path, paths: list, runner=subprocess.run) -> None:

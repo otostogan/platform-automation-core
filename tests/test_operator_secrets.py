@@ -11,6 +11,7 @@ from platform_automation.operator.secrets import (
     parse_dotenv,
     pull_env,
     render_dotenv,
+    staged_plaintext,
     sync,
 )
 
@@ -153,6 +154,34 @@ class EncryptTest(unittest.TestCase):
         with self.assertRaises(SecretsError) as raised:
             encrypt_env(self.root, "production", runner=self.fake_sops)
         self.assertIn(".env.production", str(raised.exception))
+
+
+class StagedPlaintextTest(unittest.TestCase):
+    """The console refuses a staged plaintext env file, not the example file."""
+
+    def staged(self, names: str) -> list:
+        def fake_git(command, **kwargs):
+            self.assertEqual(command[:3], ["git", "diff", "--cached"])
+            return subprocess.CompletedProcess(command, 0, names.encode(), b"")
+
+        return staged_plaintext(Path("/repo"), fake_git)
+
+    def test_reports_a_plaintext_environment_file(self) -> None:
+        self.assertEqual(self.staged(".env.lab\nREADME.md\n"), [".env.lab"])
+
+    def test_lets_the_example_file_through(self) -> None:
+        self.assertEqual(self.staged(".env.example\nREADME.md\n"), [])
+
+    def test_reports_plaintext_beside_the_example_file(self) -> None:
+        self.assertEqual(
+            self.staged(".env.example\n.env.production\n"), [".env.production"]
+        )
+
+    def test_ignores_a_git_failure(self) -> None:
+        def failing_git(command, **kwargs):
+            return subprocess.CompletedProcess(command, 128, b"", b"not a repo")
+
+        self.assertEqual(staged_plaintext(Path("/repo"), failing_git), [])
 
 
 if __name__ == "__main__":
