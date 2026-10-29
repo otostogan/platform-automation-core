@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-10-29
+
 - The console no longer crashes with a `subprocess.TimeoutExpired` traceback
   when the tailnet's ssh policy has `action: check`. Every remote call that
   captures ssh output — `platform … --json` over ssh, the Grafana inspect,
