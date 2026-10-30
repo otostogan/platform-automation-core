@@ -178,8 +178,27 @@ class CredentialsTest(unittest.TestCase):
             registry_credentials(self.config, runner=helper), ("me", "tok")
         )
         self.assertEqual(
-            asked, [(["docker-credential-osxkeychain", "get"], b"https://ghcr.io\n")]
+            asked, [(["docker-credential-osxkeychain", "get"], b"ghcr.io\n")]
         )
+
+    def test_an_older_https_login_is_found_on_the_second_try(self) -> None:
+        self.config.write_text(json.dumps({"credsStore": "osxkeychain"}))
+        asked = []
+
+        def helper(command, **kwargs):
+            key = kwargs.get("input")
+            asked.append(key)
+            if key == b"https://ghcr.io\n":
+                answer = json.dumps({"Username": "me", "Secret": "tok"}).encode()
+                return subprocess.CompletedProcess(command, 0, answer, b"")
+            return subprocess.CompletedProcess(
+                command, 1, b"", b"credentials not found"
+            )
+
+        self.assertEqual(
+            registry_credentials(self.config, runner=helper), ("me", "tok")
+        )
+        self.assertEqual(asked, [b"ghcr.io\n", b"https://ghcr.io\n"])
 
     def test_a_per_registry_helper_wins_over_the_store(self) -> None:
         self.config.write_text(

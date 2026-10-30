@@ -186,22 +186,34 @@ def registry_credentials(
     helpers = config.get("credHelpers") or {}
     helper = helpers.get(registry) or config.get("credsStore")
     if helper:
-        result = runner(
-            [f"docker-credential-{helper}", "get"],
-            input=f"https://{registry}\n".encode(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-            timeout=30,
-        )
-        if result.returncode != 0:
+        # docker stores the login under the address as it was typed:
+        # ``docker login ghcr.io`` keeps ``ghcr.io``; an older login may sit
+        # under the https form. Ask for both before giving up.
+        found = None
+        for key in (registry, f"https://{registry}"):
+            result = runner(
+                [f"docker-credential-{helper}", "get"],
+                input=f"{key}\n".encode(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                try:
+                    found = json.loads(_text(result.stdout))
+                except ValueError as error:
+                    raise ManualError(
+                        f"docker-credential-{helper} answered with something that is not a login"
+                    ) from error
+                break
+        if found is None:
             raise ManualError(
                 f"docker-credential-{helper} holds no login for {registry}; run: docker login {registry}"
             )
         try:
-            found = json.loads(_text(result.stdout))
             username, secret = str(found["Username"]), str(found["Secret"])
-        except (ValueError, KeyError, TypeError) as error:
+        except (KeyError, TypeError) as error:
             raise ManualError(
                 f"docker-credential-{helper} answered with something that is not a login"
             ) from error
