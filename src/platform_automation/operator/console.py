@@ -6,8 +6,10 @@ before it runs; a choice that is not wired yet prints only the command, so
 what the console *would* do is never a guess.
 """
 
+import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -1565,6 +1567,241 @@ def exec_action(context: Context, scope, prompts) -> Action:
     )
 
 
+MANUAL_DEPLOY_TIMEOUT_SECONDS = 1800
+
+
+def manual_deploy_action(context: Context, scope, prompts) -> Action:
+    """The three steps of the Deploy workflow, by hand: image, bundle, platform deploy.
+
+    Break-glass only: while GitHub answers the console points at Deploy and
+    asks the operator to spell out that this is an emergency. Every step
+    prints its command first; the registry login is the operator's own and
+    is never shown.
+    """
+    import hashlib
+    import tempfile
+
+    from ..build_bundle import BundleError, create_bundle
+    from ..validate_manifest import load_yaml
+    from .logs import ssh_command
+    from .manual import (
+        BREAK_GLASS,
+        ManualError,
+        build_command,
+        build_platforms,
+        bundle_minimum_recipients,
+        deploy_command,
+        digest_command,
+        github_reachable,
+        image_repository,
+        manual_label,
+        pushed_digest,
+        registry_credentials,
+        remote_bundle_path,
+        remove_command,
+        require_deployable,
+        transfer_command,
+        workspace,
+    )
+    from .remote import checked_run
+
+    root = context.root
+    target_host = context.target_host
+    name = f"{scope.project}/{scope.environment}"
+    ident = ["--project", scope.project, "--environment", scope.environment]
+
+    def over_ssh(remote: str, stdin=subprocess.DEVNULL, timeout=120):
+        return checked_run(
+            ssh_command(target_host, "ops", remote),
+            stdin=stdin,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout,
+        )
+
+    def run() -> int:
+        questionary, style = prompts
+        from .wizard import BACK, CANCEL
+
+        if not target_host:
+            print(f"{RED}deploy.yml names no target_host{RESET}")
+            return 1
+        blocked = tailnet_gate(read_tailnet())
+        if blocked:
+            print(f"{RED}{blocked}{RESET}")
+            return 1
+
+        # What is deployed must be exactly what the image is built from.
+        try:
+            state = workspace(root)
+            require_deployable(state)
+            manifest = load_yaml(root / scope.manifest)
+            repository = image_repository(manifest)
+            username, token = registry_credentials(
+                Path.home() / ".docker" / "config.json"
+            )
+        except (ManualError, OSError, ValueError) as error:
+            print(f"{RED}{error}{RESET}")
+            return 1
+
+        print()
+        print(f"{BOLD}Deploy {name} without GitHub — a break-glass action.{RESET}")
+        print("  The image is built here, not from a reviewed run; the host records")
+        print(f"  the release as manual. Normal deployments go through Deploy.")
+        if github_reachable(root):
+            print()
+            print(f"{RED}GitHub answers right now: the normal path is open.{RESET}")
+            typed = questionary.text(
+                f"Type {BREAK_GLASS} to continue by hand anyway, Enter to cancel",
+                style=style,
+            ).ask()
+            if typed != BREAK_GLASS:
+                print("cancelled — use Deploy")
+                return 130
+
+        platforms = build_platforms(root)
+        label = manual_label(scope.environment, state.tag)
+        remote_path = remote_bundle_path(scope.project, scope.environment, label)
+        print()
+        print(f"  commit    {state.commit}")
+        print(f"  tag       {state.tag}")
+        print(f"  image     {repository}:{state.tag}  ({platforms})")
+        print(f"  registry  logged in as {username}")
+        print(f"  label     {label}")
+        print(f"  host      {target_host}")
+        if scope.environment == "production":
+            typed = questionary.text(
+                "This is production. Type the environment name to confirm",
+                style=style,
+            ).ask()
+            if typed != "production":
+                print("cancelled — nothing built, nothing deployed")
+                return 130
+        elif not questionary.confirm(
+            "Build and deploy?", default=False, style=style
+        ).ask():
+            print("cancelled — nothing built, nothing deployed")
+            return 130
+
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            metadata = work / "image.json"
+            command = build_command(repository, state, platforms, metadata)
+            print()
+            print(f"{DIM}→ {shlex.join(command)}{RESET}")
+            if subprocess.call(command, cwd=str(root)) != 0:
+                print(f"{RED}the image did not build or push; nothing deployed{RESET}")
+                return 1
+            try:
+                digest = pushed_digest(metadata)
+            except ManualError as error:
+                print(f"{RED}{error}{RESET}")
+                return 1
+            image = f"{repository}@{digest}"
+            print(f"{GREEN}pushed{RESET} {image}")
+
+            bundle = work / f"{scope.project}-{scope.environment}.bundle.tar.gz"
+            print()
+            print(f"{DIM}→ platform-prepare-bundle --manifest {scope.manifest}{RESET}")
+            try:
+                create_bundle(
+                    root / scope.manifest,
+                    bundle,
+                    app_root=root,
+                    minimum_age_recipients=bundle_minimum_recipients(root),
+                )
+            except (BundleError, OSError, ValueError) as error:
+                print(f"{RED}the bundle did not build: {error}{RESET}")
+                return 1
+            local_digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
+            print(f"{GREEN}bundle{RESET} {local_digest}")
+
+            print()
+            print(
+                f"{DIM}→ ssh ops@{target_host} '{transfer_command(remote_path)}' < bundle{RESET}"
+            )
+            with bundle.open("rb") as stream:
+                sent = over_ssh(transfer_command(remote_path), stdin=stream)
+            if sent.returncode != 0:
+                print(f"{RED}the bundle did not reach the host: {_stderr(sent)}{RESET}")
+                return 1
+            check = over_ssh(digest_command(remote_path))
+            if _stdout(check).strip() != local_digest:
+                over_ssh(remove_command(remote_path))
+                print(
+                    f"{RED}the transferred bundle digest does not match; removed{RESET}"
+                )
+                return 1
+
+            remote = deploy_command(
+                scope.project, scope.environment, remote_path, image, label, username
+            )
+            print()
+            print(
+                f"{DIM}→ ssh ops@{target_host} '{remote}'  (registry token on stdin){RESET}"
+            )
+            token_file = work / "token"
+            token_file.touch(mode=0o600)
+            token_file.write_text(f"{token}\n", encoding="utf-8")
+            try:
+                with token_file.open("rb") as stream:
+                    deployed = over_ssh(
+                        remote, stdin=stream, timeout=MANUAL_DEPLOY_TIMEOUT_SECONDS
+                    )
+            finally:
+                token_file.unlink(missing_ok=True)
+                over_ssh(remove_command(remote_path))
+
+        if deployed.returncode != 0:
+            print(f"{RED}deployment failed — the previous release keeps serving{RESET}")
+            print(_stderr(deployed).strip())
+            print(f"{DIM}  handbook: {HANDBOOK}#/flow-incidents{RESET}")
+            return 1
+        try:
+            document = json.loads(_stdout(deployed))
+        except ValueError:
+            document = {}
+        print()
+        if document.get("reused"):
+            print(f"{RED}{label} already served; the host touched nothing{RESET}")
+        else:
+            print(f"{GREEN}deployed{RESET} {label}")
+        status = remote_action(
+            "Status on the host",
+            target_host,
+            "ops",
+            ["status", *ident],
+            render_status,
+            "#/flow-deploy",
+            core_pin=context.core_pin,
+        )
+        print(f"{DIM}→ {status.command}{RESET}")
+        return status.run()
+
+    return Action(
+        "Deploy without GitHub (break-glass: build here, push, platform deploy)",
+        "docker buildx build --push … · platform-prepare-bundle · ssh ops@host 'sudo -n platform deploy …'",
+        run,
+        "#/ref-cli-deploy-manual",
+        remote=True,
+    )
+
+
+def _stdout(result) -> str:
+    value = result.stdout
+    return (
+        value.decode("utf-8", "replace") if isinstance(value, bytes) else (value or "")
+    )
+
+
+def _stderr(result) -> str:
+    value = result.stderr
+    return (
+        value.decode("utf-8", "replace") if isinstance(value, bytes) else (value or "")
+    )
+
+
 def database_actions(context: Context, scope, prompts) -> list:
     """A tunnel for the operator's own client, or psql on the host. Both leave no door open."""
     import select
@@ -2078,6 +2315,7 @@ def app_actions(context: Context, scope, prompts=None) -> list:
             3, logs_action(context, context.target_host, "ops", None, prompts, scope)
         )
         actions.append(exec_action(context, scope, prompts))
+        actions.append(manual_deploy_action(context, scope, prompts))
         actions += database_actions(context, scope, prompts)
         actions += [
             restore_action(context, scope, prompts),

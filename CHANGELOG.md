@@ -7,6 +7,19 @@ release.
 
 ## [Unreleased]
 
+- The console can deploy without GitHub: the application menu gains
+  "Deploy without GitHub (break-glass)", which does the Deploy workflow's
+  three steps by hand — builds and pushes the image for the Build
+  workflow's platforms, tagged by commit and by release tag; builds the
+  bundle with `platform-prepare-bundle` and the recipient count from
+  `deploy.yml`; transfers it to the host, verifies its digest and runs
+  `platform deploy` as `ops` with the operator's own registry login on
+  standard input. It refuses a dirty tree or a HEAD off a release tag,
+  points at Deploy while GitHub answers unless the operator types
+  `break-glass`, labels the release `<env>-<tag>-manual-<stamp>` so the
+  registry of releases says a hand did it, and never prints the registry
+  token. Handbook card: Команды → «deploy без GitHub».
+
 - `platform secrets push` lets a staged `.env.example` through as well. The
   pre-commit hook already did since v0.31.1, but the console repeated the
   check without the exception, so the commit was still refused.
