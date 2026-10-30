@@ -12886,6 +12886,7 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
     <a data-goto="ref-cli-status">status</a>
     <a data-goto="ref-cli-backups">backups</a>
     <a data-goto="ref-cli-deploy">deploy</a>
+    <a data-goto="ref-cli-deploy-manual">deploy без GitHub</a>
     <a data-goto="ref-cli-rollback">rollback</a>
     <a data-goto="ref-cli-backup">backup</a>
     <a data-goto="ref-cli-verify">verify-backup</a>
@@ -12993,6 +12994,50 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
           <dt>Когда ничего не делает</dt>
           <dd>Если метка — это текущий работающий релиз: отчитывается
           <code>containers_started: false</code>.</dd>
+        </dl>
+      </article>
+
+      <article class="card" id="ref-cli-deploy-manual">
+        <h3>Выкатка без GitHub</h3>
+        <p>Три шага процесса Deploy, выполненные рукой с рабочей станции. Путь разбития
+        стекла: когда GitHub недоступен, а чинить надо сейчас.</p>
+        <div class="note">
+          <span class="label">Из консоли</span>
+          <p><code>platform</code> в репозитории приложения → окружение →
+          <strong>Deploy without GitHub</strong>: проверит рабочее дерево, соберёт и запушит
+          образ, соберёт пакет, передаст его на хост и запустит <code>platform deploy</code>.
+          Каждая команда печатается до запуска.</p>
+        </div>
+        <dl>
+          <dt>Что требуется</dt>
+          <dd>Чистое рабочее дерево ровно на теге релиза <code>vX.Y.Z</code>: ручная выкатка
+          не оставляет журнала запуска, и запись в реестре релизов — единственная нить к
+          тому, что выкачено. Docker с <code>buildx</code> и выполненный
+          <code>docker login ghcr.io</code>: консоль берёт ваш вход из хранилища docker,
+          передаёт хосту потоком и никогда не показывает. Доступ к хосту как
+          <code>ops</code> по тейлнету.</dd>
+          <dt>Что делает</dt>
+          <dd>Образ собирается под те же процессоры, что в процессе Build, и помечается
+          коммитом и тегом; выкатывается его отпечаток. Пакет собирается тем же
+          <code>platform-prepare-bundle</code> с тем же числом получателей, что в
+          <code>deploy.yml</code>, передаётся на хост и сверяется по контрольной сумме.
+          Дальше хост делает то, что и всегда: дамп, миграция, переключение по healthcheck,
+          запись в реестр. Метка релиза вида
+          <code>production-v0.1.2-manual-20260101T1200Z</code> — в <code>status</code> видно,
+          что это была рука.</dd>
+          <dt>Чего не делает</dt>
+          <dd>Не заменяет Deploy. Пока GitHub отвечает, консоль говорит об этом и требует
+          напечатать <code>break-glass</code>, чтобы продолжить. Образ, собранный на ноутбуке,
+          не привязан к ревью и к запуску, который можно перечитать; входит на хост
+          человек с полными правами, а не <code>deploy</code> с тремя командами. Это цена
+          аварийного пути, и она в самом действии.</dd>
+          <dt>Что сломается</dt>
+          <dd>Грязное дерево или HEAD не на теге — отказ до сборки. Нет входа в реестр —
+          отказ с подсказкой <code>docker login ghcr.io</code>. Не сошлась контрольная
+          сумма пакета на хосте — файл удаляется, выкатка не начинается. Упала выкатка —
+          предыдущий релиз продолжает отвечать, дальше по <a data-goto="flow-incidents">Инцидентам</a>.
+          После восстановления GitHub следующий релиз выкатывайте обычным путём: он
+          перепишет ручную запись штатной.</dd>
         </dl>
       </article>
 
