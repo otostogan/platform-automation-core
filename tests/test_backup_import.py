@@ -141,6 +141,11 @@ class ImportBackupTest(unittest.TestCase):
 
 
 class RunBackupImportTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.lock_root = Path(self.temporary.name) / "locks"
+
     def arguments(self, **overrides) -> argparse.Namespace:
         values = {
             "project": "example",
@@ -179,6 +184,7 @@ class RunBackupImportTest(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             code = platform_cli.run_backup_import(
                 self.arguments(),
+                Path(self.lock_root),
                 Path("/var/backups/platform"),
                 Path("/etc/platform/keys/age.key"),
                 Path("age"),
@@ -225,6 +231,7 @@ class RunBackupImportTest(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             code = platform_cli.run_backup_import(
                 self.arguments(),
+                Path(self.lock_root),
                 Path("/b"),
                 Path("/k"),
                 Path("age"),

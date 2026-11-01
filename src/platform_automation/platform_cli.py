@@ -2096,30 +2096,41 @@ def run_backups(
 
 def run_backup_import(
     arguments: argparse.Namespace,
+    lock_root: Path,
     backups_root: Path,
     age_key_file: Path,
     age_executable: Path,
     stream=None,
     importer=import_backup,
 ) -> int:
-    """A dump from another host, re-keyed by an operator, lands beside this host's own."""
+    """A dump from another host, re-keyed by an operator, lands beside this host's own.
+
+    Under the project's operation lock, like a backup or a restore: two
+    imports of one stamp, or an import beside a restore, must not interleave.
+    """
     source = {
         "host": arguments.source_host,
         "project": arguments.source_project,
         "environment": arguments.source_environment,
     }
     try:
-        document = importer(
-            backups_root,
+        with project_environment_lock(
+            lock_root,
             arguments.project,
             arguments.environment,
-            arguments.stamp,
-            source,
-            stream if stream is not None else sys.stdin.buffer,
-            age_key_file,
-            age_executable,
-        )
-    except (BackupRuntimeError, OSError) as error:
+            "backup-import",
+        ):
+            document = importer(
+                backups_root,
+                arguments.project,
+                arguments.environment,
+                arguments.stamp,
+                source,
+                stream if stream is not None else sys.stdin.buffer,
+                age_key_file,
+                age_executable,
+            )
+    except (BackupRuntimeError, OperationLockError, OSError) as error:
         print(f"backup import error: {error}", file=sys.stderr)
         return 1
 
@@ -3123,6 +3134,7 @@ def main(
     if arguments.command == "backup-import":
         return run_backup_import(
             arguments,
+            lock_root,
             backups_root,
             age_key_file,
             age_executable,

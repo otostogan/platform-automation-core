@@ -60,10 +60,12 @@ class TransferActionTest(unittest.TestCase):
             "creation_rules:\n    - key_groups:\n          - age:\n"
             f"                - {HOST_RECIPIENT}\n                - {RECOVERY}\n"
         )
-        self.source_key = root / "stand.agekey"
+        self.source_key = root / "platform-host-2.agekey"
         self.source_key.write_text("synthetic")
         self.context = SimpleNamespace(
-            root=root, target_host="checker.tailnet.example.net", core_pin=None
+            root=root,
+            target_host="platform-host-1.tailnet.example.invalid",
+            core_pin=None,
         )
         self.scope = SimpleNamespace(
             project="app",
@@ -73,9 +75,12 @@ class TransferActionTest(unittest.TestCase):
         self.running = SimpleNamespace(
             available=True, backend_state="Running", error=None
         )
-        self.infra = SimpleNamespace(name="local-infra", path=Path("/l"))
+        self.infra = SimpleNamespace(name="other-infra", path=Path("/l"))
         self.stand = Host(
-            "stand", "stand.tailnet.example.net", "ops", "~/.ssh/local-ops"
+            "platform-host-2",
+            "platform-host-2.tailnet.example.invalid",
+            "ops",
+            "~/.ssh/other-ops",
         )
         self.calls = []
 
@@ -97,7 +102,7 @@ class TransferActionTest(unittest.TestCase):
         self, command, stdin=None, stdout=None, stderr=None, check=False, timeout=None
     ):
         self.calls.append(("fetch", command[-1], command))
-        stdout.write(b"ciphertext-from-stand")
+        stdout.write(b"ciphertext-from-source")
         return subprocess.CompletedProcess(command, 0, b"", b"")
 
     def fake_rekey(self, dump, output, source_key, recipients, popen=None):
@@ -159,20 +164,20 @@ class TransferActionTest(unittest.TestCase):
         self.assertEqual(kinds, ["platform", "fetch", "rekey", "import"])
 
         listing = self.calls[0]
-        self.assertEqual(listing[1], "stand.tailnet.example.net")
+        self.assertEqual(listing[1], "platform-host-2.tailnet.example.invalid")
         self.assertEqual(
             listing[2], ["backups", "--project", "app", "--environment", "lab"]
         )
-        self.assertEqual(listing[3], Path("~/.ssh/local-ops").expanduser())
+        self.assertEqual(listing[3], Path("~/.ssh/other-ops").expanduser())
 
         fetch = self.calls[1]
         self.assertEqual(
             fetch[1], f"sudo -n cat /var/backups/platform/app/lab/{STAMP}.dump.age"
         )
-        self.assertIn("ops@stand.tailnet.example.net", fetch[2])
+        self.assertIn("platform-host-2.tailnet.example.invalid", " ".join(fetch[2]))
 
         rekey = self.calls[2]
-        self.assertEqual(rekey[1], b"ciphertext-from-stand")
+        self.assertEqual(rekey[1], b"ciphertext-from-source")
         self.assertEqual(rekey[2], self.source_key)
         self.assertEqual(rekey[3], [HOST_RECIPIENT, RECOVERY])
 
@@ -182,7 +187,7 @@ class TransferActionTest(unittest.TestCase):
             imported[1],
         )
         self.assertIn(
-            f"--stamp {STAMP} --source-host stand --source-project app --source-environment lab",
+            f"--stamp {STAMP} --source-host platform-host-2 --source-project app --source-environment lab",
             imported[1],
         )
         self.assertEqual(imported[2], b"re-keyed")
@@ -220,10 +225,10 @@ class TransferActionTest(unittest.TestCase):
     @property
     def first_source(self):
         return transfer.Source(
-            "local-infra",
-            "stand",
-            "stand.tailnet.example.net",
-            Path("~/.ssh/local-ops").expanduser(),
+            "other-infra",
+            "platform-host-2",
+            "platform-host-2.tailnet.example.invalid",
+            Path("~/.ssh/other-ops").expanduser(),
             self.source_key,
         )
 

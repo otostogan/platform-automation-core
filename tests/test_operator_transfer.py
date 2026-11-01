@@ -49,19 +49,36 @@ class RecipientsTest(unittest.TestCase):
 class SourcesTest(unittest.TestCase):
     def test_every_host_of_every_infra_but_the_target(self) -> None:
         infras = [
-            SimpleNamespace(name="alaito-infra", path=Path("/a")),
-            SimpleNamespace(name="local-infra", path=Path("/l")),
+            SimpleNamespace(name="example-infra", path=Path("/a")),
+            SimpleNamespace(name="other-infra", path=Path("/l")),
         ]
         active = {
             Path("/a"): (
-                Host("checker", "checker.tailnet.example.net", "ops", "~/.ssh/a-ops"),
+                Host(
+                    "platform-host-1",
+                    "platform-host-1.tailnet.example.invalid",
+                    "ops",
+                    "~/.ssh/example-ops",
+                ),
             ),
             Path("/l"): (
-                Host("stand", "stand.tailnet.example.net", "ops", "~/.ssh/l-ops"),
+                Host(
+                    "platform-host-2",
+                    "platform-host-2.tailnet.example.invalid",
+                    "ops",
+                    "~/.ssh/other-ops",
+                ),
             ),
         }
         retired = {
-            Path("/a"): (Host("old", "old.tailnet.example.net", "ops", None),),
+            Path("/a"): (
+                Host(
+                    "platform-host-0",
+                    "platform-host-0.tailnet.example.invalid",
+                    "ops",
+                    None,
+                ),
+            ),
             Path("/l"): (),
         }
 
@@ -69,18 +86,20 @@ class SourcesTest(unittest.TestCase):
             return Path(f"/keys/{host.name}.agekey")
 
         sources = candidate_sources(
-            "checker.tailnet.example.net",
+            "platform-host-1.tailnet.example.invalid",
             infras,
             lambda root: active[root],
             lambda root: retired[root],
             secret_path,
         )
 
-        self.assertEqual([s.name for s in sources], ["old", "stand"])
+        self.assertEqual(
+            [s.name for s in sources], ["platform-host-0", "platform-host-2"]
+        )
         self.assertTrue(sources[0].retired)
         self.assertIn("retired", sources[0].label)
-        self.assertEqual(sources[1].key_file, Path("~/.ssh/l-ops").expanduser())
-        self.assertEqual(sources[1].age_key, Path("/keys/stand.agekey"))
+        self.assertEqual(sources[1].key_file, Path("~/.ssh/other-ops").expanduser())
+        self.assertEqual(sources[1].age_key, Path("/keys/platform-host-2.agekey"))
 
 
 class CommandsTest(unittest.TestCase):
@@ -90,7 +109,13 @@ class CommandsTest(unittest.TestCase):
             path, "/var/backups/platform/app/lab/20260101T120000Z-schedule.dump.age"
         )
         self.assertEqual(fetch_command(path), f"sudo -n cat {path}")
-        source = Source("local-infra", "stand", "stand.tailnet.example.net", None, None)
+        source = Source(
+            "other-infra",
+            "platform-host-2",
+            "platform-host-2.tailnet.example.invalid",
+            None,
+            None,
+        )
         line = import_command(
             "app", "production", "20260101T120000Z-schedule", source, "app", "lab"
         )
@@ -99,15 +124,17 @@ class CommandsTest(unittest.TestCase):
                 "sudo -n platform backup-import --project app --environment production"
             )
         )
-        self.assertIn("--stamp 20260101T120000Z-schedule --source-host stand", line)
+        self.assertIn(
+            "--stamp 20260101T120000Z-schedule --source-host platform-host-2", line
+        )
         self.assertIn("--source-project app --source-environment lab --json", line)
 
     def test_rekey_commands_name_the_identity_and_every_recipient(self) -> None:
         decrypt, encrypt = rekey_commands(
-            Path("/keys/stand.agekey"), [HOST_RECIPIENT, RECOVERY]
+            Path("/keys/platform-host-2.agekey"), [HOST_RECIPIENT, RECOVERY]
         )
         self.assertEqual(
-            decrypt, ["age", "--decrypt", "--identity", "/keys/stand.agekey"]
+            decrypt, ["age", "--decrypt", "--identity", "/keys/platform-host-2.agekey"]
         )
         self.assertEqual(
             encrypt, ["age", "--recipient", HOST_RECIPIENT, "--recipient", RECOVERY]
@@ -169,7 +196,7 @@ class RekeyTest(unittest.TestCase):
         rekey(
             self.dump,
             self.out,
-            Path("/keys/stand.agekey"),
+            Path("/keys/platform-host-2.agekey"),
             [HOST_RECIPIENT, RECOVERY],
             popen,
         )
