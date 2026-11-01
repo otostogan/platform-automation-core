@@ -7,6 +7,13 @@ release.
 
 ## [Unreleased]
 
+- A host can be retired without being deleted: moved from `platform_hosts`
+  to a `retired_hosts` group in the inventory it stays described, with its
+  `host_vars` and its age key, while no playbook or console action targets
+  it. `platform doctor` lists such a host as one dim line and distinguishes
+  an inventory of only retired hosts from an empty one. Handbook card:
+  Раскладка → «Вывести хост из эксплуатации, не удаляя».
+
 - The console can deploy without GitHub: the application menu gains
   "Deploy without GitHub (break-glass)", which does the Deploy workflow's
   three steps by hand — builds and pushes the image for the Build

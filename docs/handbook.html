@@ -10647,6 +10647,50 @@ systemctl status platform-nginx-reconcile.timer</code></pre>
 ├── docs/                                  BOOTSTRAP · TAILNET · RECIPIENTS
 └── .venv/                                 НЕ коммитится</code></pre>
 
+      <article class="card" id="ref-retired-host">
+        <h3>Вывести хост из эксплуатации, не удаляя</h3>
+        <p>Всё, что платформа делает с хостами, адресовано группе
+        <code>platform_hosts</code>: конвергенция, readiness, консоль, выбор цели в
+        <code>platform new app</code>. Хост, которого в этой группе нет, для платформы не
+        существует, а его описание остаётся в репозитории. Для этого есть вторая группа —
+        <code>retired_hosts</code>.</p>
+<pre><code># inventory/hosts.yml — и так же в bootstrap.yml
+all:
+    children:
+        platform_hosts:
+            hosts:
+                {{host}}: …
+        retired_hosts:
+            # Kept for the record; no playbook or console action targets this group.
+            # Move a host back to platform_hosts to manage it again.
+            hosts:
+                old-host:
+                    ansible_host: old-host.{{tailnet}}
+                    ansible_user: ops
+                    ansible_ssh_private_key_file: ~/.ssh/old-host-ops
+                    ansible_port: 22
+                    platform_public_interface: eth0</code></pre>
+        <dl>
+          <dt>Что остаётся</dt>
+          <dd><code>host_vars/old-host/</code> вместе с его <code>local-secrets.yml</code>,
+          age-ключ хоста в каталоге ключей и строка в <code>docs/RECIPIENTS.md</code> с
+          пометкой о выводе. Без этого ключа не расшифровать дампы хоста, которые ещё лежат
+          в хранилище бэкапов.</dd>
+          <dt>Что показывает <code>platform doctor</code></dt>
+          <dd>Выведенный хост одной серой строкой, без проверок тейлнета и ключей. Если в
+          <code>platform_hosts</code> не осталось никого, доктор говорит об этом как об
+          ошибке — пустой инвентарь и инвентарь из одних выведенных хостов различимы.</dd>
+          <dt>Что делается отдельно</dt>
+          <dd>Машина убирается из Machines в админ-консоли тейлнета; выключенный сервер
+          сам оттуда не исчезает. Политику тейлнета и <code>docs/TAILNET.md</code> править не
+          нужно, тег был общий.</dd>
+          <dt>Вернуть в строй</dt>
+          <dd>Перенести запись обратно в <code>platform_hosts</code> и конвергировать. Если
+          машина была пересоздана у провайдера — это новый хост: <a data-goto="flow-new-host">
+          Новый хост от нуля</a>, со своим age-ключом.</dd>
+        </dl>
+      </article>
+
       <div class="stop">
         <span class="label">Ловушка с именами образцов</span>
         <p>Ansible читает <strong>каждый</strong> файл <code>.yml</code>,
