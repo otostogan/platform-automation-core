@@ -62,6 +62,7 @@ from .backup_runtime import (
     DUMP_SUFFIX,
     BackupRuntimeError,
     create_backup,
+    import_backup,
     list_backups,
     loss_window,
 )
@@ -428,6 +429,40 @@ def parse_arguments(
     )
     add_identity_arguments(backups_parser)
     backups_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON.",
+    )
+
+    import_parser = subparsers.add_parser(
+        "backup-import",
+        help=(
+            "Store a dump taken on another host, re-encrypted to this host, "
+            "read from standard input."
+        ),
+    )
+    add_identity_arguments(import_parser)
+    import_parser.add_argument(
+        "--stamp",
+        required=True,
+        help="The dump's original stamp, e.g. 20260101T120000Z-schedule.",
+    )
+    import_parser.add_argument(
+        "--source-host",
+        required=True,
+        help="Where the dump was taken: the source host name.",
+    )
+    import_parser.add_argument(
+        "--source-project",
+        required=True,
+        help="The project the dump belonged to on the source host.",
+    )
+    import_parser.add_argument(
+        "--source-environment",
+        required=True,
+        help="The environment the dump belonged to on the source host.",
+    )
+    import_parser.add_argument(
         "--json",
         action="store_true",
         help="Print machine-readable JSON.",
@@ -2059,6 +2094,48 @@ def run_backups(
     return 0
 
 
+def run_backup_import(
+    arguments: argparse.Namespace,
+    backups_root: Path,
+    age_key_file: Path,
+    age_executable: Path,
+    stream=None,
+    importer=import_backup,
+) -> int:
+    """A dump from another host, re-keyed by an operator, lands beside this host's own."""
+    source = {
+        "host": arguments.source_host,
+        "project": arguments.source_project,
+        "environment": arguments.source_environment,
+    }
+    try:
+        document = importer(
+            backups_root,
+            arguments.project,
+            arguments.environment,
+            arguments.stamp,
+            source,
+            stream if stream is not None else sys.stdin.buffer,
+            age_key_file,
+            age_executable,
+        )
+    except (BackupRuntimeError, OSError) as error:
+        print(f"backup import error: {error}", file=sys.stderr)
+        return 1
+
+    if arguments.json:
+        print(json.dumps(document, indent=2, sort_keys=True))
+    else:
+        print(f"Backup imported: {document['path']}")
+        print(f"Stamp: {document['stamp']}")
+        print(f"From: {source['host']} {source['project']}/{source['environment']}")
+        print(f"Size: {document['size_bytes']} bytes")
+        print(f"Release there: {document.get('release_tag')}")
+        print("Next: platform restore --from", document["stamp"])
+
+    return 0
+
+
 def run_exec(
     arguments: argparse.Namespace,
     projects_root: Path,
@@ -3041,6 +3118,14 @@ def main(
             offsite_config,
             offsite_credentials,
             offsite_reporter,
+        )
+
+    if arguments.command == "backup-import":
+        return run_backup_import(
+            arguments,
+            backups_root,
+            age_key_file,
+            age_executable,
         )
 
     if arguments.command == "exec":

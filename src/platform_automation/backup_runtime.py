@@ -538,3 +538,160 @@ def create_backup(
         "removed_backups": removed,
         "warnings": warnings,
     }
+
+
+# ----------------------------------------------------------------- import
+#
+# A dump taken on another host arrives re-encrypted to this host's recipients
+# by an operator who held both keys. The host accepts it only once it has
+# proved, with its own identity, that the envelope opens — and it takes the
+# card from inside that envelope, so the sidecar it writes is what the dump
+# says about itself, not what the operator typed.
+
+IMPORT_REASON = "imported"
+IMPORTED_API_VERSION = "platform-backup/v1"
+
+
+def open_envelope_head(
+    dump_path: Path,
+    age_key_file: Path,
+    age_executable: Path,
+    popen=subprocess.Popen,
+) -> bytes:
+    """Decrypt just enough of a dump to read its envelope; the rest is never written.
+
+    Proves the dump is encrypted to this host and returns the plaintext head,
+    which is the envelope header, the card, and a few bytes of pg_dump.
+    """
+    limit = len(ENVELOPE_MAGIC) + 32 + MAX_ENVELOPE_CARD_BYTES + 64
+    try:
+        with dump_path.open("rb") as source:
+            process = popen(
+                [
+                    str(age_executable),
+                    "--decrypt",
+                    "--identity",
+                    str(age_key_file),
+                ],
+                stdin=source,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            head = process.stdout.read(limit)
+            process.stdout.close()
+            process.terminate()
+            _, errors = process.communicate(timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise BackupRuntimeError("backup decryption could not be executed") from error
+    if not head:
+        detail = errors.decode("utf-8", "replace").strip() if errors else ""
+        raise BackupRuntimeError(
+            "the dump is not encrypted to this host's identity"
+            + (f": {detail}" if detail else "")
+        )
+    return head
+
+
+def card_from_head(head: bytes) -> dict[str, Any]:
+    """The card the envelope carries; a dump without one cannot be imported."""
+    if not head.startswith(ENVELOPE_MAGIC):
+        raise BackupRuntimeError(
+            "the dump carries no envelope card; only dumps written with one can be imported"
+        )
+    newline = head.find(b"\n")
+    if newline < 0:
+        raise BackupRuntimeError("backup envelope header is malformed")
+    try:
+        length = int(head[len(ENVELOPE_MAGIC) : newline])
+    except ValueError as error:
+        raise BackupRuntimeError("backup envelope header is malformed") from error
+    if length < 0 or length > MAX_ENVELOPE_CARD_BYTES:
+        raise BackupRuntimeError("backup envelope card exceeds the size limit")
+    body = head[newline + 1 : newline + 1 + length]
+    if len(body) != length:
+        raise BackupRuntimeError("backup envelope is truncated")
+    try:
+        card = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as error:
+        raise BackupRuntimeError("backup envelope card is not JSON") from error
+    if not isinstance(card, dict):
+        raise BackupRuntimeError("backup envelope card is not an object")
+    return card
+
+
+def import_backup(
+    backups_root: Path,
+    project: str,
+    environment: str,
+    stamp: str,
+    source: dict[str, str],
+    stream,
+    age_key_file: Path,
+    age_executable: Path,
+    popen=subprocess.Popen,
+) -> dict[str, Any]:
+    """Store a re-keyed dump from another host under this project and environment.
+
+    The stamp keeps the original one, so the dump sorts where it was taken
+    and a restore names it as the other host did. The card gains where it
+    came from; everything else in it is what the source host wrote.
+    """
+    if not STAMP_PATTERN.fullmatch(stamp):
+        raise BackupRuntimeError(f"invalid backup stamp: {stamp}")
+
+    directory = create_private_backup_directory(backups_root, project, environment)
+    destination = directory / f"{stamp}{DUMP_SUFFIX}"
+    if destination.exists() or card_path(destination).exists():
+        raise BackupRuntimeError(f"backup already exists: {stamp}")
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", dir=directory
+    )
+    temporary_path = Path(temporary_name)
+    size = 0
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as output:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+                size += len(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        if size == 0:
+            raise BackupRuntimeError("no dump arrived on standard input")
+
+        head = open_envelope_head(temporary_path, age_key_file, age_executable, popen)
+        card = card_from_head(head)
+        card = {
+            **card,
+            "imported_from": dict(source),
+            "imported_at": (
+                datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .strftime("%Y-%m-%dT%H:%M:%SZ")
+            ),
+        }
+        write_private_file(
+            card_path(destination),
+            json.dumps(card, indent=2, sort_keys=True).encode("utf-8") + b"\n",
+        )
+        os.replace(temporary_path, destination)
+        destination.chmod(0o600)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        card_path(destination).unlink(missing_ok=True)
+        raise
+
+    return {
+        "project": project,
+        "environment": environment,
+        "stamp": stamp,
+        "path": str(destination),
+        "size_bytes": size,
+        "imported_from": dict(source),
+        "release_tag": card.get("release_tag"),
+        "created_at": card.get("created_at"),
+    }
