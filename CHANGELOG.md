@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+- `platform new host` works in a repository whose only host is retired: it
+  opens an empty `hosts: {}` group instead of refusing with `inventory has
+  no all → children → platform_hosts → hosts mapping`, and takes its
+  defaults — key directory, operator key, tailnet suffix, interface — from
+  a retired host when no active one is left.
+
 - A host can be retired without being deleted: moved from `platform_hosts`
   to a `retired_hosts` group in the inventory it stays described, with its
   `host_vars` and its age key, while no playbook or console action targets
