@@ -214,8 +214,13 @@ class ConsoleTest(unittest.TestCase):
         context = SimpleNamespace(root=Path("/nonexistent"), core_pin=None)
         action = console.grafana_action(context, host, (None, None))
 
+        # The tailnet gate reads this machine's Tailscale; the test must not.
+        running = SimpleNamespace(available=True, backend_state="Running", error=None)
         out = io.StringIO()
-        with mock.patch.object(console, "checked_run", runner):
+        with (
+            mock.patch.object(console, "checked_run", runner),
+            mock.patch.object(console, "read_tailnet", return_value=running),
+        ):
             with contextlib.redirect_stdout(out):
                 code = action.run()
 
