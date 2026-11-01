@@ -12933,6 +12933,7 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
     <a data-goto="ref-cli-deploy-manual">deploy без GitHub</a>
     <a data-goto="ref-cli-rollback">rollback</a>
     <a data-goto="ref-cli-backup">backup</a>
+    <a data-goto="ref-cli-backup-import">backup-import</a>
     <a data-goto="ref-cli-verify">verify-backup</a>
     <a data-goto="ref-cli-restore">restore</a>
     <a data-goto="ref-cli-rotate">rotate-database-password</a>
@@ -13175,6 +13176,48 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
           место, где уборка роняет команду, — <strong>провал выгрузки в
           хранилище</strong>, если она настроена. Сам дамп при этом успешен и лежит
           на диске.</dd>
+        </dl>
+      </article>
+
+      <article class="card" id="ref-cli-backup-import">
+        <h3><code>platform backup-import</code></h3>
+        <p>Принимает дамп, снятый на другом хосте и перешифрованный на получателей этого.
+        Замок не берёт.</p>
+        <div class="note">
+          <span class="label">Из консоли</span>
+          <p><code>platform</code> в репозитории приложения → окружение →
+          <strong>Backups: move one here from another host</strong>: выбрать хост-источник
+          из зарегистрированных инфраструктур, проект и окружение там, дамп из его списка.
+          Консоль забирает дамп, расшифровывает ключом хоста-источника с вашей машины и
+          тут же шифрует на получателей из <code>.sops.yaml</code> приложения — открытый
+          текст живёт только в трубе между двумя <code>age</code>. Затем передаёт на
+          хост-назначение потоком и предлагает обычное восстановление.</p>
+        </div>
+        <dl>
+          <dt>Флаги</dt>
+          <dd><code>--project</code>, <code>--environment</code> — куда положить;
+          <code>--stamp</code> — исходная метка дампа, она сохраняется; <code>--source-host</code>,
+          <code>--source-project</code>, <code>--source-environment</code> — откуда он, пишется
+          в карточку. Сам дамп приходит на стандартный ввод.</dd>
+          <dt>Что гарантирует</dt>
+          <dd>Прежде чем оставить файл, хост открывает конверт своим ключом: дамп, не
+          перешифрованный на него, отвергается, и на диске ничего не остаётся. Карточка
+          берётся из конверта, а не с ваших слов, и получает поля
+          <code>imported_from</code> и <code>imported_at</code>. Дальше дамп ничем не
+          отличается от своего: виден в <code>backups</code>, доступен <code>restore</code>
+          и <code>verify-backup</code>, уезжает в хранилище выгрузкой.</dd>
+          <dt>Почему ключи у оператора, а не у хостов</dt>
+          <dd>Хост видит только свои дампы, и это граница между хостами. Перенести дамп может
+          лишь тот, у кого есть ключ источника, — оператор, у которого он лежит по пути из
+          <code>local-secrets.yml</code>. Recovery-ключ в переносе не участвует.</dd>
+          <dt>Что сломается</dt>
+          <dd><code>the dump is not encrypted to this host's identity</code> — перешифровано
+          не на тот ключ: сверьте <code>.sops.yaml</code> приложения с
+          <code>RECIPIENTS.md</code> инфраструктуры. <code>no envelope card</code> — дамп
+          старого формата без карточки внутри, перенести его нельзя. <code>backup already
+          exists</code> — такая метка уже есть на хосте. Восстановление после импорта требует
+          выкаченного релиза: сначала выкатка с пустой базой, потом перенос и
+          <code>restore</code>.</dd>
         </dl>
       </article>
 

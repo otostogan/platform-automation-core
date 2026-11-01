@@ -7,6 +7,19 @@ release.
 
 ## [Unreleased]
 
+- A backup can move from one host to another. `platform backup-import`
+  (host, ops only) takes a dump re-encrypted to this host's recipients on
+  standard input, proves with its own identity that the envelope opens,
+  takes the card from inside the envelope and stores both under the given
+  project and environment with the original stamp and `imported_from`; a
+  dump this host cannot open leaves nothing behind. The console's
+  application menu gains "Backups: move one here from another host": it
+  lists the dumps of a host from any registered infrastructure, fetches the
+  chosen one, re-keys it on the workstation with the source host's identity
+  (`age -d | age -r …`, plaintext only in the pipe) to the recipients in the
+  application's `.sops.yaml`, hands it to the target host and offers the
+  ordinary restore. Handbook card: Команды → `backup-import`.
+
 - `platform new host` works in a repository whose only host is retired: it
   opens an empty `hosts: {}` group instead of refusing with `inventory has
   no all → children → platform_hosts → hosts mapping`, and takes its

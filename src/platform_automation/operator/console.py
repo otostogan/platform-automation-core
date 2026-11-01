@@ -1788,6 +1788,204 @@ def manual_deploy_action(context: Context, scope, prompts) -> Action:
     )
 
 
+TRANSFER_TIMEOUT_SECONDS = 1800
+
+
+def transfer_action(context: Context, scope, prompts) -> Action:
+    """A dump from another host: fetched, re-keyed here, imported there, then restored.
+
+    The source host's identity must be on this machine — that is what makes
+    the operator, and not the host, the one who can move a backup across the
+    boundary between two hosts' keys.
+    """
+    import tempfile
+
+    from .config import infras as registered_infras
+    from .context import read_hosts, read_retired_hosts
+    from .doctor import host_secret_path
+    from .logs import ssh_command
+    from .remote import checked_run
+    from .transfer import (
+        TransferError,
+        backup_entries,
+        candidate_sources,
+        describe_entry,
+        dump_remote_path,
+        fetch_command,
+        import_command,
+        rekey,
+        sops_recipients,
+    )
+
+    root = context.root
+    target_host = context.target_host
+    name = f"{scope.project}/{scope.environment}"
+
+    def run() -> int:
+        questionary, style = prompts
+        text, select = make_prompts(questionary, style)
+        from .wizard import BACK, CANCEL
+
+        if not target_host:
+            print(f"{RED}deploy.yml names no target_host{RESET}")
+            return 1
+        blocked = tailnet_gate(read_tailnet())
+        if blocked:
+            print(f"{RED}{blocked}{RESET}")
+            return 1
+        try:
+            recipients = sops_recipients(root)
+        except (TransferError, OSError, ValueError) as error:
+            print(f"{RED}{error}{RESET}")
+            return 1
+
+        sources = candidate_sources(
+            target_host,
+            registered_infras(),
+            read_hosts,
+            read_retired_hosts,
+            host_secret_path,
+        )
+        if not sources:
+            print(
+                f"{RED}no other host is registered on this machine (platform infra add <path>){RESET}"
+            )
+            return 1
+        source = select("Source host", sources, lambda s: s.label)
+        if source in (BACK, CANCEL):
+            print("cancelled")
+            return 130
+        if source.age_key is None or not source.age_key.is_file():
+            print(
+                f"{RED}the age identity of {source.name} is not on this machine;"
+                f" its local-secrets.yml must point at it{RESET}"
+            )
+            return 1
+
+        source_project = text("Project on the source host", scope.project)
+        if source_project in (BACK, CANCEL):
+            print("cancelled")
+            return 130
+        source_environment = text("Environment on the source host", scope.environment)
+        if source_environment in (BACK, CANCEL):
+            print("cancelled")
+            return 130
+        ident = ["--project", source_project, "--environment", source_environment]
+
+        listing = run_platform(
+            source.address, "ops", ["backups", *ident], identity=source.key_file
+        )
+        if not listing.ok:
+            return report_failure(listing.error, None)
+        entries = backup_entries(listing.document)
+        if not entries:
+            print(
+                f"{RED}{source.name} holds no backups of {source_project}/{source_environment}{RESET}"
+            )
+            return 1
+        entry = select("Backup to move (newest first)", entries, describe_entry)
+        if entry in (BACK, CANCEL):
+            print("cancelled")
+            return 130
+        stamp = str(entry["stamp"])
+        remote_dump = dump_remote_path(source_project, source_environment, stamp)
+        remote_import = import_command(
+            scope.project,
+            scope.environment,
+            stamp,
+            source,
+            source_project,
+            source_environment,
+        )
+
+        print()
+        print(
+            f"{BOLD}Move {stamp} from {source.name} to {name} on {target_host}.{RESET}"
+        )
+        print(
+            f"  decrypted here with {source.age_key}, re-encrypted to {len(recipients)} recipients"
+        )
+        print("  from .sops.yaml; the plaintext exists only in a pipe on this machine.")
+        print(
+            f"{DIM}→ ssh ops@{source.address} '{fetch_command(remote_dump)}' > dump{RESET}"
+        )
+        print(f"{DIM}→ age -d -i … dump | age -r … > rekeyed{RESET}")
+        print(f"{DIM}→ ssh ops@{target_host} '{remote_import}' < rekeyed{RESET}")
+        if not questionary.confirm("Move it?", default=True, style=style).ask():
+            print("cancelled — nothing fetched")
+            return 130
+
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            work.chmod(0o700)
+            dump = work / f"{stamp}.dump.age"
+            rekeyed = work / f"{stamp}.rekeyed.age"
+            with dump.open("wb") as sink:
+                fetched = subprocess.run(
+                    ssh_command(
+                        source.address,
+                        "ops",
+                        fetch_command(remote_dump),
+                        source.key_file,
+                    ),
+                    stdin=subprocess.DEVNULL,
+                    stdout=sink,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                    timeout=TRANSFER_TIMEOUT_SECONDS,
+                )
+            if fetched.returncode != 0 or dump.stat().st_size == 0:
+                print(
+                    f"{RED}the dump did not arrive from {source.name}: {_stderr(fetched).strip()}{RESET}"
+                )
+                return 1
+            print(f"{GREEN}fetched{RESET} {dump.stat().st_size} bytes")
+            try:
+                rekey(dump, rekeyed, source.age_key, recipients)
+            except TransferError as error:
+                print(f"{RED}{error}{RESET}")
+                return 1
+            print(
+                f"{GREEN}re-keyed{RESET} to {', '.join(r[:12] + '…' for r in recipients)}"
+            )
+            with rekeyed.open("rb") as stream:
+                imported = checked_run(
+                    ssh_command(target_host, "ops", remote_import),
+                    stdin=stream,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                    timeout=TRANSFER_TIMEOUT_SECONDS,
+                )
+        if imported.returncode != 0:
+            print(
+                f"{RED}{target_host} did not accept the dump: {_stderr(imported).strip()}{RESET}"
+            )
+            return 1
+        try:
+            document = json.loads(_stdout(imported))
+        except ValueError:
+            document = {}
+        print(f"{GREEN}imported{RESET} as {document.get('stamp', stamp)} under {name}")
+        print()
+        if questionary.confirm(
+            "Restore it now? (the usual restore: proven first, the live database replaced)",
+            default=False,
+            style=style,
+        ).ask():
+            return restore_action(context, scope, prompts).run()
+        print(f"{DIM}  later: Backups: restore → {stamp}{RESET}")
+        return 0
+
+    return Action(
+        "Backups: move one here from another host (re-key on this machine, import, restore)",
+        "ssh ops@<source> 'sudo -n platform backups …' · age -d | age -r … · ssh ops@<target> 'sudo -n platform backup-import …'",
+        run,
+        "#/ref-cli-backup-import",
+        remote=True,
+    )
+
+
 def _stdout(result) -> str:
     value = result.stdout
     return (
@@ -2316,6 +2514,7 @@ def app_actions(context: Context, scope, prompts=None) -> list:
         )
         actions.append(exec_action(context, scope, prompts))
         actions.append(manual_deploy_action(context, scope, prompts))
+        actions.append(transfer_action(context, scope, prompts))
         actions += database_actions(context, scope, prompts)
         actions += [
             restore_action(context, scope, prompts),
