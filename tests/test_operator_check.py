@@ -230,7 +230,7 @@ class ConsoleTest(unittest.TestCase):
         with (
             mock.patch.object(console, "checked_run", runner),
             mock.patch.object(console, "read_tailnet", return_value=running),
-            mock.patch.object(console.socket, "socket", FreePort),
+            mock.patch("socket.socket", FreePort),
         ):
             with contextlib.redirect_stdout(out):
                 code = action.run()
