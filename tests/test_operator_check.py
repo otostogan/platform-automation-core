@@ -217,9 +217,20 @@ class ConsoleTest(unittest.TestCase):
         # The tailnet gate reads this machine's Tailscale; the test must not.
         running = SimpleNamespace(available=True, backend_state="Running", error=None)
         out = io.StringIO()
+
+        # The action probes the tunnel port on this machine; a stale tunnel
+        # elsewhere must not fail the test.
+        class FreePort:
+            def bind(self, address):
+                pass
+
+            def close(self):
+                pass
+
         with (
             mock.patch.object(console, "checked_run", runner),
             mock.patch.object(console, "read_tailnet", return_value=running),
+            mock.patch.object(console.socket, "socket", FreePort),
         ):
             with contextlib.redirect_stdout(out):
                 code = action.run()

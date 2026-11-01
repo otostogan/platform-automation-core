@@ -274,7 +274,9 @@ def defaults_from(root: Path) -> dict:
     found = {"keys_dir": None, "ssh_key": None, "suffix": None, "interface": None}
     # A retired host still shows the company's conventions — the only host
     # may well be a retired one when the next is being added.
-    hosts = (*read_hosts(root), *read_retired_hosts(root))
+    # Retired first, active last: a live host's conventions win over a
+    # retired one's, and the latest active host wins over an older one.
+    hosts = (*read_retired_hosts(root), *read_hosts(root))
     for host in hosts:
         if host.address and "." in host.address:
             found["suffix"] = host.address.split(".", 1)[1]
@@ -289,7 +291,7 @@ def defaults_from(root: Path) -> dict:
         if isinstance(source, str) and "/" in source:
             found["keys_dir"] = source.rsplit("/", 1)[0]
     document = load_yaml(root / INFRA_INVENTORY)
-    for group in (ACTIVE_GROUP, RETIRED_GROUP):
+    for group in (RETIRED_GROUP, ACTIVE_GROUP):
         try:
             entries = document["all"]["children"][group]["hosts"].values()
         except (KeyError, TypeError, AttributeError):

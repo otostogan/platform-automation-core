@@ -222,6 +222,27 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(found["suffix"], "tailnet.example.net")
         self.assertEqual(found["interface"], "eth0")
 
+    def test_an_active_host_outranks_a_retired_one_for_defaults(self) -> None:
+        write(
+            self.root / "inventory/hosts.yml",
+            HOSTS
+            + "        retired_hosts:\n            hosts:\n                old-host:\n"
+            "                    ansible_host: old-host.old.example.net\n"
+            "                    ansible_ssh_private_key_file: ~/.ssh/old-ops\n"
+            "                    platform_public_interface: ens3\n",
+        )
+        write(
+            self.root / "inventory/host_vars/old-host/local-secrets.yml",
+            "secrets_age_key_source: ~/.config/platform-keys/old/old-host.agekey\n",
+        )
+
+        found = defaults_from(self.root)
+
+        self.assertEqual(found["keys_dir"], "~/.config/platform-keys/example")
+        self.assertEqual(found["ssh_key"], "~/.ssh/platform-host-1-ops")
+        self.assertEqual(found["suffix"], "tailnet.example.net")
+        self.assertEqual(found["interface"], "eth0")
+
     def test_plan_touches_both_inventories_and_host_vars_only(self) -> None:
         plan = plan_host(self.root, self.answers)
 
