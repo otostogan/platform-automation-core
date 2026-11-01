@@ -18,7 +18,14 @@ from typing import Optional
 
 import yaml
 
-from .context import INFRA_INVENTORY, load_yaml, read_hosts
+from .context import (
+    ACTIVE_GROUP,
+    INFRA_INVENTORY,
+    RETIRED_GROUP,
+    load_yaml,
+    read_hosts,
+    read_retired_hosts,
+)
 from .recipients import RECIPIENTS_RELATIVE, read_recipients
 from .scaffold import DOMAIN_PATTERN, render
 
@@ -91,6 +98,11 @@ def template(name: str) -> str:
 # ---------------------------------------------------------- inventory as text
 
 
+# ``hosts: {}`` is how a group reads once its last host was retired; it is
+# opened into a block mapping before the first entry goes in.
+EMPTY_HOSTS_LINES = ("hosts:", "hosts: {}")
+
+
 def hosts_block(lines: list) -> tuple:
     """(index of the ``hosts:`` line under platform_hosts, its indent, child indent, end index).
 
@@ -107,7 +119,7 @@ def hosts_block(lines: list) -> tuple:
         if stripped == "platform_hosts:":
             under_group, group_indent = True, indent
             continue
-        if under_group and stripped == "hosts:" and indent > group_indent:
+        if under_group and stripped in EMPTY_HOSTS_LINES and indent > group_indent:
             hosts_indent = indent
             child = None
             end = len(lines)
@@ -147,6 +159,8 @@ def reindent(entry: str, child_indent: int, unit: int) -> list:
 def insert_host(text: str, entry: str) -> str:
     lines = text.split("\n")
     index, hosts_indent, child_indent, end = hosts_block(lines)
+    if lines[index].strip() == "hosts: {}":
+        lines[index] = lines[index].rstrip().rstrip("{}").rstrip()
     unit = child_indent - hosts_indent
     block = reindent(entry, child_indent, unit)
     return "\n".join(lines[:end] + block + lines[end:])
@@ -258,7 +272,11 @@ def offsite_enabled(root: Path) -> bool:
 def defaults_from(root: Path) -> dict:
     """What an existing host already answers: key dir, ssh key style, tailnet suffix."""
     found = {"keys_dir": None, "ssh_key": None, "suffix": None, "interface": None}
-    hosts = read_hosts(root)
+    # A retired host still shows the company's conventions — the only host
+    # may well be a retired one when the next is being added.
+    # Retired first, active last: a live host's conventions win over a
+    # retired one's, and the latest active host wins over an older one.
+    hosts = (*read_retired_hosts(root), *read_hosts(root))
     for host in hosts:
         if host.address and "." in host.address:
             found["suffix"] = host.address.split(".", 1)[1]
@@ -273,12 +291,14 @@ def defaults_from(root: Path) -> dict:
         if isinstance(source, str) and "/" in source:
             found["keys_dir"] = source.rsplit("/", 1)[0]
     document = load_yaml(root / INFRA_INVENTORY)
-    try:
-        for values in document["all"]["children"]["platform_hosts"]["hosts"].values():
+    for group in (RETIRED_GROUP, ACTIVE_GROUP):
+        try:
+            entries = document["all"]["children"][group]["hosts"].values()
+        except (KeyError, TypeError, AttributeError):
+            continue
+        for values in entries:
             if isinstance(values, dict) and values.get("platform_public_interface"):
                 found["interface"] = str(values["platform_public_interface"])
-    except (KeyError, TypeError, AttributeError):
-        pass
     return found
 
 

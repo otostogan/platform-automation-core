@@ -118,6 +118,25 @@ class InsertTest(unittest.TestCase):
             "root",
         )
 
+    def test_an_empty_flow_mapping_is_opened_and_filled(self) -> None:
+        """``hosts: {}`` is what a group reads once its last host was retired."""
+        text = insert_host(
+            "all:\n    children:\n        platform_hosts:\n            hosts: {}\n"
+            "        retired_hosts:\n            hosts:\n                old-host:\n"
+            "                    ansible_host: old-host.tailnet.example.net\n",
+            ENTRY,
+        )
+
+        document = yaml.safe_load(text)
+        self.assertEqual(
+            list(document["all"]["children"]["platform_hosts"]["hosts"]),
+            ["platform-host-2"],
+        )
+        self.assertEqual(
+            list(document["all"]["children"]["retired_hosts"]["hosts"]), ["old-host"]
+        )
+        self.assertNotIn("{}", text)
+
     def test_a_file_without_the_group_is_refused(self) -> None:
         with self.assertRaises(HostError):
             insert_host("all:\n  hosts:\n    x: {}\n", ENTRY)
@@ -180,6 +199,43 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(validate_host_answers(ANSWERS), [])
 
     def test_defaults_come_from_the_existing_host(self) -> None:
+        found = defaults_from(self.root)
+
+        self.assertEqual(found["keys_dir"], "~/.config/platform-keys/example")
+        self.assertEqual(found["ssh_key"], "~/.ssh/platform-host-1-ops")
+        self.assertEqual(found["suffix"], "tailnet.example.net")
+        self.assertEqual(found["interface"], "eth0")
+
+    def test_defaults_come_from_a_retired_host_when_none_is_active(self) -> None:
+        write(
+            self.root / "inventory/hosts.yml",
+            HOSTS.replace(
+                "        platform_hosts:\n            hosts:\n",
+                "        platform_hosts:\n            hosts: {}\n        retired_hosts:\n            hosts:\n",
+            ),
+        )
+
+        found = defaults_from(self.root)
+
+        self.assertEqual(found["keys_dir"], "~/.config/platform-keys/example")
+        self.assertEqual(found["ssh_key"], "~/.ssh/platform-host-1-ops")
+        self.assertEqual(found["suffix"], "tailnet.example.net")
+        self.assertEqual(found["interface"], "eth0")
+
+    def test_an_active_host_outranks_a_retired_one_for_defaults(self) -> None:
+        write(
+            self.root / "inventory/hosts.yml",
+            HOSTS
+            + "        retired_hosts:\n            hosts:\n                old-host:\n"
+            "                    ansible_host: old-host.old.example.net\n"
+            "                    ansible_ssh_private_key_file: ~/.ssh/old-ops\n"
+            "                    platform_public_interface: ens3\n",
+        )
+        write(
+            self.root / "inventory/host_vars/old-host/local-secrets.yml",
+            "secrets_age_key_source: ~/.config/platform-keys/old/old-host.agekey\n",
+        )
+
         found = defaults_from(self.root)
 
         self.assertEqual(found["keys_dir"], "~/.config/platform-keys/example")
