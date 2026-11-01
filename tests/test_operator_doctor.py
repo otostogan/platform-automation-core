@@ -128,6 +128,36 @@ class InfraDoctorTest(unittest.TestCase):
         )
         self.assertIn("age1", by_title(findings, "platform-host-1: age key")[0].detail)
 
+    def test_a_retired_host_is_shown_dim_and_checked_for_nothing(self) -> None:
+        inventory = self.root / "inventory/hosts.yml"
+        write(
+            inventory,
+            inventory.read_text()
+            + "    retired_hosts:\n      hosts:\n        old-host:\n"
+            "          ansible_host: old-host.tailnet.example.net\n",
+        )
+
+        findings = self.diagnose()
+
+        self.assertEqual([f for f in findings if f.failed], [])
+        retired = by_title(findings, "old-host")
+        self.assertEqual([f.status for f in retired], ["skip"])
+        self.assertIn("retired", retired[0].detail)
+        self.assertEqual(by_title(findings, "old-host: tailnet"), [])
+
+    def test_an_inventory_of_only_retired_hosts_fails_and_says_so(self) -> None:
+        write(
+            self.root / "inventory/hosts.yml",
+            "all:\n  children:\n    platform_hosts:\n      hosts: {}\n"
+            "    retired_hosts:\n      hosts:\n        old-host:\n"
+            "          ansible_host: old-host.tailnet.example.net\n",
+        )
+
+        finding = by_title(self.diagnose(), "Hosts")[0]
+
+        self.assertTrue(finding.failed)
+        self.assertIn("only retired ones", finding.detail)
+
     def test_stopped_tailscale_fails_and_skips_host_reachability(self) -> None:
         findings = self.diagnose(tailnet=STOPPED)
 

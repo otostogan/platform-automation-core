@@ -47,6 +47,7 @@ class Context:
     kind: str  # "host" | "infra" | "app" | "nowhere"
     root: Optional[Path] = None
     hosts: tuple = field(default_factory=tuple)
+    retired_hosts: tuple = field(default_factory=tuple)
     environments: tuple = field(default_factory=tuple)
     target_host: Optional[str] = None
     tailscale_tag: Optional[str] = None
@@ -105,11 +106,24 @@ def find_root(start: Path, predicate) -> Optional[Path]:
     return None
 
 
-def read_hosts(root: Path) -> tuple:
-    document = load_yaml(root / INFRA_INVENTORY)
+ACTIVE_GROUP = "platform_hosts"
+# A host kept in the inventory for the record, out of every playbook's reach.
+RETIRED_GROUP = "retired_hosts"
 
+
+def read_hosts(root: Path) -> tuple:
+    """The hosts the platform manages: the ``platform_hosts`` group."""
+    return hosts_in_group(load_yaml(root / INFRA_INVENTORY), ACTIVE_GROUP)
+
+
+def read_retired_hosts(root: Path) -> tuple:
+    """Hosts moved to ``retired_hosts``: described, remembered, never targeted."""
+    return hosts_in_group(load_yaml(root / INFRA_INVENTORY), RETIRED_GROUP)
+
+
+def hosts_in_group(document: Any, group: str) -> tuple:
     try:
-        entries = document["all"]["children"]["platform_hosts"]["hosts"]
+        entries = document["all"]["children"][group]["hosts"]
     except (KeyError, TypeError):
         return ()
 
@@ -228,6 +242,7 @@ def detect(start: Optional[Path] = None, host_marker: Path = HOST_MARKER) -> Con
             kind="infra",
             root=infra_root,
             hosts=read_hosts(infra_root),
+            retired_hosts=read_retired_hosts(infra_root),
             core_pin=read_collection_pin(infra_root),
         )
 

@@ -354,11 +354,20 @@ def diagnose_infra(
         context, runner, collections_root or default_collections_root(home)
     )
     if not context.hosts:
-        findings.append(
-            fail("Hosts", "inventory/hosts.yml lists no hosts", "#/flow-new-host")
+        detail = "inventory/hosts.yml lists no hosts under platform_hosts" + (
+            " — only retired ones" if context.retired_hosts else ""
         )
+        findings.append(fail("Hosts", detail, "#/flow-new-host"))
     for host in context.hosts:
         findings += host_findings(context, host, tailnet, runner)
+    for host in getattr(context, "retired_hosts", ()):
+        findings.append(
+            skip(
+                host.name,
+                "retired — kept under retired_hosts for the record; no playbook or action targets it",
+                "#/ref-retired-host",
+            )
+        )
     return findings
 
 

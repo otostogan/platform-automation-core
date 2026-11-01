@@ -83,6 +83,26 @@ class DetectContextTest(unittest.TestCase):
         self.assertEqual(context.hosts[0].user, "ops")
         self.assertEqual(context.core_pin, "v0.14.0")
 
+    def test_retired_hosts_are_read_apart_and_never_counted_as_managed(self) -> None:
+        write(
+            self.root / "inventory/hosts.yml",
+            INVENTORY + "    retired_hosts:\n      hosts:\n        old-host:\n"
+            "          ansible_host: old-host.tailnet.example.net\n"
+            "          ansible_user: ops\n",
+        )
+        write(self.root / "requirements.yml", REQUIREMENTS)
+
+        context = detect(self.root / "inventory/group_vars", host_marker=self.no_host)
+
+        self.assertEqual(
+            [host.name for host in context.hosts],
+            ["platform-host-1", "platform-host-2"],
+        )
+        self.assertEqual([host.name for host in context.retired_hosts], ["old-host"])
+        self.assertEqual(
+            context.retired_hosts[0].address, "old-host.tailnet.example.net"
+        )
+
     def test_application_repository_reads_manifests_and_workflow(self) -> None:
         write(self.root / "deploy/platform.lab.yml", MANIFEST.format(environment="lab"))
         write(
