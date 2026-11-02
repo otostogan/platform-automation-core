@@ -2360,7 +2360,12 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
         print(f"{BOLD}Restore {name} on {target_host} from {stamp}:{RESET}")
         print("  the live database is replaced by the dump. Everything written after")
         print("  the dump was taken is lost. The application is not restarted.")
-        if current and chosen.get("release_tag") != current:
+        # A bucket-only dump says nothing about its release until fetched.
+        if (
+            current
+            and chosen.get("release_tag")
+            and chosen.get("release_tag") != current
+        ):
             print(
                 f"  {RED}this dump was taken on {chosen.get('release_tag')};"
                 f" {current} is deployed now.{RESET}"

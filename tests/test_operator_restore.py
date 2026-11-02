@@ -173,7 +173,8 @@ class RestoreFlowTest(unittest.TestCase):
         restore = host.calls[-1]
         self.assertEqual(restore[restore.index("--from") + 1], GONE)
         self.assertNotIn("--from-offsite", restore)
-        self.assertIn("in the bucket only", output)
+        self.assertIn("from the bucket and proving it", output)
+        self.assertNotIn("taken on None", output)
         self.assertNotIn("secret", output)
 
     def test_an_unproven_dump_is_proven_first_and_the_gap_is_named(self) -> None:
