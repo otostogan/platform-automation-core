@@ -217,6 +217,22 @@ def render_projects(document: dict) -> str:
     return "\n".join(lines)
 
 
+def human_size(value) -> str:
+    """Bytes as an operator reads them: 810 KB, 1.2 MB, 3.4 GB; a dash when unknown."""
+    if not isinstance(value, int):
+        return "-"
+    amount = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if amount < 1024 or unit == "TB":
+            return (
+                f"{int(amount)} {unit}"
+                if unit == "B" or amount >= 100
+                else f"{amount:.1f} {unit}"
+            )
+        amount /= 1024
+    return f"{amount:.1f} TB"
+
+
 def render_backups(document: dict) -> str:
     entries = document.get("backups") or []
     if not entries:
@@ -236,7 +252,7 @@ def render_backups(document: dict) -> str:
             taken, age = taken_at(str(entry.get("stamp", "")))
         except ValueError:
             taken, age = "-", "-"
-        size = "-" if entry.get("bytes") is None else str(entry["bytes"])
+        size = human_size(entry.get("bytes"))
         offsite = {None: "n/a", True: "yes", False: "NO"}.get(
             entry.get("offsite"), "n/a"
         )
@@ -2358,12 +2374,12 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
             if entry.get("offsite_only"):
                 return (
                     f"{stamp.split('-', 1)[0]}  {when} {entry.get('reason') or '-':<14}"
-                    f" {'in the bucket':<16} {entry.get('bytes')} B  fetched, then proven"
+                    f" {'in the bucket':<16} {human_size(entry.get('bytes')):>9}  fetched, then proven"
                 )
             proven = "proven" if entry.get("verified") else "not proven"
             return (
                 f"{stamp.split('-', 1)[0]}  {when} {entry.get('reason') or '-':<14}"
-                f" {entry.get('release_tag') or '-':<16} {entry.get('bytes')} B  {proven}"
+                f" {entry.get('release_tag') or '-':<16} {human_size(entry.get('bytes')):>9}  {proven}"
             )
 
         chosen = choose(

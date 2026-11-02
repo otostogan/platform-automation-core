@@ -8,7 +8,8 @@ release.
 ## [Unreleased]
 
 - The restore choice shows each dump's local time and age next to the
-  stamp, as the backup list does.
+  stamp, as the backup list does; sizes read as `810 KB` or `1.2 MB` in
+  both.
 
 ## [0.33.1] - 2026-11-02
 
