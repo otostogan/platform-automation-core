@@ -127,15 +127,20 @@ def build_client(config: dict[str, Any], credentials: tuple[str, str]):
     )
 
 
-def remote_names(
+def remote_objects(
     client,
     config: dict[str, Any],
     project: str,
     environment: str,
-) -> set[str]:
-    """List what is already there, using the one permission the host has."""
+) -> dict[str, int]:
+    """What is already there and how big, using the one permission the host has.
+
+    A listing carries each object's size; reading a card would need a
+    permission the host does not have, so size is all a bucket-only dump
+    can say about itself beyond its stamp.
+    """
     prefix = object_key(config["prefix"], project, environment, "")
-    names: set[str] = set()
+    found: dict[str, int] = {}
     token = None
 
     while True:
@@ -147,15 +152,27 @@ def remote_names(
         response = client.list_objects_v2(**arguments)
 
         for item in response.get("Contents", []) or []:
-            names.add(str(item.get("Key", "")).rpartition("/")[2])
+            name = str(item.get("Key", "")).rpartition("/")[2]
+            size = item.get("Size")
+            found[name] = int(size) if isinstance(size, int) else 0
 
         if not response.get("IsTruncated"):
-            return names
+            return found
 
         token = response.get("NextContinuationToken")
 
         if not token:
-            return names
+            return found
+
+
+def remote_names(
+    client,
+    config: dict[str, Any],
+    project: str,
+    environment: str,
+) -> set[str]:
+    """List what is already there, using the one permission the host has."""
+    return set(remote_objects(client, config, project, environment))
 
 
 def pending_uploads(local: list[str], remote: set[str]) -> list[tuple[str, str]]:
@@ -190,7 +207,8 @@ def upload_backups(
     local = list_backups(directory)
 
     try:
-        remote = remote_names(client, config, project, environment)
+        objects = remote_objects(client, config, project, environment)
+        remote = set(objects)
     except Exception as error:  # boto3 raises provider-specific errors
         raise OffsiteError(f"offsite listing failed: {error}") from error
 
@@ -349,12 +367,15 @@ def offsite_status(
     # What retention already removed here but the bucket still keeps: a
     # restore can fetch these, so the list is reported, not just counted.
     remote_stamps = {
-        name[: -len(DUMP_SUFFIX)]
+        name[: -len(DUMP_SUFFIX)]: objects[name]
         for name in remote
         if name.endswith(DUMP_SUFFIX)
         and STAMP_PATTERN.fullmatch(name[: -len(DUMP_SUFFIX)])
     }
-    offsite_only = sorted(remote_stamps - set(local))
+    offsite_only = [
+        {"stamp": stamp, "bytes": remote_stamps[stamp]}
+        for stamp in sorted(set(remote_stamps) - set(local))
+    ]
 
     return {
         "state": "current" if not missing else "behind",
