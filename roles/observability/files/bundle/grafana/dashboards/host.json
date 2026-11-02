@@ -504,15 +504,6 @@
           },
           "expr": "sum by (project) (platform_container_cpu_percent{host=\"$host\"})",
           "legendFormat": "{{project}}"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "platform-prometheus"
-          },
-          "expr": "sum(platform_container_cpu_percent{host=\"$host\",project=\"platform\"})",
-          "legendFormat": "platform (proxy, observability)"
         }
       ],
       "id": 8

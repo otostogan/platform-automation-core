@@ -451,6 +451,7 @@ def main():
                         ),
                         ("$project", "example"),
                         ("$environment", "lab"),
+                        ("$host", "platform-host-1"),
                         ("$service", ".*"),
                         ("$search", ""),
                         ("$__auto", "5m"),
