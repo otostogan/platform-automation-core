@@ -1,3 +1,4 @@
+import time
 import json
 import os
 import subprocess
@@ -255,7 +256,7 @@ class NginxTransactionTest(unittest.TestCase):
     def test_global_lock_rejects_concurrent_transaction(self) -> None:
         with nginx_transaction_lock(self.locks):
             with self.assertRaises(NginxTransactionBusyError):
-                with nginx_transaction_lock(self.locks):
+                with nginx_transaction_lock(self.locks, wait_seconds=0):
                     pass
 
     def test_rejects_symlinked_lock_root(self) -> None:
@@ -381,6 +382,60 @@ class HtpasswdTransactionTest(NginxTransactionTest):
             transaction.stage()
             transaction.activate()
         self.assertFalse((self.base / "htpasswd").exists())
+
+
+class LockWaitTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.locks = Path(self.temporary.name) / "locks"
+
+    def test_a_lock_held_briefly_is_waited_for(self) -> None:
+        """The reconcile timer holds the lock for a second; a deployment waits it out."""
+        import threading
+
+        released = threading.Event()
+        holder_done = threading.Event()
+
+        def hold():
+            with nginx_transaction_lock(self.locks):
+                released.wait(5)
+            holder_done.set()
+
+        thread = threading.Thread(target=hold)
+        thread.start()
+        waited = []
+
+        def sleep(seconds):
+            waited.append(seconds)
+            released.set()
+            time.sleep(0.05)
+
+        try:
+            time.sleep(0.2)
+            with nginx_transaction_lock(
+                self.locks, wait_seconds=10, clock=lambda: 0.0, sleep=sleep
+            ):
+                acquired = True
+        finally:
+            released.set()
+            thread.join(5)
+
+        self.assertTrue(acquired)
+        self.assertTrue(waited, "the second taker waited at least once")
+        self.assertTrue(holder_done.is_set())
+
+    def test_waiting_gives_up_after_the_deadline(self) -> None:
+        ticks = iter([0.0, 30.0, 61.0, 61.0, 61.0])
+        with nginx_transaction_lock(self.locks):
+            with self.assertRaisesRegex(NginxTransactionBusyError, "waited 60s"):
+                with nginx_transaction_lock(
+                    self.locks,
+                    wait_seconds=60,
+                    clock=lambda: next(ticks),
+                    sleep=lambda seconds: None,
+                ):
+                    pass
 
 
 if __name__ == "__main__":

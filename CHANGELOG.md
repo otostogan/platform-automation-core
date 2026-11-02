@@ -7,6 +7,11 @@ release.
 
 ## [Unreleased]
 
+- A deployment waits up to a minute for the nginx fragment lock instead of
+  failing at once with `another nginx fragment transaction is in progress`.
+  The reconcile timer takes that lock for about a second every ten seconds,
+  and a deployment landing in that second was refused for no reason.
+
 - The restore choice shows each dump's local time and age next to the
   stamp, as the backup list does; sizes read as `810 KB` or `1.2 MB` in
   both.
