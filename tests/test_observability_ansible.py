@@ -168,6 +168,32 @@ class ObservabilityBundleTest(unittest.TestCase):
             {i["name"] for i in DEFAULTS["observability_state_directories"]},
         )
 
+    def test_the_host_dashboard_shows_the_machine_and_the_projects_on_it(self) -> None:
+        board = json.loads(
+            (BUNDLE / "grafana/dashboards/host.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(board["uid"], "platform-host")
+        self.assertEqual(board["templating"]["list"][0]["name"], "host")
+        self.assertIn(
+            "grafana/dashboards/host.json", DEFAULTS["observability_bundle_files"]
+        )
+        titles = {panel["title"] for panel in board["panels"]}
+        for expected in (
+            "CPU, % of all cores",
+            "Memory",
+            "Disk space used",
+            "Network",
+            "Memory by project",
+            "CPU by project, % of one core",
+            "Container restarts per hour, by project",
+        ):
+            self.assertIn(expected, titles)
+        for panel in board["panels"]:
+            for target in panel["targets"]:
+                # every query is pinned to the chosen host; nothing mixes machines
+                self.assertIn('host="$host"', target["expr"], panel["title"])
+                self.assertEqual(target["datasource"]["uid"], "platform-prometheus")
+
     def test_the_standard_dashboard_ranks_paths_for_every_application(self) -> None:
         board = json.loads(
             (BUNDLE / "grafana/dashboards/application.json").read_text(encoding="utf-8")

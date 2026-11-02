@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+- Grafana gains a **Host** dashboard beside **Application**: the whole
+  server — CPU, memory, disk space and I/O, network, load — with the
+  containers' share split by project, and container restarts per project.
+  The Application dashboard showed one project at a time and nothing of
+  the machine around it.
+
 ## [0.33.2] - 2026-11-02
 
 - A deployment waits up to a minute for the nginx fragment lock instead of
