@@ -76,6 +76,7 @@ observability_bundle_files:
     - grafana/provisioning/datasources/platform.yaml
     - grafana/provisioning/dashboards/platform.yaml
     - grafana/dashboards/application.json
+    - grafana/dashboards/host.json
 
 # Each process writes as its own user; the directories belong to them.
 observability_state_directories:
