@@ -2424,7 +2424,10 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
 
         print()
         retain = local_retain(context.root, getattr(scope, "manifest", None))
-        if safety_dump_would_prune(entries, chosen, retain):
+        # Retention acts on what is on the host: the local dumps, plus the one
+        # just fetched from the bucket. Other bucket-only dumps are not there.
+        on_host = [e for e in entries if not e.get("offsite_only") or e is chosen]
+        if safety_dump_would_prune(on_host, chosen, retain):
             print(
                 f"{RED}No dump of the current state will be taken.{RESET} The host keeps a"
                 " limited number of dumps,"

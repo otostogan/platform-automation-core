@@ -152,7 +152,8 @@ class RestoreFlowTest(unittest.TestCase):
                         lambda options: options[-2],
                     ),  # the bucket-only one, oldest
                     ("text", creds.name),  # reader credentials file
-                    ("confirm", True),  # safety dump
+                    # No safety dump is offered: once fetched this dump is the
+                    # oldest here, and one more dump could push it out.
                     ("text", NAME),
                 ],
                 host,
@@ -160,8 +161,9 @@ class RestoreFlowTest(unittest.TestCase):
 
         self.assertEqual(code, 0, output)
         self.assertEqual(
-            host.verbs(), ["backups", "status", "verify-backup", "backup", "restore"]
+            host.verbs(), ["backups", "status", "verify-backup", "restore"]
         )
+        self.assertIn("No dump of the current state will be taken", output)
         proof = host.calls[2]
         self.assertIn("--from-offsite", proof)
         self.assertEqual(proof[proof.index("--from") + 1], GONE)
