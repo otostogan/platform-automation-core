@@ -7,6 +7,11 @@ release.
 
 ## [Unreleased]
 
+- A bucket-only dump in the restore choice shows its time, reason and size
+  like the host's own dumps; `platform backups` lists `offsite_only` entries
+  with their size from the bucket listing. The release stays unknown until
+  the dump is fetched: the host can list the bucket but not read a card.
+
 ## [0.33.0] - 2026-11-02
 
 - A dump that retention already removed from the host but the bucket still
