@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-02
+
 - Grafana gains a **Host** dashboard beside **Application**: the whole
   server — CPU, memory, disk space and I/O, network, load — with the
   containers' share split by project, and container restarts per project.
