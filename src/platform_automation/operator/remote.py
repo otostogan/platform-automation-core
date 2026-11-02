@@ -202,14 +202,16 @@ def run_platform(
     identity: Optional[Path] = None,
     runner=checked_run,
     timeout: int = COMMAND_TIMEOUT_SECONDS,
+    stdin=None,
 ) -> RemoteResult:
+    """``stdin`` is an open file for a command that takes a credential as a stream."""
     command = build_command(host, user, arguments, identity)
     shown = shlex.join(command)
 
     try:
         result = runner(
             command,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if stdin is None else stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,

@@ -7,6 +7,16 @@ release.
 
 ## [Unreleased]
 
+- A dump that retention already removed from the host but the bucket still
+  keeps can be restored from the console. `platform backups` reports such
+  stamps as `offsite_only`; the console's "Database: restore" lists them as
+  "in the bucket only", asks for the operator's reader credentials file
+  (defaulting to `reader-s3.env` in the infrastructure's key directory),
+  fetches and proves the dump with `platform verify-backup --from-offsite`
+  — the key streamed on stdin, never on the host's disk — and continues with
+  the usual safety dump, typed name and restore. `verify-backup` learns
+  `--from-offsite` for this.
+
 ## [0.32.0] - 2026-11-02
 
 - A backup can move from one host to another. `platform backup-import`

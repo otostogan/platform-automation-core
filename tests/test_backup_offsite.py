@@ -264,6 +264,18 @@ class StatusTest(UploadTest):
 
         self.assertEqual(self.status()["state"], "current")
 
+    def test_dumps_the_bucket_still_keeps_are_listed_apart(self) -> None:
+        """Retention removed OLDER here; the bucket has it; a restore can fetch it."""
+        self.seed(OLDER, NEWER)
+        self.upload()
+        for path in self.directory.glob(f"{OLDER}*"):
+            path.unlink()
+
+        result = self.status()
+
+        self.assertEqual(result["state"], "current")
+        self.assertEqual(result["offsite_only"], [OLDER])
+
     def test_a_host_that_stopped_uploading_reads_as_behind(self) -> None:
         """The failure discovered too late is named, not left to a log."""
         self.seed(OLDER, NEWER)

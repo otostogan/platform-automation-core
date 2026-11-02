@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-from .backup_runtime import CARD_SUFFIX, DUMP_SUFFIX, list_backups
+from .backup_runtime import CARD_SUFFIX, DUMP_SUFFIX, STAMP_PATTERN, list_backups
 
 DEFAULT_OFFSITE_CONFIG = Path("/etc/platform/backup-offsite.json")
 DEFAULT_CREDENTIALS_FILE = Path("/etc/platform/keys/s3.env")
@@ -346,10 +346,20 @@ def offsite_status(
 
     local = list_backups(directory)
     missing = [stamp for stamp, _ in pending_uploads(local, remote)]
+    # What retention already removed here but the bucket still keeps: a
+    # restore can fetch these, so the list is reported, not just counted.
+    remote_stamps = {
+        name[: -len(DUMP_SUFFIX)]
+        for name in remote
+        if name.endswith(DUMP_SUFFIX)
+        and STAMP_PATTERN.fullmatch(name[: -len(DUMP_SUFFIX)])
+    }
+    offsite_only = sorted(remote_stamps - set(local))
 
     return {
         "state": "current" if not missing else "behind",
         "bucket": config["bucket"],
         "remote_objects": len(remote),
         "not_uploaded": sorted(set(missing)),
+        "offsite_only": offsite_only,
     }

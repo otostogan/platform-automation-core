@@ -527,6 +527,15 @@ def parse_arguments(
         help="Print machine-readable JSON.",
     )
 
+    verify_parser.add_argument(
+        "--from-offsite",
+        action="store_true",
+        help=(
+            "Fetch the backup from object storage first, then prove it. Reader "
+            "credentials are read from stdin; the host holds none."
+        ),
+    )
+
     session_parser = subparsers.add_parser(
         "database-session",
         help="Open a short-lived database login for an operator's own client, or close one.",
@@ -1895,6 +1904,7 @@ def build_backups_document(
         "environment": environment,
         "count": len(entries),
         "backups": entries,
+        "offsite_only": list(offsite.get("offsite_only") or []),
     }
 
 
@@ -2587,6 +2597,9 @@ def run_verify_backup(
     docker_executable: Path,
     minimum_age_recipients: int,
     verifier=verify_backup,
+    offsite_config: Path = DEFAULT_OFFSITE_CONFIG,
+    downloader=download_backup,
+    token_stream=None,
 ) -> int:
     everything = getattr(arguments, "all", False)
     if everything and (arguments.project or arguments.environment or arguments.stamp):
@@ -2618,6 +2631,20 @@ def run_verify_backup(
         )
 
     try:
+        if getattr(arguments, "from_offsite", False):
+            if arguments.stamp is None:
+                raise RestoreRuntimeError(
+                    "--from-offsite needs --from: name the backup to fetch"
+                )
+            downloader(
+                project=arguments.project,
+                environment=arguments.environment,
+                stamp=arguments.stamp,
+                directory=backups_root / arguments.project / arguments.environment,
+                credentials=read_operator_credentials(token_stream),
+                config_path=offsite_config,
+            )
+
         manifest, _ = load_current_manifest(
             projects_root,
             releases_root,
@@ -2653,6 +2680,7 @@ def run_verify_backup(
         RestoreRuntimeError,
         DatabaseRuntimeError,
         ReleaseLedgerError,
+        OffsiteError,
         OSError,
     ) as error:
         print(f"verify-backup error: {error}", file=sys.stderr)
@@ -3105,7 +3133,7 @@ def main(
             *(
                 (restore_backup, offsite_config, downloader, token_stream)
                 if arguments.command == "restore"
-                else ()
+                else (verify_backup, offsite_config, downloader, token_stream)
             ),
         )
 
