@@ -389,6 +389,7 @@ class LockWaitTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.locks = Path(self.temporary.name) / "locks"
+        self.locks.mkdir(mode=0o700)
 
     def test_a_lock_held_briefly_is_waited_for(self) -> None:
         """The reconcile timer holds the lock for a second; a deployment waits it out."""
