@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-11-02
+
 - A bucket-only dump in the restore choice shows its time, reason and size
   like the host's own dumps; `platform backups` lists `offsite_only` entries
   with their size from the bucket listing. The release stays unknown until
