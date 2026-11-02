@@ -207,8 +207,7 @@ def upload_backups(
     local = list_backups(directory)
 
     try:
-        objects = remote_objects(client, config, project, environment)
-        remote = set(objects)
+        remote = remote_names(client, config, project, environment)
     except Exception as error:  # boto3 raises provider-specific errors
         raise OffsiteError(f"offsite listing failed: {error}") from error
 
@@ -352,7 +351,8 @@ def offsite_status(
 
     try:
         client = client_factory(config, load_credentials(credentials_path))
-        remote = remote_names(client, config, project, environment)
+        objects = remote_objects(client, config, project, environment)
+        remote = set(objects)
     except OffsiteError as error:
         return {"state": "error", "bucket": config["bucket"], "error": str(error)}
     except Exception as error:
