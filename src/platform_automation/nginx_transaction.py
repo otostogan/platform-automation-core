@@ -275,8 +275,19 @@ def load_raw_project_allowlist(path: Path) -> set[str]:
     return set(values)
 
 
+# The reconcile timer takes the same lock for about a second every ten; a
+# deployment that lands in that second waits for it instead of failing.
+NGINX_LOCK_WAIT_SECONDS = 60.0
+NGINX_LOCK_POLL_SECONDS = 0.2
+
+
 @contextmanager
-def nginx_transaction_lock(lock_root: Path) -> Iterator[None]:
+def nginx_transaction_lock(
+    lock_root: Path,
+    wait_seconds: float = NGINX_LOCK_WAIT_SECONDS,
+    clock=time.monotonic,
+    sleep=time.sleep,
+) -> Iterator[None]:
     _ensure_owned_directory(lock_root, 0o700)
     path = lock_root / "nginx-fragments.lock"
     flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC
@@ -295,12 +306,18 @@ def nginx_transaction_lock(lock_root: Path) -> Iterator[None]:
         if info.st_uid != os.geteuid() or info.st_gid != os.getegid():
             raise NginxTransactionError(f"lock has unexpected ownership: {path}")
         os.fchmod(descriptor, 0o600)
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise NginxTransactionBusyError(
-                "another nginx fragment transaction is in progress"
-            ) from exc
+        deadline = clock() + wait_seconds
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if clock() >= deadline:
+                    raise NginxTransactionBusyError(
+                        "another nginx fragment transaction is in progress"
+                        f" (waited {int(wait_seconds)}s)"
+                    ) from exc
+                sleep(NGINX_LOCK_POLL_SECONDS)
         yield
     finally:
         os.close(descriptor)

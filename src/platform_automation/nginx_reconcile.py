@@ -73,7 +73,9 @@ def certificate_fingerprint(root: Path) -> str:
 def reconcile(manager: NginxTransactionManager, certificates: Path) -> bool:
     """Return True after reload; False for unchanged state or an active deploy."""
     try:
-        with nginx_transaction_lock(manager.lock_root):
+        # The timer must never queue behind a deployment: it skips this tick
+        # and comes back in ten seconds.
+        with nginx_transaction_lock(manager.lock_root, wait_seconds=0):
             manager.check_no_pending_activation()
             before = certificate_fingerprint(certificates)
             candidate = manager.render_config()
