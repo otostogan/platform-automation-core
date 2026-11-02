@@ -2256,6 +2256,26 @@ def local_retain(root: Path, manifest_path) -> Optional[int]:
     return retain if isinstance(retain, int) and not isinstance(retain, bool) else None
 
 
+def reader_credentials_default(context: Context) -> Optional[Path]:
+    """Where the operator keeps the bucket's reader key: the infrastructure's key dir."""
+    from .config import infras
+    from .context import read_hosts, read_retired_hosts
+
+    target = (getattr(context, "target_host", None) or "").split(".")[0]
+    if not target:
+        return None
+    for infra in infras():
+        names = {
+            h.name for h in (*read_hosts(infra.path), *read_retired_hosts(infra.path))
+        }
+        if target in names:
+            keys = infra.keys or (
+                Path.home() / ".config" / "platform-keys" / infra.name
+            )
+            return keys / "reader-s3.env"
+    return None
+
+
 def restore_action(context: Context, scope, prompts, remote=None) -> Action:
     """Replace the live database with a dump — after the dump is proven to restore.
 
@@ -2284,15 +2304,25 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
         if not listing.ok:
             return report_failure(listing.error, context.core_pin)
         # Newest first, whatever order the host lists them in: a stamp
-        # begins with its UTC time, so it sorts as text.
+        # begins with its UTC time, so it sorts as text. Dumps that retention
+        # already removed here but the bucket still keeps are offered too;
+        # one of those is fetched before anything else happens.
         entries = sorted(
-            listing.document.get("backups") or [],
+            [
+                *(listing.document.get("backups") or []),
+                *(
+                    {"stamp": stamp, "offsite_only": True}
+                    for stamp in listing.document.get("offsite_only") or []
+                ),
+            ],
             key=lambda entry: str(entry.get("stamp", "")),
             reverse=True,
         )
         if not entries:
-            print(f"No dump of {name} on the host; there is nothing to restore from.")
-            print(f"{DIM}  offsite copies: handbook {HANDBOOK}#/flow-database{RESET}")
+            print(
+                f"No dump of {name} on the host or in the bucket; nothing to restore from."
+            )
+            print(f"{DIM}  handbook {HANDBOOK}#/flow-database{RESET}")
             return 1
         # Without the deployed release there is nothing to compare a dump
         # against, and the warning about a foreign schema could not be given.
@@ -2306,6 +2336,8 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
 
         def describe(entry):
             stamp = str(entry.get("stamp", ""))
+            if entry.get("offsite_only"):
+                return f"{stamp.split('-', 1)[0]}  in the bucket only — fetched first, then proven"
             proven = "proven" if entry.get("verified") else "not proven"
             return (
                 f"{stamp.split('-', 1)[0]}  {entry.get('reason') or '-':<14}"
@@ -2328,7 +2360,12 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
         print(f"{BOLD}Restore {name} on {target_host} from {stamp}:{RESET}")
         print("  the live database is replaced by the dump. Everything written after")
         print("  the dump was taken is lost. The application is not restarted.")
-        if current and chosen.get("release_tag") != current:
+        # A bucket-only dump says nothing about its release until fetched.
+        if (
+            current
+            and chosen.get("release_tag")
+            and chosen.get("release_tag") != current
+        ):
             print(
                 f"  {RED}this dump was taken on {chosen.get('release_tag')};"
                 f" {current} is deployed now.{RESET}"
@@ -2338,7 +2375,46 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
                 " first query for a column the dump lacks."
             )
 
-        if not chosen.get("verified"):
+        if chosen.get("offsite_only"):
+            # The host holds no reader key; it is the operator's, streamed
+            # for this one command and never written on the host.
+            credentials = reader_credentials_default(context)
+            answer = questionary.text(
+                "Reader credentials for the bucket (a file with AWS_ACCESS_KEY_ID and"
+                " AWS_SECRET_ACCESS_KEY, yours, not the host's)",
+                default=str(credentials) if credentials else "",
+                style=style,
+            ).ask()
+            if not answer:
+                print("cancelled — nothing fetched")
+                return 130
+            credentials = Path(answer).expanduser()
+            if not credentials.is_file():
+                print(f"{RED}{credentials} is not a file{RESET}")
+                return 1
+            print()
+            print(
+                f"Fetching {stamp} from the bucket and proving it; the key goes on stdin."
+            )
+            print(
+                f"{DIM}→ ssh ops@{target_host} 'sudo -n platform verify-backup"
+                f" {' '.join(ident)} --from {stamp} --from-offsite --json' < {credentials}{RESET}"
+            )
+            with credentials.open("rb") as stream:
+                proof = remote(
+                    target_host,
+                    "ops",
+                    ["verify-backup", *ident, "--from", stamp, "--from-offsite"],
+                    timeout=BACKUP_TIMEOUT_SECONDS,
+                    stdin=stream,
+                )
+            if not proof.ok:
+                print(
+                    f"{RED}the dump was not fetched or does not restore; nothing changed{RESET}"
+                )
+                return report_failure(proof.error, context.core_pin)
+            print(render_verification(proof.document))
+        elif not chosen.get("verified"):
             print()
             print("This dump has not been proven to restore; proving it first.")
             proof = call(
@@ -2353,7 +2429,10 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
 
         print()
         retain = local_retain(context.root, getattr(scope, "manifest", None))
-        if safety_dump_would_prune(entries, chosen, retain):
+        # Retention acts on what is on the host: the local dumps, plus the one
+        # just fetched from the bucket. Other bucket-only dumps are not there.
+        on_host = [e for e in entries if not e.get("offsite_only") or e is chosen]
+        if safety_dump_would_prune(on_host, chosen, retain):
             print(
                 f"{RED}No dump of the current state will be taken.{RESET} The host keeps a"
                 " limited number of dumps,"

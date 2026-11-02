@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from platform_automation.operator.console import restore_action, rotate_action
 from platform_automation.operator.remote import RemoteResult
 
+GONE = "20251230T000000Z-schedule"  # removed by retention here, kept in the bucket
 OLDEST = "20251231T000000Z-schedule"
 OLD = "20260101T000000Z-schedule"
 NEW = "20260102T000000Z-schedule"
@@ -63,17 +64,20 @@ class Prompts:
 class Host:
     """Records every command; answers from a table, failing where told to."""
 
-    def __init__(self, failing=()):
+    def __init__(self, failing=(), offsite_only=()):
         self.calls = []
+        self.options = []
         self.failing = set(failing)
+        self.offsite_only = list(offsite_only)
 
     def __call__(self, host, user, arguments, **options):
         verb = arguments[0]
         self.calls.append(list(arguments))
+        self.options.append(options)
         if verb in self.failing:
             return RemoteResult(False, 1, None, f"{verb} error: boom", "ssh …")
         document = {
-            "backups": BACKUPS,
+            "backups": {**BACKUPS, "offsite_only": self.offsite_only},
             "status": STATUS,
             "verify-backup": {"outcome": "succeeded", "stamp": OLD, "result": "1"},
             "backup": {"path": "/var/backups/x", "bytes": 1, "offsite": {}},
@@ -126,6 +130,52 @@ class RestoreFlowTest(unittest.TestCase):
         self.assertEqual(restore[restore.index("--from") + 1], NEW)
         self.assertIn("--confirm-destructive", restore)
         self.assertIn("restored", output)
+
+    def test_a_dump_only_in_the_bucket_is_fetched_and_proven_with_the_reader_key(
+        self,
+    ) -> None:
+        import tempfile
+        from unittest import mock
+
+        from platform_automation.operator import console
+
+        host = Host(offsite_only=[GONE])
+        with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as creds:
+            creds.write("AWS_ACCESS_KEY_ID=reader\nAWS_SECRET_ACCESS_KEY=secret\n")
+        with mock.patch.object(
+            console, "reader_credentials_default", return_value=None
+        ):
+            code, output = self.run_restore(
+                [
+                    (
+                        "select",
+                        lambda options: options[-2],
+                    ),  # the bucket-only one, oldest
+                    ("text", creds.name),  # reader credentials file
+                    # No safety dump is offered: once fetched this dump is the
+                    # oldest here, and one more dump could push it out.
+                    ("text", NAME),
+                ],
+                host,
+            )
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(
+            host.verbs(), ["backups", "status", "verify-backup", "restore"]
+        )
+        self.assertIn("No dump of the current state will be taken", output)
+        proof = host.calls[2]
+        self.assertIn("--from-offsite", proof)
+        self.assertEqual(proof[proof.index("--from") + 1], GONE)
+        self.assertIsNotNone(
+            host.options[2].get("stdin"), "the reader key goes on stdin"
+        )
+        restore = host.calls[-1]
+        self.assertEqual(restore[restore.index("--from") + 1], GONE)
+        self.assertNotIn("--from-offsite", restore)
+        self.assertIn("from the bucket and proving it", output)
+        self.assertNotIn("taken on None", output)
+        self.assertNotIn("secret", output)
 
     def test_an_unproven_dump_is_proven_first_and_the_gap_is_named(self) -> None:
         host = Host()

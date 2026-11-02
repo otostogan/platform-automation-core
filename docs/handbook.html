@@ -8127,6 +8127,15 @@ sudo -n platform backups --project {{project}} --environment {{env}}</code></pre
 										на чтение — операторский, подаётся на
 										стандартный ввод и на хост не попадает.
 									</p>
+									<div class="note">
+										<span class="label">Из консоли</span>
+										<p>Действие <strong>Database: restore</strong> показывает и дампы, которых на
+										сервере уже нет, но которые хранилище ещё держит — строкой «in the bucket
+										only». Выбор такого дампа спрашивает путь к файлу reader-ключа (по умолчанию
+										<code>reader-s3.env</code> в каталоге ключей инфраструктуры), забирает дамп и
+										доказывает его командой <code>verify-backup --from-offsite</code>, а дальше идёт
+										обычный порядок: страховочный дамп, имя приложения, восстановление.</p>
+									</div>
 									<pre><code>cat {{keydir}}/reader-s3.env |
   sudo -n platform restore \
     --project {{project}} --environment {{env}} \
@@ -13226,6 +13235,9 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
         <p>Превращает предположение в датированный факт. Замок не берёт.</p>
         <dl>
           <dt>Флаги</dt><dd><code>--from</code> — какой дамп проверять; без него берётся свежайший.
+          <code>--from-offsite</code> — сначала забрать дамп из хранилища, затем доказать; ключ
+          на чтение подаётся потоком на стандартный ввод и на сервер не попадает, после этого
+          дамп лежит рядом со своими и восстанавливается обычным <code>restore</code>.
           <code>--all</code> вместо <code>--project</code> и <code>--environment</code> —
           свежайший дамп каждого приложения, у которого он есть.</dd>
           <dt>По расписанию</dt>
