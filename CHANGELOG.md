@@ -20,6 +20,12 @@ release.
   application's `.sops.yaml`, hands it to the target host and offers the
   ordinary restore. Handbook card: Команды → `backup-import`.
 
+- The backup tables — `platform backups` on the host and the console's
+  "Backups: list" — show when each dump was taken as a clock time and an
+  age (`2026-11-02 12:51`, `1h ago`) next to the stamp; the console shows
+  the operator's local time, the host its own. The stamp alone was UTC to
+  the second and read by nobody.
+
 - `platform new host` works in a repository whose only host is retired: it
   opens an empty `hosts: {}` group instead of refusing with `inventory has
   no all → children → platform_hosts → hosts mapping`, and takes its

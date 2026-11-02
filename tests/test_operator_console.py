@@ -184,7 +184,11 @@ class RenderBackupsTest(unittest.TestCase):
 
         lines = text.splitlines()
         self.assertTrue(lines[0].startswith("STAMP"))
+        self.assertIn("TAKEN (local)", lines[0])
+        self.assertIn("AGE", lines[0])
         self.assertIn("20260902T041500Z", lines[1])
+        self.assertRegex(lines[1], r"2026-09-0[12] \d\d:\d\d")
+        self.assertRegex(lines[1], r"\d+[mhd] ago")
         self.assertIn("yes", lines[1])
         self.assertIn("n/a", lines[2])
 

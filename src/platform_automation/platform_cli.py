@@ -65,6 +65,7 @@ from .backup_runtime import (
     import_backup,
     list_backups,
     loss_window,
+    taken_at,
 )
 
 from .backup_offsite import (
@@ -1904,7 +1905,7 @@ def print_backups(document: dict[str, Any]) -> None:
 
     print(f"Backups: {document['project']}/{document['environment']}")
     print(
-        f"{'STAMP':<26} {'REASON':<14} {'SIZE':>9}  "
+        f"{'STAMP':<18} {'TAKEN':<17} {'AGE':<8} {'REASON':<14} {'SIZE':>9}  "
         f"{'RELEASE':<22} {'OFF':<4} VERIFIED"
     )
 
@@ -1912,9 +1913,10 @@ def print_backups(document: dict[str, Any]) -> None:
         size = "-" if entry["bytes"] is None else f"{entry['bytes']}"
         offsite = {None: "n/a", True: "yes", False: "NO"}[entry["offsite"]]
         stamp = entry["stamp"].split("-", 1)[0]
+        taken, age = taken_at(entry["stamp"])
 
         print(
-            f"{stamp:<26} {(entry['reason'] or '-'):<14} {size:>9}  "
+            f"{stamp:<18} {taken:<17} {age:<8} {(entry['reason'] or '-'):<14} {size:>9}  "
             f"{(entry['release_tag'] or '-'):<22} {offsite:<4} "
             f"{'yes' if entry['verified'] else ''}"
         )

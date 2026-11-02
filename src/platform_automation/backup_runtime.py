@@ -61,6 +61,27 @@ class BackupRuntimeError(RuntimeError):
     pass
 
 
+def taken_at(stamp: str, now: Optional[datetime] = None, zone=None) -> tuple:
+    """When a dump was taken, as a person reads it: local clock time and age.
+
+    The stamp is the only reliable source — it is UTC to the second and
+    survives any card — so both columns are derived from it.
+    """
+    moment = datetime.strptime(stamp.split("-", 1)[0], "%Y%m%dT%H%M%SZ").replace(
+        tzinfo=timezone.utc
+    )
+    current = now or datetime.now(timezone.utc)
+    local = moment.astimezone(zone) if zone is not None else moment.astimezone()
+    seconds = max(0, int((current - moment).total_seconds()))
+    if seconds < 3600:
+        age = f"{seconds // 60}m ago"
+    elif seconds < 86400:
+        age = f"{seconds // 3600}h ago"
+    else:
+        age = f"{seconds // 86400}d ago"
+    return local.strftime("%Y-%m-%d %H:%M"), age
+
+
 def backup_stamp(reason: str, moment: datetime = None) -> str:
     if reason not in BACKUP_REASONS:
         raise BackupRuntimeError(f"unknown backup reason: {reason}")

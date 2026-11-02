@@ -564,5 +564,27 @@ class CreateBackupTest(unittest.TestCase):
             self.backup()
 
 
+class TakenAtTest(unittest.TestCase):
+    def test_local_clock_and_age_come_from_the_stamp(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from platform_automation.backup_runtime import taken_at
+
+        now = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
+        kyiv = timezone(timedelta(hours=2))
+
+        taken, age = taken_at("20261102T105153Z-schedule", now, kyiv)
+        self.assertEqual(taken, "2026-11-02 12:51")
+        self.assertEqual(age, "1h ago")
+        self.assertEqual(taken_at("20261102T115900Z-operator", now, kyiv)[1], "1m ago")
+        self.assertEqual(taken_at("20261030T115900Z-operator", now, kyiv)[1], "3d ago")
+
+    def test_a_malformed_stamp_raises_value_error(self) -> None:
+        from platform_automation.backup_runtime import taken_at
+
+        with self.assertRaises(ValueError):
+            taken_at("yesterday-ish")
+
+
 if __name__ == "__main__":
     unittest.main()

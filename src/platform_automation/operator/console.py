@@ -222,17 +222,26 @@ def render_backups(document: dict) -> str:
     if not entries:
         return f"No backups for {document.get('project')}/{document.get('environment')}"
 
+    from ..backup_runtime import taken_at
+
+    # TAKEN is this machine's clock, not the host's: the stamp is UTC and
+    # the operator reads it where they sit.
     lines = [
-        f"{'STAMP':<26} {'REASON':<14} {'SIZE':>10}  {'RELEASE':<22} {'OFF':<4} VERIFIED"
+        f"{'STAMP':<18} {'TAKEN (local)':<17} {'AGE':<8} {'REASON':<14} {'SIZE':>10}  "
+        f"{'RELEASE':<22} {'OFF':<4} VERIFIED"
     ]
     for entry in entries:
         stamp = str(entry.get("stamp", "")).split("-", 1)[0]
+        try:
+            taken, age = taken_at(str(entry.get("stamp", "")))
+        except ValueError:
+            taken, age = "-", "-"
         size = "-" if entry.get("bytes") is None else str(entry["bytes"])
         offsite = {None: "n/a", True: "yes", False: "NO"}.get(
             entry.get("offsite"), "n/a"
         )
         lines.append(
-            f"{stamp:<26} {(entry.get('reason') or '-'):<14} {size:>10}  "
+            f"{stamp:<18} {taken:<17} {age:<8} {(entry.get('reason') or '-'):<14} {size:>10}  "
             f"{(entry.get('release_tag') or '-'):<22} {offsite:<4} "
             f"{'yes' if entry.get('verified') else ''}"
         )
