@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.33.2] - 2026-11-02
+
 - A deployment waits up to a minute for the nginx fragment lock instead of
   failing at once with `another nginx fragment transaction is in progress`.
   The reconcile timer takes that lock for about a second every ten seconds,
