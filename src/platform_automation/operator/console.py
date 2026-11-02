@@ -2347,15 +2347,22 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
         current = (status.document.get("current") or {}).get("release_tag")
 
         def describe(entry):
+            from ..backup_runtime import taken_at
+
             stamp = str(entry.get("stamp", ""))
+            try:
+                taken, age = taken_at(stamp)
+            except ValueError:
+                taken, age = "-", "-"
+            when = f"{taken}  {age:<8}"
             if entry.get("offsite_only"):
                 return (
-                    f"{stamp.split('-', 1)[0]}  {entry.get('reason') or '-':<14}"
+                    f"{stamp.split('-', 1)[0]}  {when} {entry.get('reason') or '-':<14}"
                     f" {'in the bucket':<16} {entry.get('bytes')} B  fetched, then proven"
                 )
             proven = "proven" if entry.get("verified") else "not proven"
             return (
-                f"{stamp.split('-', 1)[0]}  {entry.get('reason') or '-':<14}"
+                f"{stamp.split('-', 1)[0]}  {when} {entry.get('reason') or '-':<14}"
                 f" {entry.get('release_tag') or '-':<16} {entry.get('bytes')} B  {proven}"
             )
 

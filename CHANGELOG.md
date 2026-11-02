@@ -7,6 +7,9 @@ release.
 
 ## [Unreleased]
 
+- The restore choice shows each dump's local time and age next to the
+  stamp, as the backup list does.
+
 ## [0.33.1] - 2026-11-02
 
 - A bucket-only dump in the restore choice shows its time, reason and size
