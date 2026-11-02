@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-02
+
 - A backup can move from one host to another. `platform backup-import`
   (host, ops only) takes a dump re-encrypted to this host's recipients on
   standard input, proves with its own identity that the envelope opens,
