@@ -46,7 +46,10 @@ class FakeClient:
         self.list_calls.append(arguments["Prefix"])
         keys = [k for k in sorted(self.objects) if k.startswith(arguments["Prefix"])]
 
-        return {"Contents": [{"Key": k} for k in keys], "IsTruncated": False}
+        return {
+            "Contents": [{"Key": k, "Size": len(self.objects[k])} for k in keys],
+            "IsTruncated": False,
+        }
 
     def put_object(self, **arguments):
         if self.fail == "put":
@@ -274,7 +277,9 @@ class StatusTest(UploadTest):
         result = self.status()
 
         self.assertEqual(result["state"], "current")
-        self.assertEqual(result["offsite_only"], [OLDER])
+        self.assertEqual(
+            result["offsite_only"], [{"stamp": OLDER, "bytes": len(b"encrypted")}]
+        )
 
     def test_a_host_that_stopped_uploading_reads_as_behind(self) -> None:
         """The failure discovered too late is named, not left to a log."""

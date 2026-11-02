@@ -2256,6 +2256,18 @@ def local_retain(root: Path, manifest_path) -> Optional[int]:
     return retain if isinstance(retain, int) and not isinstance(retain, bool) else None
 
 
+def bucket_entry(item) -> dict:
+    """A bucket-only dump as the choice shows it: what the stamp and the listing say.
+
+    An older host lists bare stamps; a newer one adds the size. The reason
+    is the stamp's own suffix; the release stays unknown until fetched.
+    """
+    stamp = str(item.get("stamp", "")) if isinstance(item, dict) else str(item)
+    reason = stamp.split("-", 1)[1] if "-" in stamp else None
+    size = item.get("bytes") if isinstance(item, dict) else None
+    return {"stamp": stamp, "offsite_only": True, "reason": reason, "bytes": size}
+
+
 def reader_credentials_default(context: Context) -> Optional[Path]:
     """Where the operator keeps the bucket's reader key: the infrastructure's key dir."""
     from .config import infras
@@ -2311,8 +2323,8 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
             [
                 *(listing.document.get("backups") or []),
                 *(
-                    {"stamp": stamp, "offsite_only": True}
-                    for stamp in listing.document.get("offsite_only") or []
+                    bucket_entry(item)
+                    for item in listing.document.get("offsite_only") or []
                 ),
             ],
             key=lambda entry: str(entry.get("stamp", "")),
@@ -2337,7 +2349,10 @@ def restore_action(context: Context, scope, prompts, remote=None) -> Action:
         def describe(entry):
             stamp = str(entry.get("stamp", ""))
             if entry.get("offsite_only"):
-                return f"{stamp.split('-', 1)[0]}  in the bucket only — fetched first, then proven"
+                return (
+                    f"{stamp.split('-', 1)[0]}  {entry.get('reason') or '-':<14}"
+                    f" {'in the bucket':<16} {entry.get('bytes')} B  fetched, then proven"
+                )
             proven = "proven" if entry.get("verified") else "not proven"
             return (
                 f"{stamp.split('-', 1)[0]}  {entry.get('reason') or '-':<14}"

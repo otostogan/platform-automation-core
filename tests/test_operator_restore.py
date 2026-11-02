@@ -139,7 +139,7 @@ class RestoreFlowTest(unittest.TestCase):
 
         from platform_automation.operator import console
 
-        host = Host(offsite_only=[GONE])
+        host = Host(offsite_only=[{"stamp": GONE, "bytes": 77}])
         with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as creds:
             creds.write("AWS_ACCESS_KEY_ID=reader\nAWS_SECRET_ACCESS_KEY=secret\n")
         with mock.patch.object(
