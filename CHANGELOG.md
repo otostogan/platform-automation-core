@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-11-02
+
 - A dump that retention already removed from the host but the bucket still
   keeps can be restored from the console. `platform backups` reports such
   stamps as `offsite_only`; the console's "Database: restore" lists them as
