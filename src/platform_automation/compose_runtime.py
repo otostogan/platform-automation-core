@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Optional, Any
 
 from .domains import helper_host_variables, web_domains
 from .validate_manifest import load_yaml
@@ -289,8 +289,14 @@ def run_release_command(
     service: str,
     command: list[str],
     runner=subprocess.run,
+    stdin: Optional[bytes] = None,
 ) -> int:
     """One command in a fresh container of the serving release; its exit code.
+
+    ``stdin`` is the command's input, already read by the caller; with it the
+    container runs without a pseudo-terminal, so the bytes arrive untouched
+    and the end of input reaches the command. Without it the input is closed:
+    a command that waits for input fails at once instead of hanging.
 
     The same path the migration takes — ``compose run --rm`` with the
     release's image, environment file and networks — so a task meets the
@@ -317,12 +323,20 @@ def run_release_command(
         manifest, staged_bundle_path, image, runtime_secrets_path, docker_executable
     )
     try:
-        result = runner(
-            [*base, "run", "--rm", "--entrypoint", "", service, *command],
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            check=False,
-        )
+        if stdin is None:
+            result = runner(
+                [*base, "run", "--rm", "--entrypoint", "", service, *command],
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                check=False,
+            )
+        else:
+            result = runner(
+                [*base, "run", "--rm", "-T", "--entrypoint", "", service, *command],
+                env=environment,
+                input=stdin,
+                check=False,
+            )
     except OSError as error:
         raise ComposeRuntimeError("the command could not start") from error
     return int(result.returncode)

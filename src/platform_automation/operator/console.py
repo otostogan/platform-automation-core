@@ -1519,7 +1519,13 @@ def logs_action(context: Context, host, user, identity, prompts, scope=None) -> 
 def exec_action(context: Context, scope, prompts) -> Action:
     """One command in a fresh container of the serving release, output live."""
     from .logs import ssh_command
-    from .oneoff import OneOffError, compose_services, remote_command, split_command
+    from .oneoff import (
+        OneOffError,
+        check_input_file,
+        compose_services,
+        remote_command,
+        split_command,
+    )
 
     target_host = context.target_host
     name = f"{scope.project}/{scope.environment}"
@@ -1563,19 +1569,52 @@ def exec_action(context: Context, scope, prompts) -> Action:
         except OneOffError as error:
             print(f"{RED}{error}{RESET}")
             return 1
-        remote = remote_command(scope.project, scope.environment, service, argv)
+        # A file on this machine becomes the command's standard input: the
+        # bytes go through ssh into the container and are stored nowhere.
+        input_path = text(
+            "Input file (stdin) — path on this workstation, empty — none",
+            "",
+            lambda v: (not v.strip()) or check_input_file(v.strip()),
+        )
+        if input_path in (BACK, CANCEL):
+            print("cancelled")
+            return 130
+        input_file = (
+            Path(input_path.strip()).expanduser() if input_path.strip() else None
+        )
+        remote = remote_command(
+            scope.project,
+            scope.environment,
+            service,
+            argv,
+            stdin=input_file is not None,
+        )
         print()
         print(
             f"{BOLD}Run in a fresh {service} container of {name} on {target_host}:{RESET}"
         )
         print("  the serving container is not touched; the task shares its image,")
         print("  secrets and networks, and its memory limit from the Compose file.")
-        print(f"{DIM}→ ssh -t ops@{target_host} '{remote}'{RESET}")
+        if input_file is None:
+            print(f"{DIM}→ ssh -t ops@{target_host} '{remote}'{RESET}")
+        else:
+            print(
+                f"  input: {input_file} ({input_file.stat().st_size} bytes), output to this terminal"
+            )
+            print(f"{DIM}→ ssh -T ops@{target_host} '{remote}' < {input_file}{RESET}")
         if not questionary.confirm("Run it?", default=True, style=style).ask():
             print("cancelled — nothing ran on the host")
             return 130
         print()
-        code = subprocess.call(ssh_command(target_host, "ops", remote, None, tty=True))
+        if input_file is None:
+            code = subprocess.call(
+                ssh_command(target_host, "ops", remote, None, tty=True)
+            )
+        else:
+            command = ssh_command(target_host, "ops", remote, None, tty=False)
+            command.insert(1, "-T")
+            with input_file.open("rb") as stream:
+                code = subprocess.call(command, stdin=stream)
         print()
         if code == 0:
             print(f"{GREEN}finished with exit code 0{RESET}")

@@ -72,14 +72,14 @@ class ExecActionTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_asks_service_and_command_then_runs_the_host_line_with_a_tty(self) -> None:
-        questionary = FakeQuestionary(["web", "node dist/task.js 10000", True])
+        questionary = FakeQuestionary(["web", "node dist/task.js 10000", "", True])
         calls = []
         with (
             mock.patch.object(console, "read_tailnet", return_value=self.running),
             mock.patch.object(
                 console.subprocess,
                 "call",
-                side_effect=lambda command: calls.append(command) or 0,
+                side_effect=lambda command, **kwargs: calls.append(command) or 0,
             ),
         ):
             code = console.exec_action(
@@ -99,6 +99,37 @@ class ExecActionTest(unittest.TestCase):
             )
         )
 
+    def test_an_input_file_is_redirected_into_ssh_without_a_terminal(self) -> None:
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("wb", suffix=".json", delete=False) as source:
+            source.write(b'{"name": "demo"}')
+        questionary = FakeQuestionary(["web", "node dist/create.js", source.name, True])
+        calls = []
+
+        def call(command, **kwargs):
+            stream = kwargs.get("stdin")
+            calls.append((command, stream.read() if stream is not None else None))
+            return 0
+
+        with (
+            mock.patch.object(console, "read_tailnet", return_value=self.running),
+            mock.patch.object(console.subprocess, "call", side_effect=call),
+        ):
+            code = console.exec_action(
+                self.context, self.scope, (questionary, None)
+            ).run()
+
+        self.assertEqual(code, 0)
+        command, stdin = calls[0]
+        self.assertIn("-T", command)
+        self.assertNotIn("-t", command)
+        self.assertTrue(
+            command[-1].endswith("--service web --stdin -- node dist/create.js")
+        )
+        self.assertIsNotNone(stdin)
+        self.assertEqual(stdin.read(), b'{"name": "demo"}')
+
     def test_a_shell_operator_is_refused_before_anything_runs(self) -> None:
         questionary = FakeQuestionary(["web", "node a.js | tee out"])
         with (
@@ -112,7 +143,7 @@ class ExecActionTest(unittest.TestCase):
         call.assert_not_called()
 
     def test_declining_runs_nothing(self) -> None:
-        questionary = FakeQuestionary(["web", "true", False])
+        questionary = FakeQuestionary(["web", "true", "", False])
         with (
             mock.patch.object(console, "read_tailnet", return_value=self.running),
             mock.patch.object(console.subprocess, "call") as call,
