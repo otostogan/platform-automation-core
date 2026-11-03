@@ -100,6 +100,8 @@ class PlatformCliTest(unittest.TestCase):
         self.database_password = None
         self.database_error = None
         self.secrets_materializer = self.materialize_secrets
+        self.export_calls: list[dict] = []
+        self.exports_root = self.base / "exports"
         self.image_puller = self.pull_image
         self.image_remover = self.remove_image
         self.token_stream = io.BytesIO()
@@ -639,9 +641,24 @@ class PlatformCliTest(unittest.TestCase):
                 token_stream=self.token_stream,
                 compose_runtime_module=self,
                 nginx_manager=self,
+                exporter=self.fake_export,
+                exports_root=self.exports_root,
             )
 
         return result, stdout.getvalue(), stderr.getvalue()
+
+    def fake_export(self, **kwargs):
+        self.export_calls.append(kwargs)
+        return {
+            "project": kwargs["project"],
+            "environment": kwargs["environment"],
+            "name": kwargs["name"],
+            "outcome": "sent",
+            "rows": 3,
+            "attachment": f"{kwargs['name']}-20260101.csv",
+            "to": ["sales@example.invalid"],
+            "release_tag": kwargs["record"]["release_tag"],
+        }
 
     def deploy_arguments(
         self,
@@ -2227,6 +2244,106 @@ class DatabaseSessionCliTest(PlatformCliTest):
         self.assertIn("Closed database session tunnel_0123abcd", out)
         self.assertEqual(
             self.session_calls, [("open", 15), ("close", "tunnel_0123abcd")]
+        )
+
+
+class ExportCliTest(PlatformCliTest):
+    def test_the_parser_knows_both_commands_and_the_instance_form(self) -> None:
+        from platform_automation.platform_cli import parse_arguments
+
+        arguments = parse_arguments(["export", "--instance", "example-lab-clients"])
+        self.assertEqual(arguments.command, "export")
+        self.assertEqual(arguments.instance, "example-lab-clients")
+        arguments = parse_arguments(
+            ["exports", "--project", "example", "--environment", "lab", "--json"]
+        )
+        self.assertEqual(arguments.command, "exports")
+
+    def test_export_runs_against_the_serving_release(self) -> None:
+        code, _, stderr = self.run_cli(*self.deploy_arguments())
+        self.assertEqual(code, 0, stderr)
+
+        code, stdout, stderr = self.run_cli(
+            "export",
+            "--project",
+            "example",
+            "--environment",
+            "lab",
+            "--name",
+            "clients",
+        )
+
+        self.assertEqual(code, 0, stderr)
+        call = self.export_calls[0]
+        self.assertEqual(call["manifest"]["project"], "example")
+        self.assertEqual(call["record"]["release_tag"], "v1")
+        self.assertEqual(
+            call["runtime_secrets_path"],
+            self.runtime_secrets_root
+            / "example"
+            / "lab"
+            / call["record"]["release_id"]
+            / "app.env",
+        )
+        self.assertEqual(call["exports_root"], self.exports_root)
+        self.assertIn("Export sent: example/lab clients", stdout)
+        self.assertIn("clients-20260101.csv (3 rows)", stdout)
+
+    def test_export_by_instance_name_splits_like_the_timer_does(self) -> None:
+        self.run_cli(*self.deploy_arguments())
+        code, stdout, _ = self.run_cli(
+            "export", "--instance", "example-lab-clients", "--json"
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.export_calls[0]["name"], "clients")
+        self.assertEqual(json.loads(stdout)["outcome"], "sent")
+
+    def test_export_without_a_release_is_one_line(self) -> None:
+        code, _, stderr = self.run_cli(
+            "export", "--project", "example", "--environment", "lab", "--name", "x"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("export error: no deployed release", stderr)
+        self.assertEqual(self.export_calls, [])
+
+    def test_exports_lists_declared_jobs_and_orphan_cards(self) -> None:
+        from platform_automation.export_runtime import write_card
+
+        self.run_cli(*self.deploy_arguments())
+        write_card(
+            self.exports_root,
+            {
+                "project": "example",
+                "environment": "lab",
+                "name": "old",
+                "outcome": "failed",
+                "started_at": "2026-01-01T00:00:00Z",
+                "error": "boom",
+            },
+        )
+
+        code, stdout, _ = self.run_cli(
+            "exports", "--project", "example", "--environment", "lab", "--json"
+        )
+
+        self.assertEqual(code, 0)
+        entries = json.loads(stdout)["exports"]
+        self.assertEqual([e["name"] for e in entries], ["old"])
+        self.assertFalse(entries[0]["declared"])
+
+        code, stdout, _ = self.run_cli(
+            "status", "--project", "example", "--environment", "lab"
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Exports:", stdout)
+        self.assertIn("old: no longer declared; last: FAILED", stdout)
+
+    def test_a_deploy_reports_the_export_timers_beside_the_backup_one(self) -> None:
+        code, stdout, _ = self.run_cli(*self.deploy_arguments(), "--json")
+        self.assertEqual(code, 0)
+        document = json.loads(stdout)
+        self.assertEqual(
+            document["schedule"]["exports"], {"jobs": [], "removed": [], "warnings": []}
         )
 
 

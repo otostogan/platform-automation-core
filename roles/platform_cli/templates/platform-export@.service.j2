@@ -1,0 +1,27 @@
+[Unit]
+Description=Scheduled platform export for %i
+Documentation=file://{{ platform_cli_executable }}
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+# No shell: the instance is split by the CLI, where that parsing is tested.
+ExecStart={{ platform_cli_executable }} export --instance %i --json
+TimeoutStartSec={{ platform_cli_export_timeout }}
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/platform/exports /run/platform
+RestrictRealtime=yes
+RestrictSUIDSGID=yes

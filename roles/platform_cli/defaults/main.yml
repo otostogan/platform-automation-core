@@ -28,6 +28,8 @@ platform_cli_offsite_config: /etc/platform/backup-offsite.json
 platform_cli_offsite_credentials: /etc/platform/keys/s3.env
 
 platform_cli_backup_timeout: 3600
+# One export: the query is limited to ten minutes by the CLI, the mail to one.
+platform_cli_export_timeout: 1800
 platform_cli_backup_default_interval: 360
 
 # Restoring the newest dump of every application into a throwaway container,
@@ -46,6 +48,8 @@ platform_cli_tool_files:
     - backup_schedule.py
     - compose_runtime.py
     - domains.py
+    - export_runtime.py
+    - export_schedule.py
     - htpasswd.py
     - metrics_export.py
     - contract_resources.py

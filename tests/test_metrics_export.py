@@ -155,7 +155,7 @@ class ValuePrecisionTest(unittest.TestCase):
 
 
 class ReleaseSamplesTest(unittest.TestCase):
-    def render(self, records, manifest) -> str:
+    def render(self, records, manifest, cards=()) -> str:
         """Two scopes: ``good`` reads through ``records``, ``bad`` cannot be read."""
 
         def listing(root, project, environment):
@@ -176,7 +176,14 @@ class ReleaseSamplesTest(unittest.TestCase):
             ),
         ):
             none = Path(directory) / "none"
-            release_samples(samples, none, none, none)
+            if cards:
+                from platform_automation.export_runtime import write_card
+
+                for card in cards:
+                    write_card(Path(directory) / "exports", card)
+            release_samples(
+                samples, none, none, none, exports_root=Path(directory) / "exports"
+            )
         return samples.render()
 
     RECORD = {
@@ -186,6 +193,43 @@ class ReleaseSamplesTest(unittest.TestCase):
         "updated_at": "2026-01-01T00:00:00Z",
         "release_id": "20260101T000000Z-aaaaaaaa",
     }
+
+    def test_exports_are_declared_by_the_manifest_and_judged_by_their_cards(
+        self,
+    ) -> None:
+        manifest = {
+            "domains": [],
+            "database": {"mode": "docker", "backup_enabled": False},
+            "exports": {
+                "smtp": {},
+                "jobs": [
+                    {"name": "clients", "schedule": "Mon 06:00", "to": [], "query": "x"}
+                ],
+            },
+        }
+        cards = [
+            {
+                "project": "good",
+                "environment": "lab",
+                "name": "clients",
+                "outcome": "failed",
+                "started_at": "2026-01-05T06:00:00Z",
+            }
+        ]
+        text = self.render([self.RECORD], manifest, cards)
+
+        self.assertIn(
+            'platform_export_scheduled{environment="lab",export="clients",project="good",schedule="Mon 06:00"} 1',
+            text,
+        )
+        self.assertIn(
+            'platform_export_last_succeeded{environment="lab",export="clients",project="good"} 0',
+            text,
+        )
+        self.assertIn(
+            'platform_export_last_run_timestamp_seconds{environment="lab",export="clients",project="good"}',
+            text,
+        )
 
     def test_one_unreadable_scope_is_reported_beside_a_healthy_walk(self) -> None:
         text = self.render([], {})

@@ -61,6 +61,9 @@
 		},
 		"observability": {
 			"$ref": "#/$defs/observability"
+		},
+		"exports": {
+			"$ref": "#/$defs/exports"
 		}
 	},
 	"allOf": [
@@ -214,7 +217,10 @@
 				"auth": {
 					"type": "object",
 					"additionalProperties": false,
-					"required": ["username", "password_env"],
+					"required": [
+						"username",
+						"password_env"
+					],
 					"properties": {
 						"username": {
 							"type": "string",
@@ -561,6 +567,105 @@
 					"type": "string",
 					"minLength": 1,
 					"maxLength": 4096
+				}
+			}
+		},
+		"email": {
+			"type": "string",
+			"minLength": 3,
+			"maxLength": 254,
+			"pattern": "^[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}$"
+		},
+		"exports": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"smtp",
+				"jobs"
+			],
+			"properties": {
+				"smtp": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": [
+						"host",
+						"from",
+						"password_env"
+					],
+					"properties": {
+						"host": {
+							"$ref": "#/$defs/domain/properties/host"
+						},
+						"port": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 65535
+						},
+						"from": {
+							"$ref": "#/$defs/email"
+						},
+						"username": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 254
+						},
+						"password_env": {
+							"$ref": "#/$defs/domain/properties/auth/properties/password_env"
+						}
+					}
+				},
+				"jobs": {
+					"type": "array",
+					"minItems": 1,
+					"maxItems": 20,
+					"items": {
+						"$ref": "#/$defs/export_job"
+					}
+				}
+			}
+		},
+		"export_job": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"name",
+				"schedule",
+				"to",
+				"query"
+			],
+			"properties": {
+				"name": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 32,
+					"pattern": "^[a-z][a-z0-9_]*$"
+				},
+				"schedule": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 64,
+					"pattern": "^[A-Za-z0-9 *,.:/~-]+$"
+				},
+				"to": {
+					"type": "array",
+					"minItems": 1,
+					"maxItems": 20,
+					"items": {
+						"$ref": "#/$defs/email"
+					}
+				},
+				"subject": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 200
+				},
+				"query": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 16384
+				},
+				"compress": {
+					"type": "boolean"
 				}
 			}
 		}

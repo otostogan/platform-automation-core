@@ -113,7 +113,7 @@
 
 # The units are installed by convergence, not written by a deploy: what runs
 # and as whom is fixed by the operator, and a deploy only supplies the cadence.
-- name: Install scheduled backup units
+- name: Install scheduled backup and export units
   ansible.builtin.template:
       src: "{{ item }}.j2"
       dest: "/etc/systemd/system/{{ item }}"
@@ -123,6 +123,8 @@
   loop:
       - platform-backup@.service
       - platform-backup@.timer
+      - platform-export@.service
+      - platform-export@.timer
       - platform-verify-backups.service
       - platform-verify-backups.timer
   notify: Reload systemd after installing backup units
