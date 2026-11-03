@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-03
+
 - `platform exec --stdin` passes the caller's standard input to the one-off
   command, up to 1 MiB, through `compose run -T` so the bytes arrive
   untouched and the end of input reaches the command; without the flag the
