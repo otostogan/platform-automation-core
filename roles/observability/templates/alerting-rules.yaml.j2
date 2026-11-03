@@ -178,6 +178,74 @@ groups:
         annotations:
             summary: '{{ .Labels.host }}: {{ printf "%.0f" .Values.B.Value }}% free on {{ .Labels.mountpoint }}'
             description: Deploys, dumps and the database stop when the disk fills.
+    -   uid: platform-host-memory-low
+        title: Host memory low
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: min by (host) (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100)
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B < [[ observability_alert_host_memory_free_percent ]]
+        for: 10m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: warning
+        annotations:
+            summary: '{{ .Labels.host }}: {{ printf "%.0f" .Values.B.Value }}% of memory free'
+            description: Below this the kernel starts killing containers; see the Host dashboard for who takes it.
+    -   uid: platform-host-cpu-busy
+        title: Host CPU busy
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 900
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: max by (host) (100 * (1 - avg by (host) (rate(node_cpu_seconds_total{mode="idle"}[5m]))))
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B > [[ observability_alert_host_cpu_percent ]]
+        for: 15m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: warning
+        annotations:
+            summary: '{{ .Labels.host }}: CPU {{ printf "%.0f" .Values.B.Value }}% busy for 15 minutes'
+            description: Every application on the host slows down together; the Host dashboard shows which project takes the cores.
     -   uid: platform-backup-stale
         title: Backup is stale
         condition: C

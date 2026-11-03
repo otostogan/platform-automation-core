@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+- Two alert rules watch the host itself: **Host memory low** (free memory
+  below `observability_alert_host_memory_free_percent`, 10, for ten
+  minutes) and **Host CPU busy** (above `observability_alert_host_cpu_percent`,
+  90, for fifteen minutes). Until now only disk space was watched at the
+  host level; everything else was per container.
+
 ## [0.34.0] - 2026-11-02
 
 - Grafana gains a **Host** dashboard beside **Application**: the whole

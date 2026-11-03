@@ -323,6 +323,23 @@ class ObservabilityAlertsTest(unittest.TestCase):
         self.assertNotIn("{%", self.TEMPLATE)
         self.assertNotIn("{#", self.TEMPLATE)
 
+    def test_the_host_itself_is_watched_for_memory_and_cpu(self) -> None:
+        rules = {rule["uid"]: rule for rule in self.rules()}
+        memory = rules["platform-host-memory-low"]
+        cpu = rules["platform-host-cpu-busy"]
+        self.assertIn(
+            "node_memory_MemAvailable_bytes", memory["data"][0]["model"]["expr"]
+        )
+        self.assertIn(
+            'node_cpu_seconds_total{mode="idle"}', cpu["data"][0]["model"]["expr"]
+        )
+        self.assertEqual(memory["data"][2]["model"]["expression"], "$B < 10")
+        self.assertEqual(cpu["data"][2]["model"]["expression"], "$B > 90")
+        self.assertEqual(memory["for"], "10m")
+        self.assertEqual(cpu["for"], "15m")
+        for rule in (memory, cpu):
+            self.assertIn(".Labels.host", rule["annotations"]["summary"])
+
     def test_rules_use_the_provisioned_sources_and_name_what_broke(self) -> None:
         sources = {
             source["uid"]

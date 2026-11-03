@@ -38,6 +38,8 @@ observability_alerts_telegram_chat_id: ""
 observability_alert_restarts: 3 # restarts of one container in 15 minutes
 observability_alert_memory_percent: 90 # of the container's memory limit
 observability_alert_disk_free_percent: 15 # free space, per filesystem
+observability_alert_host_memory_free_percent: 10 # of the host's memory, for 10 minutes
+observability_alert_host_cpu_percent: 90 # busy, all cores, for 15 minutes
 observability_alert_backup_age_hours: 26 # age of the newest dump
 observability_alert_restore_proof_age_days: 30 # age of the last proven restore
 observability_alert_error_percent: 5 # share of 5xx responses per domain
