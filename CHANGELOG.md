@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-11-03
+
 - Scheduled SQL exports by e-mail: a manifest with `database.mode: docker`
   may declare `exports` — an SMTP relay (password named by `password_env`
   and read from the release's secrets) and up to twenty jobs, each a name,
