@@ -127,8 +127,7 @@ class ExecActionTest(unittest.TestCase):
         self.assertTrue(
             command[-1].endswith("--service web --stdin -- node dist/create.js")
         )
-        self.assertIsNotNone(stdin)
-        self.assertEqual(stdin.read(), b'{"name": "demo"}')
+        self.assertEqual(stdin, b'{"name": "demo"}')
 
     def test_a_shell_operator_is_refused_before_anything_runs(self) -> None:
         questionary = FakeQuestionary(["web", "node a.js | tee out"])
