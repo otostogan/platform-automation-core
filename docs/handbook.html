@@ -11107,6 +11107,7 @@ ssh -N -L 13000:&lt;адрес&gt;:3000 ops@{{tailnet}}</code></pre>
       <tr><td>Host CPU busy</td><td>процессор хоста занят выше доли дольше пятнадцати минут</td><td><code>observability_alert_host_cpu_percent</code>, 90</td></tr>
       <tr><td>Backup is stale</td><td>последний дамп старше стольких часов</td><td><code>observability_alert_backup_age_hours</code>, 26</td></tr>
       <tr><td>No backup yet</td><td>релиз просит дампы по расписанию, а за столько же часов не появилось ни одного</td><td>тот же</td></tr>
+      <tr><td>Export failed</td><td>последний запуск выгрузки из <code>exports.jobs</code> не отправил письмо</td><td>порога нет</td></tr>
       <tr><td>Restore is not proven</td><td>дампы есть, а доказанного восстановления нет или оно старше стольких дней</td><td><code>observability_alert_restore_proof_age_days</code>, 30</td></tr>
       <tr><td>HTTP 5xx rate</td><td>доля ответов 5xx по домену за 5 минут среди запросов, дошедших до приложения; при меньшем числе запросов вердикта нет. Запросы сканеров на голый адрес или выдуманное имя получают 503 от заглушки прокси и в счёт не идут</td><td><code>observability_alert_error_percent</code>, 5; <code>observability_alert_error_min_requests</code>, 20</td></tr>
       <tr><td>Platform metrics stopped</td><td>метрики платформы не приходят 5 минут — остальные правила слепы</td><td>—</td></tr>
@@ -11931,6 +11932,84 @@ restore_validation:
 							</dd>
 						</dl>
 					</article>
+
+					<article class="card" id="ref-mf-exports">
+						<h3><code>exports</code></h3>
+						<dl>
+							<dt>Что задаёт</dt>
+							<dd>
+								Регулярные выгрузки по SQL: хост выполняет запрос
+								в базе приложения, собирает CSV и отправляет его
+								письмом. <code>smtp</code> — один на манифест:
+								<code>host</code>, <code>port</code> (587 —
+								STARTTLS, 465 — TLS сразу; без TLS не
+								отправляется), <code>from</code>,
+								<code>username</code> (по умолчанию равен
+								<code>from</code>) и <code>password_env</code> —
+								имя переменной с паролем в секретах окружения.
+								<code>jobs</code> — до двадцати заданий:
+								<code>name</code> (латиница, цифры и
+								<code>_</code>, без дефисов), <code>schedule</code>,
+								<code>to</code> (до двадцати адресов),
+								<code>query</code>, необязательные
+								<code>subject</code> и <code>compress: true</code>
+								(gzip).
+							</dd>
+							<dt>Расписание</dt>
+							<dd>
+								Календарное выражение systemd, не cron:
+								<code>Mon 06:00</code>, <code>daily</code>,
+								<code>*-*-01 08:00</code>, <code>Mon,Thu 09:30</code>.
+								Время — по часам сервера (UTC). Хост проверяет
+								выражение при выкатке через
+								<code>systemd-analyze calendar</code>; непонятное
+								ему задание остаётся без таймера, а выкатка
+								сообщает об этом предупреждением.
+							</dd>
+							<dt>Как выполняется запрос</dt>
+							<dd>
+								Ролью приложения <code>app</code>, в транзакции
+								<em>только для чтения</em> и не дольше десяти
+								минут: ошибка в запросе может прочитать лишнее,
+								но ничего не изменит. Результат заворачивается в
+								<code>COPY (…) TO STDOUT</code>, поэтому запрос
+								пишется как обычный <code>SELECT</code>, точка с
+								запятой в конце не нужна. Многострочные значения
+								и JSON внутри колонок CSV переживает.
+							</dd>
+							<dt>Пределы</dt>
+							<dd>
+								Вложение — до 20 МБ (после сжатия, если включено);
+								больше — письмо не уйдёт, сузьте запрос. Доступно
+								только с <code>database.mode: docker</code>.
+							</dd>
+							<dt>Что видно</dt>
+							<dd>
+								Последний запуск каждого задания — в
+								<code>platform status</code> и
+								<a href="#/ref-cli-exports"><code>platform exports</code></a>;
+								неудачный поднимает алерт «Export failed».
+								Проверить новое задание, не дожидаясь понедельника:
+								консоль → <strong>Exports: send one now</strong>.
+							</dd>
+						</dl>
+						<pre><code>exports:
+    smtp:
+        host: smtp.example.invalid
+        port: 587
+        from: reports@example.invalid
+        password_env: SMTP_PASSWORD      # в deploy/secrets.production.sops.yaml
+    jobs:
+        - name: clients
+          schedule: "Mon 06:00"
+          to: [sales@example.invalid]
+          subject: Clients, weekly
+          query: |
+              SELECT c.id, c.name, COUNT(ct.id) AS contacts
+              FROM companies c
+              LEFT JOIN contacts ct ON ct.company_id = c.id
+              GROUP BY c.id ORDER BY c.id</code></pre>
+					</article>
 				</section>
 
 				<!-- ============================================================ -->
@@ -12216,6 +12295,7 @@ networks:
 │   └── database.env
 └── proxy/                           conf.d · vhost.d · html · certs · htpasswd · acme
 
+├── exports/&lt;проект&gt;/&lt;окружение&gt;/      карточки последнего запуска каждой выгрузки
 /var/backups/platform/&lt;проект&gt;/&lt;окружение&gt;/   0700 — дампы и их карточки
 /var/log/platform/                   0750
 
@@ -12857,6 +12937,7 @@ ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform</code>
       <tr><td>Status on the host</td><td>Состояние этого окружения на сервере</td><td><a href="#/flow-deploy">Выкатка</a></td></tr>
       <tr><td>Logs</td><td>Логи сервисов приложения, базы и прокси по его доменам</td><td><a href="#/flow-incidents">Инциденты</a></td></tr>
       <tr><td>Database &amp; backups → Backups</td><td>Список, снять сейчас, доказать восстановимость</td><td><a href="#/flow-backups">Бэкапы</a></td></tr>
+      <tr><td>Database &amp; backups → Exports</td><td>Список выгрузок с последним запуском; отправить одну сейчас</td><td><a href="#/ref-cli-export">CLI</a></td></tr>
       <tr><td>Database &amp; backups → tunnel</td><td>Временная роль в базе и туннель на <code>127.0.0.1:15432</code> для своего клиента, 30 минут</td><td><a href="#/flow-database">База</a></td></tr>
       <tr><td>Database &amp; backups → psql</td><td><code>psql</code> в контейнере базы на сервере, под постоянной ролью приложения <code>app</code> — временная роль здесь не создаётся</td><td><a href="#/flow-database">База</a></td></tr>
       <tr><td>Database &amp; backups → restore</td><td>Заменить живую базу дампом; дамп сначала доказывается</td><td><a href="#/ref-cli">CLI</a></td></tr>
@@ -12950,6 +13031,8 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
     <a data-goto="ref-cli-rollback">rollback</a>
     <a data-goto="ref-cli-backup">backup</a>
     <a data-goto="ref-cli-backup-import">backup-import</a>
+    <a data-goto="ref-cli-export">export</a>
+    <a data-goto="ref-cli-exports">exports</a>
     <a data-goto="ref-cli-verify">verify-backup</a>
     <a data-goto="ref-cli-restore">restore</a>
     <a data-goto="ref-cli-rotate">rotate-database-password</a>
@@ -13239,6 +13322,56 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
           exists</code> — такая метка уже есть на хосте. Восстановление после импорта требует
           выкаченного релиза: сначала выкатка с пустой базой, потом перенос и
           <code>restore</code>.</dd>
+        </dl>
+      </article>
+
+      <article class="card" id="ref-cli-export">
+        <h3><code>platform export</code></h3>
+        <p>Выполняет одно задание из <a href="#/ref-mf-exports"><code>exports.jobs</code></a>
+        сейчас: запрос → CSV → письмо. Замок не берёт: запрос только читает, и выкатка не
+        должна ждать отчёта.</p>
+        <div class="note">
+          <span class="label">Из консоли</span>
+          <p><code>platform</code> в репозитории приложения → окружение →
+          <strong>Exports: send one now</strong>: показывает задания выкаченного релиза,
+          отправляет выбранное и печатает, сколько строк и кому ушло. Так проверяют SMTP
+          и запрос сразу после выкатки.</p>
+        </div>
+        <dl>
+          <dt>Флаги</dt>
+          <dd><code>--project</code>, <code>--environment</code>, <code>--name</code> — какое
+          задание; или <code>--instance &lt;проект&gt;-&lt;окружение&gt;-&lt;имя&gt;</code>,
+          как его зовёт таймер. <code>--json</code>.</dd>
+          <dt>Откуда что берётся</dt>
+          <dd>Запрос и адреса — из манифеста выкаченного релиза; пароль SMTP — из секретов
+          этого же релиза по имени <code>password_env</code>; пароль базы — с хоста. CSV
+          живёт в памяти и на диск не пишется; остаётся карточка
+          <code>/var/lib/platform/exports/&lt;проект&gt;/&lt;окружение&gt;/&lt;имя&gt;.json</code>
+          с исходом последнего запуска.</dd>
+          <dt>Если не отправилось</dt>
+          <dd>Карточка и <code>platform exports</code> называют причину одной строкой.
+          <code>refused the login</code> — SMTP не принял пароль или имя; <code>relation …
+          does not exist</code> — запрос против не той схемы; <code>larger than 20 MB</code> —
+          сузьте запрос или включите <code>compress</code>; <code>not in the environment
+          secrets</code> — переменной <code>password_env</code> нет в
+          <code>.env.&lt;окружение&gt;</code> этого релиза. По расписанию задание запускает
+          <code>platform-export@&lt;проект&gt;-&lt;окружение&gt;-&lt;имя&gt;.timer</code>;
+          его журнал — <code>journalctl -u platform-export@…</code> или консоль → Logs.</dd>
+        </dl>
+      </article>
+
+      <article class="card" id="ref-cli-exports">
+        <h3><code>platform exports</code></h3>
+        <p>Объявленные выгрузки окружения и последний запуск каждой: когда, сколько строк,
+        кому, или почему не ушла. Замок не берёт.</p>
+        <dl>
+          <dt>Флаги</dt>
+          <dd><code>--project</code>, <code>--environment</code>, <code>--json</code>.</dd>
+          <dt>Что показывает</dt>
+          <dd>Задания из манифеста выкаченного релиза с их расписанием; задание, которое из
+          манифеста убрали, но карточка его запуска осталась, помечено
+          <code>no longer declared</code> — так объясняется отчёт, который перестал
+          приходить. Консоль: <strong>Exports: list and last runs</strong>.</dd>
         </dl>
       </article>
 

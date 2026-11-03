@@ -125,8 +125,51 @@ def validate_manifest(
     formatted_errors.extend(validate_database_resources(manifest))
     formatted_errors.extend(validate_no_database(manifest))
     formatted_errors.extend(validate_auth_paths(manifest))
+    formatted_errors.extend(validate_exports(manifest))
 
     return formatted_errors
+
+
+def validate_exports(manifest: Any) -> list[str]:
+    """What the schema cannot say about ``exports``: whose database, and which names.
+
+    An export reads the platform-owned database with the application's own
+    role; an external database is reachable from nowhere the platform
+    controls, and ``none`` has nothing to read. Job names become systemd
+    instances and file names, so two jobs cannot share one.
+    """
+    try:
+        exports = manifest["exports"]
+        mode = manifest["database"]["mode"]
+    except (KeyError, TypeError):
+        return []
+    if not isinstance(exports, dict):
+        return []
+    errors = []
+    if mode != "docker":
+        errors.append(
+            "$.exports: requires a platform-owned database (database.mode: docker)"
+        )
+    jobs = exports.get("jobs")
+    if not isinstance(jobs, list):
+        return errors
+    seen: dict[str, int] = {}
+    for index, job in enumerate(jobs):
+        if not isinstance(job, dict):
+            continue
+        name = job.get("name")
+        if isinstance(name, str):
+            if name in seen:
+                errors.append(
+                    f"$.exports.jobs[{index}].name: duplicate export name {name};"
+                    f" first declared at $.exports.jobs[{seen[name]}].name"
+                )
+            else:
+                seen[name] = index
+        query = job.get("query")
+        if isinstance(query, str) and not query.strip().rstrip(";").strip():
+            errors.append(f"$.exports.jobs[{index}].query: must contain a query")
+    return errors
 
 
 def validate_no_database(manifest: Any) -> list[str]:

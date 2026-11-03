@@ -89,6 +89,22 @@ from .backup_schedule import (
     split_instance,
 )
 
+from .export_runtime import (
+    DEFAULT_EXPORTS_ROOT,
+    ExportRuntimeError,
+    list_cards as list_export_cards,
+    read_card as read_export_card,
+    run_export as perform_export,
+)
+
+from .export_schedule import (
+    ExportScheduleError,
+    declared_jobs as declared_export_jobs,
+    disable_export_timers,
+    reconcile_export_timers,
+    split_export_instance,
+)
+
 from .restore_runtime import (
     RestoreRuntimeError,
     last_verification,
@@ -443,6 +459,45 @@ def parse_arguments(
         help="Print machine-readable JSON.",
     )
 
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Run one declared export now: query, CSV, e-mail.",
+    )
+    export_identity = export_parser.add_mutually_exclusive_group(required=True)
+    export_identity.add_argument(
+        "--instance",
+        help="systemd instance name, as {project}-{environment}-{name}.",
+    )
+    export_identity.add_argument(
+        "--project",
+        help="Application project name.",
+    )
+    export_parser.add_argument(
+        "--environment",
+        choices=("lab", "staging", "production"),
+        help="Deployment environment. Required with --project.",
+    )
+    export_parser.add_argument(
+        "--name",
+        help="The export's name from exports.jobs. Required with --project.",
+    )
+    export_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON.",
+    )
+
+    exports_parser = subparsers.add_parser(
+        "exports",
+        help="List the declared exports and how each last ran.",
+    )
+    add_identity_arguments(exports_parser)
+    exports_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON.",
+    )
+
     import_parser = subparsers.add_parser(
         "backup-import",
         help=(
@@ -620,6 +675,7 @@ def build_status_document(
     records: list[dict[str, Any]],
     backups: dict[str, Any] = None,
     retired: Optional[dict[str, Any]] = None,
+    exports: Optional[list] = None,
 ) -> dict[str, Any]:
     current = find_latest_deployed_release(records)
     latest = records[-1] if records else None
@@ -635,7 +691,83 @@ def build_status_document(
         "history": [summarize_release(record) for record in reversed(records)],
         "backups": backups,
         "retired": retired,
+        "exports": exports or [],
     }
+
+
+def current_manifest_or_none(
+    projects_root: Path,
+    releases_root: Path,
+    project: str,
+    environment: str,
+    minimum_age_recipients: int,
+) -> Optional[dict[str, Any]]:
+    """The serving release's manifest, or nothing when it cannot be read."""
+    try:
+        manifest, _ = load_current_manifest(
+            projects_root, releases_root, project, environment, minimum_age_recipients
+        )
+    except (ReleaseLedgerError, RestoreRuntimeError, OSError):
+        return None
+    return manifest
+
+
+def build_exports_status(
+    exports_root: Path,
+    project: str,
+    environment: str,
+    manifest: Optional[dict[str, Any]],
+) -> list:
+    """Every declared export with its last run beside it.
+
+    A card without a job is a job that left the manifest; it is listed as
+    such so a report that stopped arriving has an explanation.
+    """
+    jobs = declared_export_jobs(manifest) if manifest else []
+    entries = []
+    names = set()
+    for job in jobs:
+        names.add(job["name"])
+        entries.append(
+            {
+                "name": job["name"],
+                "schedule": job["schedule"],
+                "to": list(job["to"]),
+                "declared": True,
+                "last": read_export_card(
+                    exports_root, project, environment, job["name"]
+                ),
+            }
+        )
+    for card in list_export_cards(exports_root, project, environment):
+        if card.get("name") in names:
+            continue
+        entries.append(
+            {
+                "name": card.get("name"),
+                "schedule": None,
+                "to": [],
+                "declared": False,
+                "last": card,
+            }
+        )
+    return entries
+
+
+def print_exports_status(entries: list) -> None:
+    if not entries:
+        return
+    print("Exports:")
+    for entry in entries:
+        last = entry.get("last")
+        if last is None:
+            outcome = "never ran"
+        elif last.get("outcome") == "sent":
+            outcome = f"sent {last.get('sent_at')} ({last.get('rows')} rows)"
+        else:
+            outcome = f"FAILED {last.get('started_at')} — {last.get('error')}"
+        schedule = entry["schedule"] if entry["declared"] else "no longer declared"
+        print(f"  {entry['name']}: {schedule}; last: {outcome}")
 
 
 def build_backup_status(
@@ -825,6 +957,7 @@ def print_human_status(document: dict[str, Any]) -> None:
         document["latest"],
     )
     print_backup_status(document["backups"])
+    print_exports_status(document.get("exports") or [])
 
 
 def is_platform_host(projects_root: Path) -> bool:
@@ -930,6 +1063,7 @@ def run_status(
     offsite_config: Path = DEFAULT_OFFSITE_CONFIG,
     offsite_credentials: Path = DEFAULT_CREDENTIALS_FILE,
     offsite_reporter=offsite_status,
+    exports_root: Path = DEFAULT_EXPORTS_ROOT,
 ) -> int:
     try:
         records = list_release_records(
@@ -967,6 +1101,18 @@ def run_status(
     )
     document["retired"] = read_marker(
         projects_root, arguments.project, arguments.environment
+    )
+    document["exports"] = build_exports_status(
+        exports_root,
+        arguments.project,
+        arguments.environment,
+        current_manifest_or_none(
+            projects_root,
+            releases_root,
+            arguments.project,
+            arguments.environment,
+            arguments.minimum_age_recipients,
+        ),
     )
     if document["retired"] and not arguments.json:
         print(
@@ -1146,6 +1292,17 @@ def print_schedule_summary(schedule: dict[str, Any]) -> None:
 
     if schedule.get("warning"):
         print(f"Schedule warning: {schedule['warning']}")
+
+    exports = schedule.get("exports") or {}
+    for job in exports.get("jobs") or []:
+        if job["state"] == "enabled":
+            print(f"Export {job['name']}: {job['schedule']} via {job['unit']}")
+        else:
+            print(f"Export {job['name']}: {job['state']}")
+    for unit in exports.get("removed") or []:
+        print(f"Export timer removed: {unit}")
+    for warning in exports.get("warnings") or []:
+        print(f"Export warning: {warning}")
 
 
 def print_retention_summary(retention: dict[str, Any]) -> None:
@@ -1477,15 +1634,18 @@ def run_backup_schedule(
     systemd_root: Path,
     systemctl_executable: Path,
     timer_reconciler,
+    export_reconciler=reconcile_export_timers,
 ) -> dict[str, Any]:
-    """Match the host timer to the release, warning rather than failing.
+    """Match the host timers to the release, warning rather than failing.
 
     A deployment that is already serving traffic must not be reported as
     failed because a timer could not be written; the warning surfaces in the
-    deploy output and in `platform status`.
+    deploy output and in `platform status`. The export timers are
+    reconciled in the same breath: they are the same kind of thing, owned
+    the same way.
     """
     try:
-        return timer_reconciler(
+        schedule = timer_reconciler(
             manifest=request.bundle.manifest,
             project=request.project,
             environment=request.environment,
@@ -1493,12 +1653,27 @@ def run_backup_schedule(
             systemctl_executable=systemctl_executable,
         )
     except (BackupScheduleError, OSError) as error:
-        return {
+        schedule = {
             "unit": None,
             "state": "unknown",
             "interval_minutes": None,
             "warning": f"backup schedule not applied: {error}",
         }
+    try:
+        schedule["exports"] = export_reconciler(
+            manifest=request.bundle.manifest,
+            project=request.project,
+            environment=request.environment,
+            systemd_root=systemd_root,
+            systemctl_executable=systemctl_executable,
+        )
+    except (ExportScheduleError, OSError) as error:
+        schedule["exports"] = {
+            "jobs": [],
+            "removed": [],
+            "warnings": [f"export schedules not applied: {error}"],
+        }
+    return schedule
 
 
 def run_release_retention(
@@ -2111,6 +2286,111 @@ def run_backups(
     else:
         print_backups(document)
 
+    return 0
+
+
+def resolve_export_identity(arguments: argparse.Namespace) -> tuple[str, str, str]:
+    if arguments.instance is not None:
+        return split_export_instance(arguments.instance)
+    if arguments.environment is None or arguments.name is None:
+        raise ExportScheduleError(
+            "--environment and --name are required with --project"
+        )
+    return arguments.project, arguments.environment, arguments.name
+
+
+def print_export_result(card: dict[str, Any]) -> None:
+    print(f"Export sent: {card['project']}/{card['environment']} {card['name']}")
+    print(f"  attachment: {card.get('attachment')} ({card.get('rows')} rows)")
+    print(f"  to: {', '.join(card.get('to') or [])}")
+    print(f"  release: {card.get('release_tag')}")
+
+
+def run_export(
+    arguments: argparse.Namespace,
+    projects_root: Path,
+    releases_root: Path,
+    runtime_secrets_root: Path,
+    databases_root: Path,
+    exports_root: Path,
+    age_key_file: Path,
+    sops_executable: Path,
+    docker_executable: Path,
+    minimum_age_recipients: int,
+    exporter=perform_export,
+) -> int:
+    """No lock: the query is read-only, and a deploy must not wait for a report."""
+    try:
+        project, environment, name = resolve_export_identity(arguments)
+        manifest, record = load_current_manifest(
+            projects_root, releases_root, project, environment, minimum_age_recipients
+        )
+        runtime_secrets_path = (
+            runtime_secrets_root
+            / project
+            / environment
+            / record["release_id"]
+            / "app.env"
+        )
+        card = exporter(
+            manifest=manifest,
+            project=project,
+            environment=environment,
+            name=name,
+            record=record,
+            runtime_secrets_path=runtime_secrets_path,
+            databases_root=databases_root,
+            exports_root=exports_root,
+            age_key_file=age_key_file,
+            sops_executable=sops_executable,
+            docker_executable=docker_executable,
+        )
+    except (
+        ExportRuntimeError,
+        ExportScheduleError,
+        RestoreRuntimeError,
+        ReleaseLedgerError,
+        OSError,
+    ) as error:
+        print(f"export error: {error}", file=sys.stderr)
+        return 1
+    if arguments.json:
+        print(json.dumps(card, indent=2, sort_keys=True))
+    else:
+        print_export_result(card)
+    return 0
+
+
+def run_exports(
+    arguments: argparse.Namespace,
+    projects_root: Path,
+    releases_root: Path,
+    exports_root: Path,
+    minimum_age_recipients: int,
+) -> int:
+    entries = build_exports_status(
+        exports_root,
+        arguments.project,
+        arguments.environment,
+        current_manifest_or_none(
+            projects_root,
+            releases_root,
+            arguments.project,
+            arguments.environment,
+            minimum_age_recipients,
+        ),
+    )
+    document = {
+        "project": arguments.project,
+        "environment": arguments.environment,
+        "exports": entries,
+    }
+    if arguments.json:
+        print(json.dumps(document, indent=2, sort_keys=True))
+    elif entries:
+        print_exports_status(entries)
+    else:
+        print("No exports declared; nothing has run.")
     return 0
 
 
@@ -2967,6 +3247,9 @@ def main(
     offsite_reporter=offsite_status,
     downloader=download_backup,
     timer_disabler=disable_backup_timer,
+    export_disabler=disable_export_timers,
+    exports_root: Path = DEFAULT_EXPORTS_ROOT,
+    exporter=perform_export,
     session_opener=open_session,
     session_closer=close_session,
     token_stream=None,
@@ -3110,6 +3393,7 @@ def main(
                     systemd_root=systemd_root,
                     systemctl_executable=systemctl_executable,
                     timer_disabler=timer_disabler,
+                    export_disabler=export_disabler,
                 )
             else:
                 document = purge(
@@ -3127,6 +3411,8 @@ def main(
                     systemd_root=systemd_root,
                     systemctl_executable=systemctl_executable,
                     timer_disabler=timer_disabler,
+                    export_disabler=export_disabler,
+                    exports_root=exports_root,
                 )
         except (RetireError, ReleaseLedgerError, OperationLockError) as error:
             print(f"{arguments.command} error: {error}", file=sys.stderr)
@@ -3241,6 +3527,30 @@ def main(
     if arguments.command == "projects":
         return run_projects(arguments, projects_root)
 
+    if arguments.command == "export":
+        return run_export(
+            arguments,
+            projects_root,
+            releases_root,
+            runtime_secrets_root,
+            databases_root,
+            exports_root,
+            age_key_file,
+            sops_executable,
+            docker_executable,
+            arguments.minimum_age_recipients,
+            exporter,
+        )
+
+    if arguments.command == "exports":
+        return run_exports(
+            arguments,
+            projects_root,
+            releases_root,
+            exports_root,
+            arguments.minimum_age_recipients,
+        )
+
     if arguments.command == "status":
         return run_status(
             arguments,
@@ -3250,6 +3560,7 @@ def main(
             offsite_config,
             offsite_credentials,
             offsite_reporter,
+            exports_root,
         )
 
     print(

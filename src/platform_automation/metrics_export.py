@@ -21,6 +21,8 @@ from typing import Any, Optional
 
 from .backup_runtime import DEFAULT_BACKUPS_ROOT, list_backups
 from .backup_schedule import backups_are_scheduled
+from .export_runtime import DEFAULT_EXPORTS_ROOT, OUTCOME_SENT, list_cards
+from .export_schedule import declared_jobs
 from .compose_runtime import (
     ComposeRuntimeError,
     load_staged_manifest,
@@ -466,6 +468,7 @@ def release_samples(
     backups_root: Path,
     declared: Optional[dict] = None,
     dashboards: Optional[dict] = None,
+    exports_root: Path = DEFAULT_EXPORTS_ROOT,
 ) -> bool:
     """Returns whether the ledger could be walked at all.
 
@@ -593,6 +596,14 @@ def release_samples(
                     scope,
                     1.0 if backups_are_scheduled(manifest) else 0.0,
                 )
+                for job in declared_jobs(manifest):
+                    samples.add(
+                        "platform_export_scheduled",
+                        "gauge",
+                        "An export the serving release schedules.",
+                        {**scope, "export": job["name"], "schedule": job["schedule"]},
+                        1.0,
+                    )
                 for domain in manifest["domains"]:
                     samples.add(
                         "platform_domain_info",
@@ -617,6 +628,8 @@ def release_samples(
                 # application's dashboards as they are until it reads again.
                 if dashboards is not None:
                     dashboards.setdefault(f"{project}-{environment}", None)
+
+        export_samples(samples, exports_root, project, environment)
 
         directory = backups_root / project / environment
         try:
@@ -667,6 +680,34 @@ def release_samples(
     return True
 
 
+def export_samples(
+    samples: Samples, exports_root: Path, project: str, environment: str
+) -> None:
+    """How each export last ended, from its card; a job that never ran has none."""
+    scope = {"project": project, "environment": environment}
+    for card in list_cards(exports_root, project, environment):
+        name = card.get("name")
+        if not isinstance(name, str):
+            continue
+        labels = {**scope, "export": name}
+        samples.add(
+            "platform_export_last_succeeded",
+            "gauge",
+            "1 when the export's last run sent its mail.",
+            labels,
+            1.0 if card.get("outcome") == OUTCOME_SENT else 0.0,
+        )
+        started = parse_time(str(card.get("started_at") or ""))
+        if started is not None:
+            samples.add(
+                "platform_export_last_run_timestamp_seconds",
+                "gauge",
+                "When the export last ran.",
+                labels,
+                started,
+            )
+
+
 def write_atomically(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=".platform.prom.", dir=path.parent)
@@ -690,11 +731,18 @@ def collect(
     declared: Optional[dict] = None,
     dashboards: Optional[dict] = None,
     outcome: Optional[dict] = None,
+    exports_root: Path = DEFAULT_EXPORTS_ROOT,
 ) -> str:
     samples = Samples()
     container_samples(samples, docker, runner)
     walked = release_samples(
-        samples, projects_root, releases_root, backups_root, declared, dashboards
+        samples,
+        projects_root,
+        releases_root,
+        backups_root,
+        declared,
+        dashboards,
+        exports_root,
     )
     if outcome is not None:
         outcome["ledger"] = walked
@@ -718,6 +766,7 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--projects-root", type=Path, default=DEFAULT_PROJECTS_ROOT)
     parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
     parser.add_argument("--backups-root", type=Path, default=DEFAULT_BACKUPS_ROOT)
+    parser.add_argument("--exports-root", type=Path, default=DEFAULT_EXPORTS_ROOT)
     parser.add_argument(
         "--targets",
         type=Path,
@@ -746,6 +795,7 @@ def main(argv: Optional[list] = None) -> int:
                 declared=declared,
                 dashboards=dashboards,
                 outcome=outcome,
+                exports_root=arguments.exports_root,
             ),
         )
         if not outcome.get("ledger"):

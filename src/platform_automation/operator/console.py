@@ -264,6 +264,88 @@ def render_backups(document: dict) -> str:
     return "\n".join(lines)
 
 
+def render_exports(document: dict) -> str:
+    entries = document.get("exports") or []
+    if not entries:
+        return f"No exports declared for {document.get('project')}/{document.get('environment')}"
+    lines = [f"{'EXPORT':<20} {'SCHEDULE':<22} LAST RUN"]
+    for entry in entries:
+        last = entry.get("last")
+        if last is None:
+            outcome = "never ran"
+        elif last.get("outcome") == "sent":
+            outcome = (
+                f"{GREEN}sent{RESET} {last.get('sent_at')}  {last.get('rows')} rows"
+                f"  → {', '.join(last.get('to') or [])}"
+            )
+        else:
+            outcome = (
+                f"{RED}FAILED{RESET} {last.get('started_at')}  {last.get('error')}"
+            )
+        schedule = (
+            entry.get("schedule") if entry.get("declared") else "no longer declared"
+        )
+        lines.append(f"{entry.get('name', ''):<20} {schedule or '-':<22} {outcome}")
+    return "\n".join(lines)
+
+
+def render_export_result(card: dict) -> str:
+    return "\n".join(
+        [
+            f"{GREEN}export sent{RESET}  {card.get('name')}",
+            f"  attachment {card.get('attachment')}  {card.get('rows')} rows",
+            f"  to         {', '.join(card.get('to') or [])}",
+            f"  release    {card.get('release_tag')}",
+        ]
+    )
+
+
+def export_action(context: Context, scope, prompts, remote=None) -> Action:
+    """Send one declared export now: the way to see a new job work before Monday."""
+    remote = remote or run_platform
+    ident = ["--project", scope.project, "--environment", scope.environment]
+    target_host = context.target_host
+
+    def run() -> int:
+        questionary, style = prompts
+        if not target_host:
+            print(f"{RED}deploy.yml names no target_host{RESET}")
+            return 1
+        listing = remote(target_host, "ops", ["exports", *ident])
+        if not listing.ok:
+            return report_failure(listing.error, context.core_pin)
+        jobs = [e for e in listing.document.get("exports") or [] if e.get("declared")]
+        if not jobs:
+            print(
+                "The serving release declares no exports; add an `exports` block to"
+                " the manifest and deploy."
+            )
+            return 1
+        job = choose(
+            questionary,
+            style,
+            "Export",
+            jobs,
+            lambda e: f"{e['name']}  ({e.get('schedule')})  → {', '.join(e.get('to') or [])}",
+        )
+        arguments = ["export", *ident, "--name", job["name"]]
+        shown = f"ssh ops@{target_host} 'sudo -n platform {' '.join(arguments)} --json'"
+        print(f"{DIM}→ {shown}{RESET}")
+        result = remote(target_host, "ops", arguments, timeout=900)
+        if not result.ok:
+            return report_failure(result.error, context.core_pin)
+        print(render_export_result(result.document))
+        return 0
+
+    return Action(
+        "Exports: send one now",
+        f"platform export {' '.join(ident)} --name …",
+        run,
+        "#/ref-cli-export",
+        remote=True,
+    )
+
+
 def render_backup_result(document: dict) -> str:
     lines = [
         f"{GREEN}dump written{RESET}  {document.get('path')}",
@@ -2669,6 +2751,14 @@ def app_actions(context: Context, scope, prompts=None) -> list:
             "#/flow-backups",
             timeout=BACKUP_TIMEOUT_SECONDS,
         ),
+        remote_action(
+            "Exports: list and last runs",
+            target,
+            "ops",
+            ["exports", *ident],
+            render_exports,
+            "#/ref-cli-exports",
+        ),
         validate_action(context.root, scope.manifest),
         secrets_action(context, scope.environment, "push"),
         secrets_action(context, scope.environment, "pull"),
@@ -2680,6 +2770,7 @@ def app_actions(context: Context, scope, prompts=None) -> list:
         actions.append(exec_action(context, scope, prompts))
         actions.append(manual_deploy_action(context, scope, prompts))
         actions.append(transfer_action(context, scope, prompts))
+        actions.append(export_action(context, scope, prompts))
         actions += database_actions(context, scope, prompts)
         actions += [
             restore_action(context, scope, prompts),
@@ -2770,7 +2861,7 @@ MENU_GROUPS = (
     # (title, label prefixes) — what is reached for daily stays at the top level
     ("Observability", ("Grafana:", "Alerts:")),
     ("Converge & readiness", ("Converge", "Readiness", "Bootstrap:")),
-    ("Database & backups", ("Database:", "Backups:")),
+    ("Database & backups", ("Database:", "Backups:", "Exports:")),
     ("Secrets & config", ("Secrets:", "Validate ")),
     ("Retire or purge", ("Retire:", "Purge:")),
 )

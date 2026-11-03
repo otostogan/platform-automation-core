@@ -3,6 +3,7 @@ from pathlib import Path
 
 from platform_automation.operator.console import (
     render_backups,
+    render_exports,
     render_projects,
     render_status,
     deploy_command,
@@ -199,6 +200,46 @@ class RenderBackupsTest(unittest.TestCase):
         )
 
 
+class RenderExportsTest(unittest.TestCase):
+    def test_declared_and_orphan_jobs_with_their_last_run(self) -> None:
+        shown = render_exports(
+            {
+                "project": "p",
+                "environment": "lab",
+                "exports": [
+                    {
+                        "name": "clients",
+                        "schedule": "Mon 06:00",
+                        "declared": True,
+                        "last": None,
+                    },
+                    {
+                        "name": "old",
+                        "schedule": None,
+                        "declared": False,
+                        "last": {
+                            "outcome": "failed",
+                            "started_at": "2026-01-05T06:00:00Z",
+                            "error": "boom",
+                        },
+                    },
+                ],
+            }
+        )
+        self.assertIn("clients", shown)
+        self.assertIn("Mon 06:00", shown)
+        self.assertIn("never ran", shown)
+        self.assertIn("no longer declared", shown)
+        self.assertIn("FAILED", shown)
+        self.assertIn("boom", shown)
+
+    def test_nothing_declared_says_so(self) -> None:
+        self.assertEqual(
+            render_exports({"project": "p", "environment": "lab", "exports": []}),
+            "No exports declared for p/lab",
+        )
+
+
 class MenuGroupsTest(unittest.TestCase):
     def test_daily_actions_stay_on_top_and_the_rest_is_grouped_in_order(self) -> None:
         from platform_automation.operator.console import Action, group_of, menu_entries
@@ -209,6 +250,7 @@ class MenuGroupsTest(unittest.TestCase):
             "Status on the host",
             "Logs",
             "Backups: list",
+            "Exports: send one now",
             "Validate manifest and Compose",
             "Secrets: push .env.lab → ciphertext",
             "Secrets: pull ciphertext → .env.lab (needs a key)",
@@ -238,7 +280,7 @@ class MenuGroupsTest(unittest.TestCase):
             if isinstance(e, tuple)
         }
         self.assertEqual(
-            groups["Database & backups"], ["Backups", "Database", "Database"]
+            groups["Database & backups"], ["Backups", "Exports", "Database", "Database"]
         )
         self.assertEqual(groups["Retire or purge"], ["Retire", "Purge"])
         self.assertIsNone(group_of("Deploy"))

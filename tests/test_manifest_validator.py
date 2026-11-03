@@ -830,5 +830,101 @@ class DomainAuthTest(ManifestValidatorTest):
         self.assertNotEqual(self.validate(manifest), [])
 
 
+class ExportsValidatorTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.schema = load_json(SCHEMA_PATH)
+        cls.valid_manifest = load_yaml(MANIFEST_PATH)
+
+    def validate(self, manifest: Any) -> list[str]:
+        return validate_manifest(manifest, self.schema)
+
+    def exporting_manifest(self) -> dict:
+        manifest = copy.deepcopy(self.valid_manifest)
+        manifest["database"] = {
+            "mode": "docker",
+            "postgres_major": 17,
+            "backup_enabled": False,
+        }
+        manifest["exports"] = {
+            "smtp": {
+                "host": "smtp.example.invalid",
+                "port": 587,
+                "from": "reports@example.invalid",
+                "password_env": "SMTP_PASSWORD",
+            },
+            "jobs": [
+                {
+                    "name": "clients",
+                    "schedule": "Mon 06:00",
+                    "to": ["sales@example.invalid"],
+                    "subject": "Clients",
+                    "query": "SELECT id, name FROM companies ORDER BY id;",
+                    "compress": True,
+                }
+            ],
+        }
+        return manifest
+
+    def test_accepts_exports_on_a_platform_database(self) -> None:
+        self.assertEqual(self.validate(self.exporting_manifest()), [])
+
+    def test_exports_need_the_platform_s_database(self) -> None:
+        manifest = self.exporting_manifest()
+        manifest["database"] = {
+            "mode": "external",
+            "postgres_major": 17,
+            "backup_enabled": False,
+        }
+        self.assertIn(
+            "$.exports: requires a platform-owned database (database.mode: docker)",
+            self.validate(manifest),
+        )
+
+    def test_job_names_are_unique_slugs_without_hyphens(self) -> None:
+        manifest = self.exporting_manifest()
+        manifest["exports"]["jobs"].append(dict(manifest["exports"]["jobs"][0]))
+        errors = self.validate(manifest)
+        self.assertTrue(
+            any("duplicate export name clients" in e for e in errors), errors
+        )
+
+        manifest = self.exporting_manifest()
+        manifest["exports"]["jobs"][0]["name"] = "my-export"
+        errors = self.validate(manifest)
+        self.assertTrue(
+            any(e.startswith("$.exports.jobs[0].name:") for e in errors), errors
+        )
+
+    def test_the_schedule_recipients_and_query_are_bounded(self) -> None:
+        manifest = self.exporting_manifest()
+        manifest["exports"]["jobs"][0]["schedule"] = "daily; rm -rf /"
+        self.assertTrue(
+            any(
+                e.startswith("$.exports.jobs[0].schedule:")
+                for e in self.validate(manifest)
+            )
+        )
+        manifest = self.exporting_manifest()
+        manifest["exports"]["jobs"][0]["to"] = ["not-an-address"]
+        self.assertTrue(
+            any(
+                e.startswith("$.exports.jobs[0].to[0]:")
+                for e in self.validate(manifest)
+            )
+        )
+        manifest = self.exporting_manifest()
+        manifest["exports"]["jobs"][0]["query"] = " ; "
+        self.assertIn(
+            "$.exports.jobs[0].query: must contain a query", self.validate(manifest)
+        )
+
+    def test_the_smtp_password_is_named_never_written(self) -> None:
+        manifest = self.exporting_manifest()
+        manifest["exports"]["smtp"]["password"] = "hunter2"
+        errors = self.validate(manifest)
+        self.assertTrue(any(e.startswith("$.exports.smtp:") for e in errors), errors)
+
+
 if __name__ == "__main__":
     unittest.main()

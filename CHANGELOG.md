@@ -7,6 +7,24 @@ release.
 
 ## [Unreleased]
 
+- Scheduled SQL exports by e-mail: a manifest with `database.mode: docker`
+  may declare `exports` — an SMTP relay (password named by `password_env`
+  and read from the release's secrets) and up to twenty jobs, each a name,
+  a systemd calendar `schedule`, recipients and a query. The host runs the
+  query in the database container as the application's role, in a
+  read-only transaction limited to ten minutes, and mails the CSV (gzip
+  with `compress: true`, 20 MB at most) over TLS. A deploy writes one
+  `platform-export@<project>-<environment>-<name>.timer` per job after
+  `systemd-analyze calendar` accepts the schedule and removes the timers
+  of jobs that left the manifest; `retire` and `purge` remove them all.
+  `platform export` runs a job now, `platform exports` and `platform
+  status` show each job's last run from its card under
+  `/var/lib/platform/exports`, the metrics export publishes
+  `platform_export_scheduled`, `platform_export_last_succeeded` and
+  `platform_export_last_run_timestamp_seconds`, and the new **Export
+  failed** alert fires when a scheduled job's last run did not send. The
+  console gains "Exports: list and last runs" and "Exports: send one now".
+
 ## [0.35.0] - 2026-11-03
 
 - `platform exec --stdin` passes the caller's standard input to the one-off

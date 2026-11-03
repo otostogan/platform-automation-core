@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from .export_schedule import disable_export_timers
 from .backup_schedule import (
     DEFAULT_SYSTEMCTL_EXECUTABLE,
     DEFAULT_SYSTEMD_ROOT,
@@ -141,6 +142,7 @@ def retire(
     systemctl_executable: Path = DEFAULT_SYSTEMCTL_EXECUTABLE,
     runner=None,
     timer_disabler=disable_backup_timer,
+    export_disabler=disable_export_timers,
 ) -> dict[str, Any]:
     validate_ledger_identity(project, environment)
     runner = subprocess.run if runner is None else runner
@@ -174,6 +176,13 @@ def retire(
             systemctl_executable=systemctl_executable,
             runner=runner,
         )
+        export_timers = export_disabler(
+            project,
+            environment,
+            systemd_root=systemd_root,
+            systemctl_executable=systemctl_executable,
+            runner=runner,
+        )
         try:
             released = release_domains(nginx_manager, project, environment)
         except NginxTransactionError as error:
@@ -196,6 +205,7 @@ def retire(
         "last_release": marker["last_release_tag"],
         "domains_released": released,
         "backup_timer": timer["unit"],
+        "export_timers": [entry["unit"] for entry in export_timers],
         "kept": [
             "database volume " + database_resource_name(project, environment),
             "local backups",
@@ -230,6 +240,8 @@ def purge(
     systemctl_executable: Path = DEFAULT_SYSTEMCTL_EXECUTABLE,
     runner=None,
     timer_disabler=disable_backup_timer,
+    export_disabler=disable_export_timers,
+    exports_root: Optional[Path] = None,
 ) -> dict[str, Any]:
     validate_ledger_identity(project, environment)
     runner = subprocess.run if runner is None else runner
@@ -262,7 +274,17 @@ def purge(
             systemctl_executable=systemctl_executable,
             runner=runner,
         )
-        for root in (releases_root, backups_root, databases_root, runtime_secrets_root):
+        export_disabler(
+            project,
+            environment,
+            systemd_root=systemd_root,
+            systemctl_executable=systemctl_executable,
+            runner=runner,
+        )
+        roots = [releases_root, backups_root, databases_root, runtime_secrets_root]
+        if exports_root is not None:
+            roots.append(exports_root)
+        for root in roots:
             _remove_tree(root / project / environment, removed)
             parent = root / project
             if (

@@ -41,6 +41,7 @@ observability_alert_disk_free_percent: 15 # free space, per filesystem
 observability_alert_host_memory_free_percent: 10 # of the host's memory, for 10 minutes
 observability_alert_host_cpu_percent: 90 # busy, all cores, for 15 minutes
 observability_alert_backup_age_hours: 26 # age of the newest dump
+# Export failed has no threshold: the last run of a job either sent its mail or not.
 observability_alert_restore_proof_age_days: 30 # age of the last proven restore
 observability_alert_error_percent: 5 # share of 5xx responses per domain
 observability_alert_error_min_requests: 20 # in 5 minutes, below this no verdict

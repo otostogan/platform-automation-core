@@ -280,6 +280,40 @@ groups:
         annotations:
             summary: '{{ .Labels.host }}: newest dump of {{ .Labels.project }}/{{ .Labels.environment }} is {{ printf "%.0f" .Values.B.Value }} hours old'
             description: 'The backup timer has not produced a dump. Handbook: #/flow-database.'
+    -   uid: platform-export-failed
+        title: Export failed
+        condition: C
+        data:
+        -   refId: A
+            relativeTimeRange:
+                from: 600
+                to: 0
+            datasourceUid: platform-prometheus
+            model:
+                refId: A
+                expr: platform_export_last_succeeded and on (project, environment, export) platform_export_scheduled == 1 and on (project, environment) platform_retired == 0
+                instant: true
+        -   refId: B
+            datasourceUid: __expr__
+            model:
+                refId: B
+                type: reduce
+                expression: A
+                reducer: last
+        -   refId: C
+            datasourceUid: __expr__
+            model:
+                refId: C
+                type: math
+                expression: $B < 1
+        for: 5m
+        noDataState: OK
+        execErrState: OK
+        labels:
+            severity: warning
+        annotations:
+            summary: '{{ .Labels.host }}: export {{ .Labels.export }} of {{ .Labels.project }}/{{ .Labels.environment }} did not send'
+            description: 'The last run of the export failed; the card says why: platform exports --project … --environment …. Handbook: #/ref-cli-export.'
     -   uid: platform-backup-missing
         title: No backup yet
         condition: C

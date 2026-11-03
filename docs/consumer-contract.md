@@ -32,3 +32,22 @@ top-level `restore_validation` are refused, `DATABASE_URL` is neither
 required nor injected, no backup timer is reconciled, and `platform backup`,
 `restore` and `verify-backup` refuse with the reason. A Compose file must
 not reference `PLATFORM_DB_NETWORK` unless the mode is `docker`.
+
+## Exports
+
+With `database.mode: docker` the manifest may declare `exports`: SQL
+queries the host runs on a calendar and mails as CSV. `exports.smtp` names
+the relay (`host`, `port`, `from`, optional `username`) and the secret
+variable that holds the password (`password_env`, read from the release's
+encrypted environment secrets); `exports.jobs` lists up to twenty jobs,
+each with a `name` (letters, digits and underscores), a systemd calendar
+`schedule`, recipients `to`, the `query`, and optionally `subject` and
+`compress`. The query runs as the application's role in a read-only
+transaction with a ten-minute limit; the CSV is held in memory and sent
+over TLS only. A deploy writes one `platform-export@<project>-<env>-<name>`
+timer per job, checks the schedule with `systemd-analyze calendar`, and
+removes timers of jobs that left the manifest; `retire` removes them all.
+`platform export` runs a job now, `platform exports` and `platform status`
+show how each last ran, and the **Export failed** alert fires when the last
+run did not send.
+
