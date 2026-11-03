@@ -12003,7 +12003,7 @@ restore_validation:
         - name: clients
           schedule: "Mon 06:00"
           to: [sales@example.invalid]
-          subject: CRM clients, weekly
+          subject: Clients, weekly
           query: |
               SELECT c.id, c.name, COUNT(ct.id) AS contacts
               FROM companies c
