@@ -13146,15 +13146,20 @@ sudo -n platform &lt;команда&gt; --project {{project}} --environment {{en
         <div class="note">
           <span class="label">Из консоли</span>
           <p><code>platform</code> в репозитории приложения → окружение →
-          <strong>Run a script inside the application</strong>: спросит сервис и команду,
-          покажет строку для хоста, выполнит по SSH с терминалом — вывод идёт как есть.</p>
+          <strong>Run a script inside the application</strong>: спросит сервис, команду и
+          файл входа на вашей машине (пусто — без входа), покажет строку для хоста, выполнит
+          по SSH — с терминалом без входа, или с файлом в стандартный ввод и без
+          псевдотерминала; вывод идёт как есть, в ваш терминал, и нигде не сохраняется.</p>
         </div>
         <dl>
           <dt>Флаги</dt>
           <dd><code>--project</code>, <code>--environment</code>; <code>--service</code> — сервис
-          compose, чей образ, настройки и сети взять (по умолчанию <code>web</code>); сама
-          команда и её аргументы — после <code>--</code>, например
-          <code>-- node dist/generate-quarter.js 10000</code>.</dd>
+          compose, чей образ, настройки и сети взять (по умолчанию <code>web</code>);
+          <code>--stdin</code> — передать команде стандартный ввод вызывающего, до 1 МБ,
+          без псевдотерминала; без флага вход закрыт, и команда, которая ждёт ввода, не
+          повисает; сама команда и её аргументы — после <code>--</code>, например
+          <code>-- node dist/generate-quarter.js 10000</code>. По SSH со входом из файла:
+          <code>ssh ops@host 'sudo -n platform exec … --stdin -- node dist/create.js' &lt; вход.json</code>.</dd>
           <dt>Что делает</dt>
           <dd>Тот же путь, что у миграции при выкатке: <code>compose run --rm</code> с образом
           релиза, расшифрованным в tmpfs окружением и сетями до базы. Контейнер отдельный —

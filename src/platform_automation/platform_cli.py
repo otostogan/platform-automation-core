@@ -364,6 +364,14 @@ def parse_arguments(
         "--service",
         help="Compose service whose image and settings to use. Default: the web service.",
     )
+    exec_parser.add_argument(
+        "--stdin",
+        action="store_true",
+        help=(
+            "Pass this command's standard input to the command in the container "
+            "(up to 1 MiB). Without it the input is closed."
+        ),
+    )
     # Not "command": that is the subcommand's own destination.
     exec_parser.add_argument(
         "argv",
@@ -2159,6 +2167,24 @@ def run_backup_import(
     return 0
 
 
+MAX_EXEC_STDIN_BYTES = 1024 * 1024
+
+
+def read_exec_input(stream, limit: int = MAX_EXEC_STDIN_BYTES) -> bytes:
+    """The operator's input for a one-off command, bounded before any container starts.
+
+    Read whole rather than streamed: the limit is checked here, and nothing
+    is written to the host's disk — the bytes go from memory into the
+    container and nowhere else.
+    """
+    data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise ComposeRuntimeError(
+            f"the input exceeds {limit // (1024 * 1024)} MiB; pass a smaller file"
+        )
+    return data
+
+
 def run_exec(
     arguments: argparse.Namespace,
     projects_root: Path,
@@ -2172,6 +2198,7 @@ def run_exec(
     databases_root: Path,
     database_ensurer=ensure_project_database,
     compose_runtime_module=compose_runtime,
+    stdin_stream=None,
 ) -> int:
     """A one-off command in the serving release, the way its migration runs.
 
@@ -2228,6 +2255,11 @@ def run_exec(
             f"→ {record['release_tag']} · service {service} · {' '.join(command)}",
             file=sys.stderr,
         )
+        stdin = None
+        if getattr(arguments, "stdin", False):
+            stdin = read_exec_input(
+                stdin_stream if stdin_stream is not None else sys.stdin.buffer
+            )
         return compose_runtime_module.run_release_command(
             manifest=manifest,
             staged_bundle_path=staged_bundle_path,
@@ -2236,6 +2268,7 @@ def run_exec(
             docker_executable=docker_executable,
             service=service,
             command=command,
+            stdin=stdin,
         )
     except (
         ComposeRuntimeError,

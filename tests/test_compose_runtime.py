@@ -193,6 +193,22 @@ class ComposeRuntimeTest(unittest.TestCase):
         # output is the operator's, not captured
         self.assertNotIn("stdout", call)
 
+    def test_a_one_off_command_can_take_its_input_without_a_terminal(self) -> None:
+        code = run_release_command(
+            **self.runtime_arguments(),
+            service="app",
+            command=["node", "dist/create.js"],
+            stdin=b'{"name": "demo"}',
+        )
+
+        self.assertEqual(code, 0)
+        call = self.runner.calls[0]
+        self.assertEqual(
+            call["command"][-8:-3], ["run", "--rm", "-T", "--entrypoint", ""]
+        )
+        self.assertEqual(call["input"], b'{"name": "demo"}')
+        self.assertNotIn("stdin", call)
+
     def test_a_one_off_command_reports_the_commands_exit_code(self) -> None:
         self.runner.returncode = 3
         code = run_release_command(

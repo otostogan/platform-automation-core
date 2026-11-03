@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from platform_automation.operator.oneoff import (
+    check_input_file,
     OneOffError,
     compose_services,
     remote_command,
@@ -53,6 +54,30 @@ class ComposeServicesTest(unittest.TestCase):
                 compose_services(root, Path("deploy/platform.lab.yml")),
                 ["web", "mailpit", "worker"],
             )
+
+
+class InputTest(unittest.TestCase):
+    def test_the_flag_goes_before_the_separator(self) -> None:
+        line = remote_command(
+            "app", "lab", "web", ["node", "dist/create.js"], stdin=True
+        )
+        self.assertTrue(line.endswith("--service web --stdin -- node dist/create.js"))
+        self.assertNotIn("--stdin", remote_command("app", "lab", "web", ["true"]))
+
+    def test_an_input_file_must_exist_and_fit(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            small = Path(directory) / "in.json"
+            small.write_bytes(b"{}")
+            self.assertIs(check_input_file(str(small)), True)
+            self.assertEqual(
+                check_input_file(str(Path(directory) / "nope")), "not a file"
+            )
+            big = Path(directory) / "big.json"
+            big.write_bytes(b"x" * (1024 * 1024 + 1))
+            self.assertIn("limit is 1 MiB", check_input_file(str(big)))
 
 
 if __name__ == "__main__":

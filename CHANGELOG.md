@@ -7,6 +7,14 @@ release.
 
 ## [Unreleased]
 
+- `platform exec --stdin` passes the caller's standard input to the one-off
+  command, up to 1 MiB, through `compose run -T` so the bytes arrive
+  untouched and the end of input reaches the command; without the flag the
+  input stays closed. The console's "Run a script inside the application"
+  asks for an input file on the workstation after the command and
+  redirects it into ssh (`ssh -T … < file`). Nothing of the input is
+  written on the host or logged. For scripts that read JSON from stdin.
+
 ## [0.34.1] - 2026-11-03
 
 - Two alert rules watch the host itself: **Host memory low** (free memory
