@@ -49,6 +49,34 @@ def manifest(job=JOB):
     }
 
 
+class FakePopen:
+    """psql as a process: a script in, bytes out, an exit code; may hang or be killed."""
+
+    def __init__(self, output=b"", errors=b"", code=0, hang=False):
+        self.output, self.errors, self.code, self.hang = output, errors, code, hang
+        self.killed = False
+
+    def __call__(self, command, stdin=None, stdout=None, stderr=None):
+        import io as _io
+
+        self.command = command
+        self.stdin = _io.BytesIO()
+        self.stdin.close = lambda: None  # keep what was written readable after close
+        self.stdout = _io.BytesIO(self.output)
+        self.stderr = _io.BytesIO(self.errors)
+        self.returncode = None
+        return self
+
+    def wait(self, timeout=None):
+        if self.hang and not self.killed:
+            raise subprocess.TimeoutExpired(self.command, timeout)
+        self.returncode = self.code
+        return self.code
+
+    def kill(self):
+        self.killed = True
+
+
 class QueryTest(unittest.TestCase):
     def test_trailing_semicolons_go_and_emptiness_is_refused(self) -> None:
         self.assertEqual(bare_query("SELECT 1 ;; \n"), "SELECT 1")
@@ -66,50 +94,46 @@ class QueryTest(unittest.TestCase):
     def test_psql_runs_in_the_container_with_the_password_in_its_environment(
         self,
     ) -> None:
-        seen = {}
+        popen = FakePopen(CSV)
 
-        def runner(command, **kwargs):
-            seen["command"] = command
-            seen["input"] = kwargs["input"]
-            return subprocess.CompletedProcess(command, 0, CSV, b"")
-
-        data = run_query("app", "lab", "s3cret", "SELECT 1", Path("docker"), runner)
+        data = run_query("app", "lab", "s3cret", "SELECT 1", Path("docker"), popen)
 
         self.assertEqual(data, CSV)
-        command = seen["command"]
+        command = popen.command
         self.assertEqual(command[:3], ["docker", "exec", "--interactive"])
         self.assertIn("PGPASSWORD=s3cret", command)
         self.assertIn("platform-db-app-lab-postgres-1", command)
         self.assertIn("ON_ERROR_STOP=1", command)
         self.assertNotIn("SELECT 1", " ".join(command))
-        self.assertIn(b"READ ONLY", seen["input"])
+        self.assertIn(b"READ ONLY", popen.stdin.getvalue())
+        self.assertFalse(popen.killed)
 
     def test_a_failing_query_is_reported_with_psql_s_last_line(self) -> None:
-        def runner(command, **kwargs):
-            return subprocess.CompletedProcess(
-                command, 1, b"", b'ERROR:  relation "nope" does not exist\n'
-            )
-
+        popen = FakePopen(
+            b"", errors=b'ERROR:  relation "nope" does not exist\n', code=1
+        )
         with self.assertRaisesRegex(
             ExportRuntimeError, "relation .nope. does not exist"
         ):
-            run_query("app", "lab", "p", "SELECT * FROM nope", Path("docker"), runner)
+            run_query("app", "lab", "p", "SELECT * FROM nope", Path("docker"), popen)
 
-    def test_a_result_past_the_cap_is_refused(self) -> None:
-        def runner(command, **kwargs):
-            return subprocess.CompletedProcess(
-                command, 0, b"x" * (MAX_CSV_BYTES + 1), b""
-            )
-
+    def test_a_result_past_the_cap_is_cut_off_while_it_streams(self) -> None:
+        popen = FakePopen(b"x" * (MAX_CSV_BYTES + 1))
         with self.assertRaisesRegex(ExportRuntimeError, "larger than"):
-            run_query("app", "lab", "p", "SELECT 1", Path("docker"), runner)
+            run_query("app", "lab", "p", "SELECT 1", Path("docker"), popen)
+        self.assertTrue(popen.killed)
+        # Nothing beyond the cap was kept: the read stopped at the first chunk over it.
+        self.assertLessEqual(popen.stdout.tell(), MAX_CSV_BYTES + 64 * 1024)
 
-    def test_a_timeout_is_one_sentence(self) -> None:
-        def runner(command, **kwargs):
-            raise subprocess.TimeoutExpired(command, 1)
-
+    def test_a_query_that_never_ends_is_killed(self) -> None:
+        popen = FakePopen(CSV, hang=True)
         with self.assertRaisesRegex(ExportRuntimeError, "did not finish"):
-            run_query("app", "lab", "p", "SELECT 1", Path("docker"), runner)
+            run_query("app", "lab", "p", "SELECT 1", Path("docker"), popen)
+        self.assertTrue(popen.killed)
+
+    def test_a_huge_field_still_counts_as_one_row(self) -> None:
+        data = b"a,b\r\n1," + b"x" * 200000 + b"\r\n"
+        self.assertEqual(count_rows(data), 1)
 
     def test_rows_are_counted_as_csv_not_lines(self) -> None:
         self.assertEqual(count_rows(CSV), 2)
@@ -169,8 +193,11 @@ class FakeSmtp:
     def login(self, username, password):
         self.events.append(("login", username, password))
 
+    refused = {}
+
     def send_message(self, message):
         self.events.append(("send", message["To"]))
+        return dict(self.refused)
 
 
 class SendTest(unittest.TestCase):
@@ -206,6 +233,15 @@ class SendTest(unittest.TestCase):
         self.assertNotIn(("starttls", True), connection.events)
         self.assertIn(("login", "apikey", "pw"), connection.events)
 
+    def test_partially_refused_recipients_are_a_failure_that_names_them(self) -> None:
+        class Partial(FakeSmtp):
+            refused = {"boss@example.invalid": (550, b"no such user")}
+
+        with self.assertRaisesRegex(
+            ExportRuntimeError, "refused recipient.*boss@example.invalid"
+        ):
+            send_message(self.message, SMTP, "pw", client=Partial)
+
     def test_a_refused_login_names_the_server_not_the_password(self) -> None:
         import smtplib
 
@@ -239,13 +275,8 @@ class RunExportTest(unittest.TestCase):
         self.env = root / "app.env"
         self.env.write_text('SMTP_PASSWORD="s3cret"\n')
         self.sent = []
-        self.query_output = CSV
-        self.query_code = 0
-
-    def runner(self, command, **kwargs):
-        return subprocess.CompletedProcess(
-            command, self.query_code, self.query_output, b"ERROR: boom\n"
-        )
+        self.popen = FakePopen(CSV, errors=b"ERROR: boom\n")
+        self.runner = subprocess.run
 
     def mailer(self, message, smtp, password):
         self.sent.append((message, smtp["host"], password))
@@ -269,6 +300,7 @@ class RunExportTest(unittest.TestCase):
                 runner=self.runner,
                 mailer=self.mailer,
                 now=MOMENT,
+                popen=self.popen,
             )
 
     def test_sends_the_mail_and_leaves_a_card(self) -> None:
@@ -301,7 +333,7 @@ class RunExportTest(unittest.TestCase):
         )
 
     def test_a_failed_query_leaves_a_failed_card_and_sends_nothing(self) -> None:
-        self.query_code = 1
+        self.popen.code = 1
         with self.assertRaisesRegex(ExportRuntimeError, "boom"):
             self.export()
         self.assertEqual(self.sent, [])
@@ -322,11 +354,33 @@ class RunExportTest(unittest.TestCase):
 
     def test_a_missing_password_fails_before_the_database_is_asked(self) -> None:
         self.env.write_text("OTHER=1\n")
-        asked = []
-        self.runner = lambda command, **kwargs: asked.append(command)
         with self.assertRaisesRegex(ExportRuntimeError, "SMTP_PASSWORD"):
             self.export()
-        self.assertEqual(asked, [])
+        self.assertFalse(hasattr(self.popen, "command"))
+
+    def test_a_relay_that_refuses_a_recipient_fails_the_run(self) -> None:
+        def mailer(message, smtp, password):
+            raise ExportRuntimeError(
+                "the SMTP server x refused recipient(s): b@example.invalid"
+            )
+
+        self.mailer = mailer
+        with self.assertRaisesRegex(ExportRuntimeError, "refused recipient"):
+            self.export()
+        self.assertEqual(
+            read_card(self.exports_root, "app", "lab", "clients")["outcome"], "failed"
+        )
+
+    def test_an_unexpected_error_still_leaves_a_failed_card(self) -> None:
+        def mailer(message, smtp, password):
+            raise RuntimeError("socket exploded")
+
+        self.mailer = mailer
+        with self.assertRaisesRegex(ExportRuntimeError, "unexpected: socket exploded"):
+            self.export()
+        self.assertEqual(
+            read_card(self.exports_root, "app", "lab", "clients")["outcome"], "failed"
+        )
 
 
 if __name__ == "__main__":

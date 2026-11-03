@@ -20,6 +20,7 @@ import smtplib
 import ssl
 import subprocess
 import tempfile
+import time
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
@@ -42,6 +43,7 @@ CARD_API_VERSION = "platform-export/v1"
 STATEMENT_TIMEOUT_SECONDS = 600
 # Held in memory and sent as one attachment; relays commonly stop at 25 MB.
 MAX_CSV_BYTES = 64 * 1024 * 1024
+READ_CHUNK_BYTES = 64 * 1024
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 DEFAULT_SMTP_PORT = 587
 IMPLICIT_TLS_PORT = 465
@@ -87,55 +89,98 @@ def run_query(
     app_password: str,
     query: str,
     docker_executable: Path,
-    runner=subprocess.run,
+    popen=subprocess.Popen,
 ) -> bytes:
-    """The CSV bytes psql wrote; the password travels in the environment, never argv."""
+    """The CSV bytes psql wrote; the password travels in the environment, never argv.
+
+    The output is read as it arrives and the query is killed the moment it
+    passes the cap, so a broad SELECT costs the host at most the cap in
+    memory rather than whatever the table holds.
+    """
+    command = [
+        str(docker_executable),
+        "exec",
+        "--interactive",
+        "--env",
+        f"PGPASSWORD={app_password}",
+        database_container_name(project, environment),
+        "psql",
+        "--username",
+        DATABASE_USER,
+        "--dbname",
+        DATABASE_NAME,
+        "--quiet",
+        "--no-psqlrc",
+        "--set",
+        "ON_ERROR_STOP=1",
+    ]
     try:
-        result = runner(
-            [
-                str(docker_executable),
-                "exec",
-                "--interactive",
-                "--env",
-                f"PGPASSWORD={app_password}",
-                database_container_name(project, environment),
-                "psql",
-                "--username",
-                DATABASE_USER,
-                "--dbname",
-                DATABASE_NAME,
-                "--quiet",
-                "--no-psqlrc",
-                "--set",
-                "ON_ERROR_STOP=1",
-            ],
-            input=render_script(query).encode("utf-8"),
+        process = popen(
+            command,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            check=False,
-            timeout=STATEMENT_TIMEOUT_SECONDS + 60,
         )
-    except subprocess.TimeoutExpired as error:
-        raise ExportRuntimeError("the export query did not finish in time") from error
     except OSError as error:
         raise ExportRuntimeError("docker could not be executed") from error
-    if result.returncode != 0:
-        detail = _text(result.stderr).strip().splitlines()
+    deadline = time.monotonic() + STATEMENT_TIMEOUT_SECONDS + 60
+    chunks = []
+    total = 0
+    try:
+        # The script is a few kilobytes at most: it fits the pipe, so it is
+        # written whole before psql is asked for anything.
+        try:
+            process.stdin.write(render_script(query).encode("utf-8"))
+            process.stdin.close()
+        except BrokenPipeError:
+            pass
+        while True:
+            chunk = process.stdout.read(READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_CSV_BYTES:
+                raise ExportRuntimeError(
+                    f"the export is larger than {MAX_CSV_BYTES // (1024 * 1024)} MB;"
+                    " narrow the query"
+                )
+            chunks.append(chunk)
+            if time.monotonic() > deadline:
+                raise ExportRuntimeError("the export query did not finish in time")
+        try:
+            process.wait(timeout=max(deadline - time.monotonic(), 1))
+        except subprocess.TimeoutExpired as error:
+            raise ExportRuntimeError(
+                "the export query did not finish in time"
+            ) from error
+    except ExportRuntimeError:
+        _kill(process)
+        raise
+    if process.returncode != 0:
+        detail = _text(process.stderr.read()).strip().splitlines()
         reason = detail[-1] if detail else "psql failed"
         raise ExportRuntimeError(f"the export query failed: {reason}")
-    data = result.stdout or b""
-    if len(data) > MAX_CSV_BYTES:
-        raise ExportRuntimeError(
-            f"the export is larger than {MAX_CSV_BYTES // (1024 * 1024)} MB;"
-            " narrow the query"
-        )
-    return data
+    return b"".join(chunks)
+
+
+def _kill(process) -> None:
+    try:
+        process.kill()
+        process.wait(timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def count_rows(data: bytes) -> int:
     """Rows below the header, counted as CSV so a newline inside a value is not one."""
+    csv.field_size_limit(MAX_CSV_BYTES)
     reader = csv.reader(io.StringIO(data.decode("utf-8", errors="replace")))
-    return max(sum(1 for _ in reader) - 1, 0)
+    try:
+        return max(sum(1 for _ in reader) - 1, 0)
+    except csv.Error as error:
+        raise ExportRuntimeError(
+            f"the export is not readable as CSV: {error}"
+        ) from error
 
 
 def attachment_name(name: str, moment: datetime, compress: bool) -> str:
@@ -208,7 +253,15 @@ def send_message(
                 connection.starttls(context=context)
                 connection.ehlo()
             connection.login(username, password)
-            connection.send_message(message)
+            refused = connection.send_message(message) or {}
+        if refused:
+            # A relay that takes some recipients and refuses others answers
+            # with a dictionary, not an exception; a report half delivered
+            # is a failed run, named by who did not get it.
+            raise ExportRuntimeError(
+                f"the SMTP server {host} refused recipient(s): "
+                + ", ".join(sorted(refused))
+            )
     except smtplib.SMTPAuthenticationError as error:
         raise ExportRuntimeError(
             f"the SMTP server {host} refused the login for {username}"
@@ -303,6 +356,7 @@ def run_export(
     runner=subprocess.run,
     mailer=send_message,
     now: Optional[datetime] = None,
+    popen=subprocess.Popen,
 ) -> dict[str, Any]:
     """Query, attach, send; and leave a card that says how it went, either way."""
     from .export_schedule import ExportScheduleError, find_job
@@ -348,7 +402,7 @@ def run_export(
         except DatabaseRuntimeError as error:
             raise ExportRuntimeError(str(error)) from error
         data = run_query(
-            project, environment, app_password, job["query"], docker_executable, runner
+            project, environment, app_password, job["query"], docker_executable, popen
         )
         rows = count_rows(data)
         message = build_message(job, smtp, project, environment, data, rows, moment)
@@ -366,6 +420,12 @@ def run_export(
         card["error"] = str(error)
         write_card(exports_root, card)
         raise
+    except Exception as error:
+        # Whatever else went wrong, the card must not keep saying "sent":
+        # the alert reads the card, not the journal.
+        card["error"] = f"unexpected: {error}"
+        write_card(exports_root, card)
+        raise ExportRuntimeError(card["error"]) from error
     write_card(exports_root, card)
     return card
 
