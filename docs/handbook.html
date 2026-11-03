@@ -11103,6 +11103,8 @@ ssh -N -L 13000:&lt;адрес&gt;:3000 ops@{{tailnet}}</code></pre>
       <tr><td>Container restarting</td><td>перезапуски одного контейнера за 15 минут</td><td><code>observability_alert_restarts</code>, 3</td></tr>
       <tr><td>Container memory near its limit</td><td>память выше доли предела 10 минут</td><td><code>observability_alert_memory_percent</code>, 90</td></tr>
       <tr><td>Disk space low</td><td>свободного места на разделе меньше доли</td><td><code>observability_alert_disk_free_percent</code>, 15</td></tr>
+      <tr><td>Host memory low</td><td>свободной памяти хоста меньше доли дольше десяти минут</td><td><code>observability_alert_host_memory_free_percent</code>, 10</td></tr>
+      <tr><td>Host CPU busy</td><td>процессор хоста занят выше доли дольше пятнадцати минут</td><td><code>observability_alert_host_cpu_percent</code>, 90</td></tr>
       <tr><td>Backup is stale</td><td>последний дамп старше стольких часов</td><td><code>observability_alert_backup_age_hours</code>, 26</td></tr>
       <tr><td>No backup yet</td><td>релиз просит дампы по расписанию, а за столько же часов не появилось ни одного</td><td>тот же</td></tr>
       <tr><td>Restore is not proven</td><td>дампы есть, а доказанного восстановления нет или оно старше стольких дней</td><td><code>observability_alert_restore_proof_age_days</code>, 30</td></tr>
