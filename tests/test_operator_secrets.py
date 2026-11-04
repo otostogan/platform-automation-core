@@ -160,7 +160,7 @@ class EncryptTest(unittest.TestCase):
 
         def picky_sops(command, **kwargs):
             if "--decrypt" in command:
-                key_file = kwargs["env"]["SOPS_AGE_KEY_FILE"]
+                key_file = (kwargs.get("env") or {}).get("SOPS_AGE_KEY_FILE")
                 seen.append(key_file)
                 if key_file != str(keys[1]):
                     return subprocess.CompletedProcess(command, 1, b"", b"no identity")
@@ -169,7 +169,9 @@ class EncryptTest(unittest.TestCase):
         path = pull_env(self.root, "lab", runner=picky_sops, key_files=keys)
 
         self.assertEqual(path.read_text(encoding="utf-8"), "API_TOKEN=real\n")
-        self.assertEqual(seen, [str(keys[0]), str(keys[1])])
+        # The inherited environment goes first: an explicit SOPS_AGE_KEY_FILE
+        # or keys.txt of the operator is never overridden by discovery.
+        self.assertEqual(seen, [None, str(keys[0]), str(keys[1])])
 
     def test_pull_names_the_keys_it_tried(self) -> None:
         encrypt_env(self.root, "lab", runner=self.fake_sops)

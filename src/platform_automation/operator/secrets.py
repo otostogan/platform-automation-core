@@ -237,10 +237,10 @@ def candidate_age_keys(target_host: Optional[str], home: Optional[Path] = None) 
 def pull_env(root: Path, environment: str, runner=subprocess.run, key_files=()) -> Path:
     """Ciphertext → ``.env.<environment>``.
 
-    Each known key is offered to sops in turn through ``SOPS_AGE_KEY_FILE``;
-    with none known, sops is left to its own defaults (``SOPS_AGE_KEY_FILE``
-    in the environment, ``keys.txt``). The key never passes through this
-    process: sops reads the file itself.
+    sops is first left to its own defaults (``SOPS_AGE_KEY_FILE`` in the
+    environment, ``keys.txt``), so a key the operator named explicitly always
+    wins; then each known key is offered in turn through ``SOPS_AGE_KEY_FILE``.
+    The key never passes through this process: sops reads the file itself.
     """
     cipher = ciphertext_path(root, environment)
     if not cipher.is_file():
@@ -252,7 +252,7 @@ def pull_env(root: Path, environment: str, runner=subprocess.run, key_files=()) 
         "--decrypt",
         str(cipher.relative_to(root)),
     ]
-    attempts = [None] if not key_files else list(key_files)
+    attempts = [None, *key_files]
     result = None
     for key_file in attempts:
         env = None
