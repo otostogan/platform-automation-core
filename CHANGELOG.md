@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.36.1] - 2026-11-04
+
 - `platform secrets pull` finds the private key itself: the console offers
   sops the host key named by the infrastructure's `local-secrets.yml` or its
   key directory, then every recovery key it knows, and names the files it
