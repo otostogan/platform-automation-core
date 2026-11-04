@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+- `platform secrets pull` finds the private key itself: the console offers
+  sops the host key named by the infrastructure's `local-secrets.yml` or its
+  key directory, then every recovery key it knows, and names the files it
+  tried when none opens the ciphertext. `SOPS_AGE_KEY_FILE` is only needed
+  for a key outside the registered infrastructures.
+
 ## [0.36.0] - 2026-11-03
 
 - Scheduled SQL exports by e-mail: a manifest with `database.mode: docker`

@@ -3833,6 +3833,7 @@ def run_secrets(context: Context, argv: list) -> int:
     """platform secrets push [env] [--stale] [--stage] | pull <env>."""
     from .secrets import (
         SecretsError,
+        candidate_age_keys,
         enable_hooks,
         pull_env,
         stage,
@@ -3855,7 +3856,9 @@ def run_secrets(context: Context, argv: list) -> int:
             if not names:
                 print("platform secrets pull <environment>", file=sys.stderr)
                 return 2
-            path = pull_env(root, names[0])
+            path = pull_env(
+                root, names[0], key_files=candidate_age_keys(context.target_host)
+            )
             print(
                 f"{GREEN}written: {path.relative_to(root)}{RESET}  (mode 0600, ignored by git)"
             )
