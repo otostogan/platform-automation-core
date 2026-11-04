@@ -5,6 +5,7 @@ from pathlib import Path
 
 from platform_automation.operator.secrets import (
     SecretsError,
+    candidate_age_keys,
     encrypt_env,
     filter_for_manifest,
     is_stale,
@@ -150,6 +151,46 @@ class EncryptTest(unittest.TestCase):
         self.assertEqual(path.read_text(encoding="utf-8"), "API_TOKEN=real\n")
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
+    def test_pull_offers_each_known_key_until_one_opens_the_file(self) -> None:
+        encrypt_env(self.root, "lab", runner=self.fake_sops)
+        keys = [self.root / "host.agekey", self.root / "recovery.agekey"]
+        for key in keys:
+            key.write_text("x", encoding="utf-8")
+        seen = []
+
+        def picky_sops(command, **kwargs):
+            if "--decrypt" in command:
+                key_file = (kwargs.get("env") or {}).get("SOPS_AGE_KEY_FILE")
+                seen.append(key_file)
+                if key_file != str(keys[1]):
+                    return subprocess.CompletedProcess(command, 1, b"", b"no identity")
+            return self.fake_sops(command, **kwargs)
+
+        path = pull_env(self.root, "lab", runner=picky_sops, key_files=keys)
+
+        self.assertEqual(path.read_text(encoding="utf-8"), "API_TOKEN=real\n")
+        # The inherited environment goes first: an explicit SOPS_AGE_KEY_FILE
+        # or keys.txt of the operator is never overridden by discovery.
+        self.assertEqual(seen, [None, str(keys[0]), str(keys[1])])
+
+    def test_pull_names_the_keys_it_tried(self) -> None:
+        encrypt_env(self.root, "lab", runner=self.fake_sops)
+
+        def deaf_sops(command, **kwargs):
+            if "--decrypt" in command:
+                return subprocess.CompletedProcess(command, 1, b"", b"no identity")
+            return self.fake_sops(command, **kwargs)
+
+        with self.assertRaises(SecretsError) as raised:
+            pull_env(
+                self.root, "lab", runner=deaf_sops, key_files=[Path("/k/a.agekey")]
+            )
+        self.assertIn("/k/a.agekey", str(raised.exception))
+        with self.assertRaises(SecretsError) as raised:
+            pull_env(self.root, "lab", runner=deaf_sops)
+        self.assertIn("SOPS_AGE_KEY_FILE", str(raised.exception))
+        self.assertNotIn("SOPS_AGE_KEY_FILE", self.calls[-1][1].get("env") or {})
+
     def test_missing_env_file_is_named(self) -> None:
         with self.assertRaises(SecretsError) as raised:
             encrypt_env(self.root, "production", runner=self.fake_sops)
@@ -182,6 +223,47 @@ class StagedPlaintextTest(unittest.TestCase):
             return subprocess.CompletedProcess(command, 128, b"", b"not a repo")
 
         self.assertEqual(staged_plaintext(Path("/repo"), failing_git), [])
+
+
+class CandidateAgeKeysTest(unittest.TestCase):
+    """The console knows the key directories; pull should not ask the operator."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.home = Path(self.temporary.name)
+        self.infra = self.home / "company-infra"
+        self.keys = self.home / "keys"
+        self.keys.mkdir()
+        host_vars = self.infra / "inventory/host_vars/platform-host-1"
+        host_vars.mkdir(parents=True)
+        (host_vars / "local-secrets.yml").write_text(
+            f"secrets_age_key_source: {self.home}/elsewhere/platform-host-1.agekey\n",
+            encoding="utf-8",
+        )
+        (self.home / "elsewhere").mkdir()
+        config = self.home / ".config/platform"
+        config.mkdir(parents=True)
+        (config / "config.yml").write_text(
+            f"infras:\n- path: {self.infra}\n  keys: {self.keys}\n", encoding="utf-8"
+        )
+
+    def test_host_key_comes_first_then_recovery_and_only_existing_files(self) -> None:
+        inventory_key = self.home / "elsewhere/platform-host-1.agekey"
+        inventory_key.write_text("x", encoding="utf-8")
+        (self.keys / "recovery.agekey").write_text("x", encoding="utf-8")
+
+        found = candidate_age_keys("platform-host-1.example.invalid", home=self.home)
+
+        self.assertEqual(found, [inventory_key, self.keys / "recovery.agekey"])
+
+    def test_the_key_directory_is_tried_when_the_inventory_is_silent(self) -> None:
+        (self.keys / "platform-host-1.agekey").write_text("x", encoding="utf-8")
+
+        found = candidate_age_keys("platform-host-1", home=self.home)
+
+        self.assertEqual(found, [self.keys / "platform-host-1.agekey"])
+        self.assertEqual(candidate_age_keys(None, home=self.home), [])
 
 
 if __name__ == "__main__":

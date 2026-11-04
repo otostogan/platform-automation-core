@@ -4402,7 +4402,14 @@ git commit -m "chore: platform deployment"</code></pre>
 										нет. Вернуть его может владелец любого из
 										двух ключей:
 									</p>
-									<pre><code>SOPS_AGE_KEY_FILE={{keydir}}/{{host}}.agekey platform secrets pull {{env}}</code></pre>
+									<pre><code>platform secrets pull {{env}}</code></pre>
+									<p>
+										Ключ консоль находит сама: сначала ключ хоста
+										из <code>local-secrets.yml</code> инфраструктуры и
+										каталога ключей, потом recovery. Ключ на чужой
+										машине указывают явно:
+										<code>SOPS_AGE_KEY_FILE=… platform secrets pull {{env}}</code>.
+									</p>
 									<p>
 										Хост секреты никогда не пишет на диск: только в
 										<a class="ref" data-ref="gl-tmpfs">tmpfs</a>.
@@ -4465,7 +4472,7 @@ git commit -m "chore: platform deployment"</code></pre>
 												<dt><code>secrets file is not SOPS-encrypted</code></dt>
 												<dd>В <code>deploy/secrets.{{env}}.sops.yaml</code> лежит открытый текст: кто-то писал в него руками. Удалите файл и выполните <code>platform secrets push</code> — он будет создан заново из <code>.env.{{env}}</code>.</dd>
 												<dt><code>secrets pull</code>: <code>no key</code> или <code>could not decrypt</code></dt>
-												<dd>Расшифровать может только владелец приватной половины одного из получателей. Укажите её через <code>SOPS_AGE_KEY_FILE</code>; ключ хоста лежит у оператора, recovery — в хранилище компании (<a href="#/ref-keys">Ключи и доверие</a>).</dd>
+												<dd>Расшифровать может только владелец приватной половины одного из получателей. Консоль перебирает ключи, которые знает по <code>platform infra</code> (ключ хоста, затем recovery), и перечисляет их в ошибке; если нужного среди них нет, укажите его через <code>SOPS_AGE_KEY_FILE</code>. Ключ хоста лежит у оператора, recovery — в хранилище компании (<a href="#/ref-keys">Ключи и доверие</a>).</dd>
 											</dl>
 										</div>
 									</details>
@@ -12883,7 +12890,9 @@ ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform</code>
       перед коммитом, руками обычно не нужно.</dd>
       <dt><code>pull</code></dt>
       <dd>Расшифровывает шифротекст обратно в <code>.env</code>. Единственный шаг,
-      которому нужен приватный ключ.</dd>
+      которому нужен приватный ключ; консоль сама предлагает sops ключ хоста и
+      recovery из зарегистрированных инфраструктур, <code>SOPS_AGE_KEY_FILE</code>
+      нужен только для ключа, которого на этой машине нет в них.</dd>
       <dt>Когда секрет начинает действовать</dt>
       <dd>Только после выкатки. Горячей подмены нет: значение приезжает с релизом.</dd>
     </dl>

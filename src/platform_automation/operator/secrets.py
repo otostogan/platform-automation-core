@@ -118,7 +118,7 @@ def is_stale(root: Path, environment: str) -> Optional[bool]:
     return plain.stat().st_mtime > cipher.stat().st_mtime
 
 
-def run(command, root: Path, runner=subprocess.run, timeout=60, stdin=None):
+def run(command, root: Path, runner=subprocess.run, timeout=60, stdin=None, env=None):
     try:
         return runner(
             command,
@@ -128,6 +128,7 @@ def run(command, root: Path, runner=subprocess.run, timeout=60, stdin=None):
             stderr=subprocess.PIPE,
             check=False,
             timeout=timeout,
+            **({} if env is None else {"env": env}),
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise SecretsError(f"{command[0]} could not run: {error}")
@@ -189,21 +190,89 @@ def encrypt_env(root: Path, environment: str, runner=subprocess.run) -> SyncResu
     return SyncResult(environment, True, dropped, "encrypted")
 
 
-def pull_env(root: Path, environment: str, runner=subprocess.run) -> Path:
-    """Ciphertext → ``.env.<environment>``; needs a private key sops can find."""
+def _read_yaml(path: Path):
+    try:
+        return load_yaml(path)
+    except Exception:
+        return None
+
+
+def candidate_age_keys(target_host: Optional[str], home: Optional[Path] = None) -> list:
+    """The private keys this machine may hold for the application's host.
+
+    The operator's config names each infrastructure's key directory, and the
+    host's own local-secrets.yml names the key the bootstrap wrote. Only
+    paths are collected here, and only those that exist: the host key first,
+    then recovery, across every registered infrastructure. Nothing is read.
+    """
+    from .config import infras
+
+    host = target_host.split(".")[0] if target_host else None
+    found: list = []
+
+    def add(path: Optional[Path]) -> None:
+        if path is not None and path.is_file() and path not in found:
+            found.append(path)
+
+    for infra in infras(home):
+        if host:
+            source = _read_yaml(
+                infra.path / "inventory/host_vars" / host / "local-secrets.yml"
+            )
+            value = (
+                source.get("secrets_age_key_source")
+                if isinstance(source, dict)
+                else None
+            )
+            if isinstance(value, str) and value:
+                add(Path(value).expanduser())
+            if infra.keys is not None:
+                add(infra.keys / f"{host}.agekey")
+    for infra in infras(home):
+        if infra.keys is not None:
+            add(infra.keys / "recovery.agekey")
+    return found
+
+
+def pull_env(root: Path, environment: str, runner=subprocess.run, key_files=()) -> Path:
+    """Ciphertext → ``.env.<environment>``.
+
+    sops is first left to its own defaults (``SOPS_AGE_KEY_FILE`` in the
+    environment, ``keys.txt``), so a key the operator named explicitly always
+    wins; then each known key is offered in turn through ``SOPS_AGE_KEY_FILE``.
+    The key never passes through this process: sops reads the file itself.
+    """
     cipher = ciphertext_path(root, environment)
     if not cipher.is_file():
         raise SecretsError(f"{cipher.relative_to(root)} does not exist")
-    result = run(
-        ["sops", "--output-type", "dotenv", "--decrypt", str(cipher.relative_to(root))],
-        root,
-        runner,
-    )
-    if result.returncode != 0:
+    command = [
+        "sops",
+        "--output-type",
+        "dotenv",
+        "--decrypt",
+        str(cipher.relative_to(root)),
+    ]
+    attempts = [None, *key_files]
+    result = None
+    for key_file in attempts:
+        env = None
+        if key_file is not None:
+            env = dict(os.environ)
+            env["SOPS_AGE_KEY_FILE"] = str(key_file)
+        result = run(command, root, runner, env=env)
+        if result.returncode == 0:
+            break
+    if result is None or result.returncode != 0:
         detail = (result.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        tried = (
+            "; keys tried: " + ", ".join(str(path) for path in key_files)
+            if key_files
+            else " (no key of this machine is registered for the application's host;"
+            " point SOPS_AGE_KEY_FILE at one)"
+        )
         raise SecretsError(
-            f"sops could not decrypt {cipher.name}: {detail[-1] if detail else 'no message'} "
-            "(the private half of a recipient must be reachable, e.g. SOPS_AGE_KEY_FILE)"
+            f"sops could not decrypt {cipher.name}: {detail[-1] if detail else 'no message'}"
+            f"{tried}"
         )
     plain = env_path(root, environment)
     plain.write_bytes(result.stdout)
