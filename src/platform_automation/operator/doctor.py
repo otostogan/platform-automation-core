@@ -533,16 +533,33 @@ def diagnose_app(context: Context, tailnet: Tailnet, home: Path) -> list:
             )
         )
 
-    if context.target_host is None:
-        findings.append(
-            fail("Target host", "deploy.yml sets no target_host", "#/flow-new-app")
-        )
-    else:
-        findings.append(peer_finding(tailnet, context.target_host, "Target host"))
-
     findings.append(templates_finding(context, home))
 
-    infra = infra_for_host(context.target_host, home) if context.target_host else None
+    in_use = context.hosts_in_use()
+    several = len(in_use) > 1
+    for host, names in in_use:
+        # one host: the titles every operator knows; several: say which
+        suffix = f" ({', '.join(names)})" if several else ""
+        findings += target_findings(context, tailnet, home, host, names, suffix)
+    return findings
+
+
+def target_findings(
+    context: Context, tailnet: Tailnet, home: Path, host, names: tuple, suffix: str
+) -> list:
+    """What must hold between the application and one host it deploys to."""
+    findings = []
+    if host is None:
+        return [
+            fail(
+                f"Target host{suffix}",
+                "deploy.yml sets no target_host",
+                "#/flow-new-app",
+            )
+        ]
+    findings.append(peer_finding(tailnet, host, f"Target host{suffix}"))
+
+    infra = infra_for_host(host, home)
     if infra is None:
         known = len(infras(home))
         why = (
@@ -551,33 +568,57 @@ def diagnose_app(context: Context, tailnet: Tailnet, home: Path) -> list:
             else "no infrastructure is registered"
         )
         findings.append(
-            skip("Core pin", f"{why} — {CONFIG_HINT}", "#/flow-core-update")
+            skip(f"Core pin{suffix}", f"{why} — {CONFIG_HINT}", "#/flow-core-update")
         )
-        findings.append(skip("Recipients", f"{why}", "#/ref-keys"))
+        findings.append(skip(f"Recipients{suffix}", f"{why}", "#/ref-keys"))
         return findings
 
     infra_pin = read_collection_pin(infra.path)
     if infra_pin is None:
         findings.append(
             skip(
-                "Core pin",
+                f"Core pin{suffix}",
                 f"{infra.path} has no readable requirements.yml pin",
                 "#/flow-core-update",
             )
         )
     elif context.core_pin == infra_pin:
-        findings.append(ok("Core pin", f"{context.core_pin} matches {infra.name}"))
+        findings.append(
+            ok(f"Core pin{suffix}", f"{context.core_pin} matches {infra.name}")
+        )
+    elif suffix and pin_older(context.core_pin, infra_pin):
+        # one workflow serves several hosts and follows the oldest of them
+        findings.append(
+            ok(
+                f"Core pin{suffix}",
+                f"{context.core_pin} is not ahead of {infra.name} ({infra_pin})",
+            )
+        )
     else:
         findings.append(
             fail(
-                "Core pin",
+                f"Core pin{suffix}",
                 f"application uses {context.core_pin or 'no pin'}, {infra.name} pins {infra_pin}",
                 "#/flow-core-update",
             )
         )
 
-    findings.append(recipients_finding(context, infra))
+    finding = recipients_finding(
+        context.for_environment(names[0] if names else None), infra, names
+    )
+    findings.append(
+        Finding(finding.status, f"Recipients{suffix}", finding.detail, finding.anchor)
+        if suffix
+        else finding
+    )
     return findings
+
+
+def pin_older(application_pin, infra_pin) -> bool:
+    from .update import pin_key
+
+    have, host = pin_key(application_pin or ""), pin_key(infra_pin or "")
+    return bool(have) and bool(host) and have < host
 
 
 def templates_finding(context: Context, home: Path) -> Finding:
@@ -608,7 +649,7 @@ def templates_finding(context: Context, home: Path) -> Finding:
     )
 
 
-def recipients_finding(context: Context, infra) -> Finding:
+def recipients_finding(context: Context, infra, environments: tuple = ()) -> Finding:
     """Every application encrypts to the recipients the infrastructure publishes."""
     published = read_recipients(infra.path)
     if not published:
@@ -624,14 +665,13 @@ def recipients_finding(context: Context, infra) -> Finding:
             ".sops.yaml is missing; secrets cannot be encrypted for any host",
             "#/flow-new-app",
         )
+    from .update import rule_recipients
+
     document = load_yaml(sops_path)
-    declared = set()
-    try:
-        for rule in document.get("creation_rules") or []:
-            for group in rule.get("key_groups") or []:
-                declared.update(str(item) for item in group.get("age") or [])
-    except AttributeError:
-        pass
+    # what the rules give the secrets of the environments on this host
+    declared = set(rule_recipients(document, None))
+    for environment in environments:
+        declared &= set(rule_recipients(document, environment))
     if not declared:
         return fail(
             "Recipients", ".sops.yaml declares no age recipients", "#/flow-new-app"
