@@ -125,7 +125,18 @@ def banner(context: Context, stream=sys.stdout) -> None:
         print(f"{DIM}{context.root} · {names} · core {pin}{RESET}", file=stream)
     elif context.kind == "app":
         scopes = ", ".join(f"{s.project}/{s.environment}" for s in context.environments)
-        target = context.target_host or "target host unknown"
+        target = (
+            ", ".join(
+                (
+                    f"{'/'.join(names)} → {host}"
+                    if len(context.hosts_in_use()) > 1
+                    else host
+                )
+                for host, names in context.hosts_in_use()
+                if host
+            )
+            or "target host unknown"
+        )
         pin = context.core_pin or "no core pin"
         print(
             f"{DIM}{context.root} · {scopes} · {target} · core {pin}{RESET}",
@@ -2699,6 +2710,8 @@ def rotate_action(context: Context, scope, prompts, remote=None) -> Action:
 
 
 def app_actions(context: Context, scope, prompts=None) -> list:
+    # every action below talks to the host this environment is deployed to
+    context = context.for_environment(scope.environment)
     target = context.target_host or "<target host>"
     ident = ["--project", scope.project, "--environment", scope.environment]
     actions = [
@@ -3857,7 +3870,9 @@ def run_secrets(context: Context, argv: list) -> int:
                 print("platform secrets pull <environment>", file=sys.stderr)
                 return 2
             path = pull_env(
-                root, names[0], key_files=candidate_age_keys(context.target_host)
+                root,
+                names[0],
+                key_files=candidate_age_keys(context.host_for(names[0])),
             )
             print(
                 f"{GREEN}written: {path.relative_to(root)}{RESET}  (mode 0600, ignored by git)"
@@ -4120,7 +4135,7 @@ def run_update(context: Context, argv: list) -> int:
         console_ahead_of_hosts,
         gather_facts,
         plan,
-        recipients_changed,
+        reencrypt_environments,
         render_managed,
     )
 
@@ -4138,8 +4153,25 @@ def run_update(context: Context, argv: list) -> int:
         )
         return 2
 
+    # --host staging=<tailnet name> moves one environment to another host;
+    # deploy.yml remembers it, so it is said once.
+    moves = {}
+    for index, word in enumerate(argv):
+        value = (
+            word[len("--host=") :]
+            if word.startswith("--host=")
+            else argv[index + 1] if word == "--host" and index + 1 < len(argv) else None
+        )
+        if value is None:
+            continue
+        name, _, host = value.partition("=")
+        if not name or not host:
+            print("--host takes <environment>=<host>", file=sys.stderr)
+            return 2
+        moves[name] = host
+
     try:
-        facts = gather_facts(context, Path.home())
+        facts = gather_facts(context, Path.home(), hosts=moves)
     except UpdateError as error:
         print(f"{RED}{error}{RESET}")
         return 1
@@ -4210,10 +4242,11 @@ def run_update(context: Context, argv: list) -> int:
     for relative in written:
         print(f"{GREEN}written: {relative}{RESET}")
 
-    if recipients_changed(changes):
+    stale = reencrypt_environments(changes, facts.environments)
+    if stale:
         from .secrets import SecretsError, encrypt_env, env_path
 
-        for environment in facts.environments:
+        for environment in stale:
             if not env_path(context.root, environment).is_file():
                 print(
                     f"{DIM}deploy/secrets.{environment}.sops.yaml still carries the old"

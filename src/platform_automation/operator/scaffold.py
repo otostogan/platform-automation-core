@@ -113,6 +113,43 @@ def environment_options(workflow: str, environments: tuple) -> str:
     return workflow.replace(ENVIRONMENT_OPTIONS, wanted, 1)
 
 
+def target_host_value(hosts: tuple) -> str:
+    """What ``target_host`` says for (environment, host) pairs.
+
+    One host for every environment stays a plain hostname. Different hosts
+    become a lookup by the dispatched environment — the form
+    ``context.host_map`` reads back.
+    """
+    import json
+
+    distinct = {host for _, host in hosts}
+    if len(distinct) == 1:
+        return distinct.pop()
+    table = json.dumps(dict(hosts), separators=(",", ":"))
+    return f"${{{{ fromJSON('{table}')[inputs.environment] }}}}"
+
+
+def sops_rules(recipients: tuple) -> Optional[str]:
+    """``.sops.yaml`` for (environment, host key, recovery key) triples.
+
+    None when one pair covers every environment: the template's single rule
+    is right then. Hosts with their own keys get a rule per environment, so a
+    secret is readable only by the host it is deployed to.
+    """
+    if len({(host, recovery) for _, host, recovery in recipients}) <= 1:
+        return None
+    lines = ["creation_rules:\n"]
+    for environment, host, recovery in recipients:
+        lines.append(
+            f"    - path_regex: deploy/secrets\\.{environment}\\.sops\\.ya?ml$\n"
+            "      key_groups:\n"
+            "          - age:\n"
+            f"                - {host}\n"
+            f"                - {recovery}\n"
+        )
+    return "".join(lines)
+
+
 class ScaffoldError(RuntimeError):
     pass
 

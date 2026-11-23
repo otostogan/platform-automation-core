@@ -36,7 +36,9 @@ from .scaffold import (
     valid_platforms,
     merge_lines,
     render,
+    sops_rules,
     strip_marker,
+    target_host_value,
     template,
     with_marker,
 )
@@ -66,6 +68,10 @@ class Facts:
         ""  # what deploy.yml already uses; the template's tag:ci-<project> otherwise
     )
     build_platforms: str = DEFAULT_PLATFORMS  # what build.yml already builds for
+    # Per environment, when they differ: (environment, host) and
+    # (environment, host key, recovery key). Empty means the single values above.
+    target_hosts: tuple = ()
+    recipients: tuple = ()
 
 
 def find_repository(document) -> Optional[str]:
@@ -123,22 +129,54 @@ def read_repository(root: Path) -> dict:
     if facts["owner"] is None:
         facts["owner"] = git_org(root)
 
-    sops = load_yaml(root / ".sops.yaml")
-    declared = []
-    try:
-        for rule in sops.get("creation_rules") or []:
-            for group in rule.get("key_groups") or []:
-                declared += [str(item) for item in group.get("age") or []]
-    except AttributeError:
-        pass
-    facts["recipients"] = tuple(declared)
+    facts["sops"] = load_yaml(root / ".sops.yaml")
+    facts["recipients"] = rule_recipients(facts["sops"], None)
     return facts
 
 
-def gather_facts(context: Context, home: Path) -> Facts:
+def rule_recipients(sops, environment: Optional[str]) -> tuple:
+    """The age recipients ``.sops.yaml`` gives an environment's secrets file.
+
+    sops takes the first rule whose ``path_regex`` matches, and so does this.
+    Without an environment: every recipient of every rule, in order.
+    """
+    path = f"deploy/secrets.{environment}.sops.yaml"
+    declared: list = []
+    try:
+        for rule in sops.get("creation_rules") or []:
+            keys = [
+                str(item)
+                for group in rule.get("key_groups") or []
+                for item in group.get("age") or []
+            ]
+            if environment is None:
+                declared += keys
+                continue
+            pattern = rule.get("path_regex")
+            try:
+                matches = pattern is None or re.search(str(pattern), path)
+            except re.error:
+                matches = False
+            if matches:
+                return tuple(keys)
+    except AttributeError:
+        pass
+    return tuple(declared)
+
+
+def pin_key(pin: str) -> tuple:
+    try:
+        return tuple(int(part) for part in pin.lstrip("v").split("."))
+    except ValueError:
+        return ()
+
+
+def gather_facts(context: Context, home: Path, hosts: Optional[dict] = None) -> Facts:
+    """Read the repository back; ``hosts`` moves environments to other hosts."""
     if context.kind != "app" or context.root is None:
         raise UpdateError("not inside an application repository")
-    if context.target_host is None:
+    hosts = hosts or {}
+    if context.target_host is None and not hosts:
         raise UpdateError(
             f"{DEPLOY_WORKFLOW} names no target_host; nothing to update from"
         )
@@ -159,27 +197,57 @@ def gather_facts(context: Context, home: Path) -> Facts:
     )
     if not environments:
         raise UpdateError("no deploy/platform.<environment>.yml found")
+    unknown = sorted(set(hosts) - set(environments))
+    if unknown:
+        raise UpdateError(
+            f"--host names {', '.join(unknown)}, which has no deploy/platform.<environment>.yml"
+        )
 
-    infra = infra_for_host(context.target_host, home)
+    target_hosts, recipients = [], []
+    infra_pins, sources = {}, []
+    for environment in environments:
+        host = hosts.get(environment) or context.host_for(environment)
+        if not host:
+            raise UpdateError(f"no target host for {environment}; pass --host")
+        target_hosts.append((environment, host))
+
+        pair, source = rule_recipients(repository["sops"], environment), ".sops.yaml"
+        infra = infra_for_host(host, home)
+        if infra is not None:
+            pin = read_collection_pin(infra.path)
+            if pin:
+                infra_pins[infra.name] = pin
+            published = read_recipients(infra.path)
+            wanted = (
+                host_recipient(published, host.split(".")[0]),
+                recovery_recipient(published),
+            )
+            if all(wanted):
+                pair, source = wanted, f"infra:{infra.name}"
+        moved = environment in hosts and host != context.host_for(environment)
+        if moved and source == ".sops.yaml":
+            # the keys in .sops.yaml belong to the host the environment leaves
+            raise UpdateError(
+                f"no registered infrastructure publishes age recipients for {host},"
+                f" so {environment} cannot be encrypted for it"
+            )
+        if len(pair) < 2:
+            raise UpdateError(
+                f".sops.yaml declares fewer than two age recipients for {environment}"
+            )
+        recipients.append((environment, pair[0], pair[1]))
+        if source not in sources:
+            sources.append(source)
+
     core_pin, pin_source = context.core_pin, "deploy.yml"
-    recipients, recipients_source = repository["recipients"], ".sops.yaml"
-
-    if infra is not None:
-        pin = read_collection_pin(infra.path)
-        if pin:
-            core_pin, pin_source = pin, f"infra:{infra.name}"
-        published = read_recipients(infra.path)
-        host_name = context.target_host.split(".")[0]
-        wanted = (host_recipient(published, host_name), recovery_recipient(published))
-        if all(wanted):
-            recipients, recipients_source = wanted, f"infra:{infra.name}"
-
+    if infra_pins:
+        # the workflow must not ask any of its hosts for more than it has
+        name = min(infra_pins, key=lambda item: pin_key(infra_pins[item]))
+        core_pin, pin_source = infra_pins[name], f"infra:{name}"
     if not core_pin:
         raise UpdateError(
             "no core pin: neither deploy.yml nor a registered infrastructure has one"
         )
-    if len(recipients) < 2:
-        raise UpdateError(".sops.yaml declares fewer than two age recipients")
 
     platforms = find_platforms(
         load_yaml(context.root / DESTINATIONS["workflow_build.yml"])
@@ -189,14 +257,16 @@ def gather_facts(context: Context, home: Path) -> Facts:
         project=project,
         owner=repository["owner"],
         build_platforms=platforms or DEFAULT_PLATFORMS,
-        target_host=context.target_host,
+        target_host=target_hosts[0][1],
         core_pin=core_pin,
         environments=environments,
-        recipient_host=recipients[0],
-        recipient_recovery=recipients[1],
+        recipient_host=recipients[0][1],
+        recipient_recovery=recipients[0][2],
         pin_source=pin_source,
-        recipients_source=recipients_source,
+        recipients_source=", ".join(sources),
         tailscale_tag=context.tailscale_tag or f"tag:ci-{project}",
+        target_hosts=tuple(target_hosts),
+        recipients=tuple(recipients),
     )
 
 
@@ -217,7 +287,7 @@ def render_managed(facts: Facts, version: str = __version__) -> dict:
     values = {
         "project": facts.project,
         "org": facts.owner,
-        "tailnet": facts.target_host,
+        "tailnet": target_host_value(facts.target_hosts or (("", facts.target_host),)),
         "core_pin": facts.core_pin,
         "recipient_host": facts.recipient_host,
         "recipient_recovery": facts.recipient_recovery,
@@ -227,6 +297,8 @@ def render_managed(facts: Facts, version: str = __version__) -> dict:
     for name, destination in DESTINATIONS.items():
         if destination in MANAGED:
             text = render(template(name), values)
+            if destination == ".sops.yaml":
+                text = sops_rules(facts.recipients) or text
             if destination == DEPLOY_WORKFLOW:
                 text = environment_options(text, facts.environments)
                 # the tag is the tailnet policy's business, not the template's
@@ -338,6 +410,28 @@ def recipients_changed(changes: list) -> bool:
             return True
         return declared_recipients(change.current) != declared_recipients(change.wanted)
     return False
+
+
+def reencrypt_environments(changes: list, environments: tuple) -> tuple:
+    """The environments whose secrets file gets different recipients."""
+    import yaml
+
+    for change in changes:
+        if change.path != ".sops.yaml" or not change.writes:
+            continue
+        if change.kind == "create":
+            return tuple(environments)
+        try:
+            before = yaml.safe_load(strip_marker(change.current))
+            after = yaml.safe_load(strip_marker(change.wanted))
+        except yaml.YAMLError:
+            return tuple(environments)
+        return tuple(
+            name
+            for name in environments
+            if set(rule_recipients(before, name)) != set(rule_recipients(after, name))
+        )
+    return ()
 
 
 def behind(root: Path, files: dict) -> list:

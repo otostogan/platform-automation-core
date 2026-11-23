@@ -21,7 +21,9 @@ from platform_automation.operator.update import (
     gather_facts,
     plan,
     recipients_changed,
+    reencrypt_environments,
     render_managed,
+    rule_recipients,
 )
 
 ANSWERS = AppAnswers(
@@ -307,3 +309,152 @@ class UpdateTest(unittest.TestCase):
 
         with self.assertRaises(UpdateError):
             self.facts()
+
+
+class HostPerEnvironmentTest(unittest.TestCase):
+    """Environments of one application on different hosts."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        base = Path(self.temporary.name)
+        self.root = base / "app"
+        self.home = base / "home"
+        self.root.mkdir()
+        self.home.mkdir()
+        write_files(self.root, render_app(ANSWERS))
+        registered = []
+        for name, host, pin, key, recovery in (
+            (
+                "local-infra",
+                "platform-host-1",
+                "0.15.1",
+                "age1syntheticfixture",
+                "age1recoveryfixture",
+            ),
+            (
+                "company-infra",
+                "platform-host-2",
+                "0.16.0",
+                "age1secondhost",
+                "age1secondrecovery",
+            ),
+        ):
+            infra = self.home / name
+            write(
+                infra / "requirements.yml",
+                "collections:\n  - name: https://github.com/otostogan/platform-automation-core/"
+                f"releases/download/v{pin}/otostogan-platform-{pin}.tar.gz\n    type: url\n",
+            )
+            write(
+                infra / "inventory/hosts.yml",
+                f"all:\n  children:\n    platform_hosts:\n      hosts:\n        {host}:\n"
+                f"          ansible_host: {host}.tailnet.example.net\n          ansible_user: ops\n",
+            )
+            write(
+                infra / "docs/RECIPIENTS.md",
+                f"# Recipients\n\n```\n{host} {key}\nrecovery {recovery}\n```\n",
+            )
+            registered.append(f"  - path: {infra}\n")
+        write(
+            self.home / ".config/platform/config.yml",
+            "infras:\n" + "".join(registered),
+        )
+
+    def context(self):
+        return detect(self.root, host_marker=self.home / "no-host")
+
+    def move_staging(self):
+        facts = gather_facts(
+            self.context(),
+            self.home,
+            hosts={"staging": "platform-host-2.tailnet.example.net"},
+        )
+        changes = plan(self.root, render_managed(facts))
+        apply(self.root, changes)
+        return facts, {change.path: change for change in changes}
+
+    def test_one_environment_moves_and_the_workflow_remembers_it(self) -> None:
+        facts, _ = self.move_staging()
+
+        self.assertEqual(
+            dict(facts.target_hosts)["staging"], "platform-host-2.tailnet.example.net"
+        )
+        # one workflow for both hosts follows the older of them
+        self.assertEqual(facts.core_pin, "v0.15.1")
+        workflow = (self.root / ".github/workflows/deploy.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("[inputs.environment] }}", workflow)
+
+        context = self.context()
+        self.assertEqual(
+            context.host_for("staging"), "platform-host-2.tailnet.example.net"
+        )
+        self.assertEqual(context.host_for("lab"), "platform-host-1.tailnet.example.net")
+        self.assertEqual(
+            context.for_environment("staging").target_host,
+            "platform-host-2.tailnet.example.net",
+        )
+        self.assertEqual(len(context.hosts_in_use()), 2)
+
+        # said once: the next update reads the hosts back and changes nothing
+        again = plan(self.root, render_managed(gather_facts(context, self.home)))
+        self.assertEqual({change.kind for change in again}, {"same"})
+
+    def test_each_environment_is_encrypted_for_its_own_host(self) -> None:
+        import yaml
+
+        _, changes = self.move_staging()
+        sops = yaml.safe_load((self.root / ".sops.yaml").read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            rule_recipients(sops, "staging"), ("age1secondhost", "age1secondrecovery")
+        )
+        self.assertEqual(
+            rule_recipients(sops, "lab"),
+            ("age1syntheticfixture", "age1recoveryfixture"),
+        )
+        # only the environment that moved needs new ciphertext
+        self.assertEqual(
+            reencrypt_environments(
+                list(changes.values()), ("lab", "staging", "production")
+            ),
+            ("staging",),
+        )
+
+    def test_a_host_nobody_publishes_keys_for_is_refused(self) -> None:
+        with self.assertRaises(UpdateError):
+            gather_facts(
+                self.context(),
+                self.home,
+                hosts={"staging": "platform-host-9.tailnet.example.net"},
+            )
+        with self.assertRaises(UpdateError):
+            gather_facts(
+                self.context(), self.home, hosts={"preview": "platform-host-2"}
+            )
+
+    def test_an_expression_that_is_not_the_map_is_not_a_hostname(self) -> None:
+        path = self.root / ".github/workflows/deploy.yml"
+        text = path.read_text(encoding="utf-8").replace(
+            "target_host: platform-host-1.tailnet.example.net",
+            "target_host: ${{ vars.TARGET_HOST }}",
+        )
+        path.write_text(text, encoding="utf-8")
+
+        self.assertIsNone(self.context().target_host)
+
+    def test_doctor_checks_every_host(self) -> None:
+        from platform_automation.operator.doctor import diagnose_app
+        from platform_automation.operator.tailnet import Tailnet
+
+        self.move_staging()
+        titles = [
+            finding.title
+            for finding in diagnose_app(self.context(), Tailnet(False), self.home)
+        ]
+
+        self.assertIn("Target host (lab, production)", titles)
+        self.assertIn("Target host (staging)", titles)
+        self.assertIn("Recipients (staging)", titles)

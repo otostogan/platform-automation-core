@@ -6,8 +6,9 @@ console asks that question first and answers it from files on disk, never from
 a flag someone has to remember.
 """
 
+import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -22,6 +23,12 @@ APP_API_VERSION = "platform/v1"
 APP_DEPLOY_WORKFLOW = Path(".github/workflows/deploy.yml")
 
 CORE_PIN_PATTERN = re.compile(r"reusable-deploy\.yml@(v\d+\.\d+\.\d+)")
+# An application whose environments live on different hosts says so in the one
+# place it says where it goes: ``target_host`` picks from a JSON object by the
+# dispatched environment. The console reads the same object back.
+HOST_MAP_PATTERN = re.compile(
+    r"^\$\{\{\s*fromJSON\('(\{.*\})'\)\[inputs\.environment\]\s*\}\}$"
+)
 COLLECTION_PIN_PATTERN = re.compile(rf"{COLLECTION_ARTIFACT}-(\d+\.\d+\.\d+)\.tar\.gz")
 
 
@@ -53,6 +60,28 @@ class Context:
     tailscale_tag: Optional[str] = None
     core_pin: Optional[str] = None
     dispatch_inputs: tuple = field(default_factory=tuple)
+    # (environment, host) pairs when deploy.yml maps environments to hosts;
+    # empty when one host serves them all and ``target_host`` is the answer.
+    target_hosts: tuple = field(default_factory=tuple)
+
+    def host_for(self, environment: Optional[str]) -> Optional[str]:
+        """Where this environment is deployed; the common host when unmapped."""
+        return dict(self.target_hosts).get(environment, self.target_host)
+
+    def for_environment(self, environment: Optional[str]) -> "Context":
+        """The same context, standing in front of that environment's host."""
+        return replace(self, target_host=self.host_for(environment))
+
+    def hosts_in_use(self) -> tuple:
+        """(host, (environment, …)) for every distinct host, in manifest order."""
+        grouped: dict = {}
+        for item in self.environments:
+            grouped.setdefault(self.host_for(item.environment), []).append(
+                item.environment
+            )
+        if not grouped:
+            grouped[self.target_host] = []
+        return tuple((host, tuple(names)) for host, names in grouped.items())
 
 
 def load_yaml(path: Path) -> Any:
@@ -176,6 +205,22 @@ def read_environments(root: Path) -> tuple:
     return tuple(environments)
 
 
+def host_map(value: Any) -> Optional[dict]:
+    """The environment → host object inside a mapped ``target_host``, or None."""
+    match = HOST_MAP_PATTERN.match(value.strip()) if isinstance(value, str) else None
+    if match is None:
+        return None
+    try:
+        document = json.loads(match.group(1))
+    except ValueError:
+        return None
+    if not isinstance(document, dict) or not document:
+        return None
+    if not all(isinstance(host, str) and host for host in document.values()):
+        return None
+    return {str(name): host for name, host in document.items()}
+
+
 def read_deploy_workflow(root: Path) -> dict[str, Any]:
     """Target host, tailnet tag, core pin and dispatch inputs from the workflow.
 
@@ -183,7 +228,13 @@ def read_deploy_workflow(root: Path) -> dict[str, Any]:
     a deployment asks for; reading it as YAML — not as text — means a quoted
     scalar or a reordered key cannot produce a hostname with quotes in it.
     """
-    empty = {"target_host": None, "tailscale_tag": None, "core_pin": None, "inputs": ()}
+    empty = {
+        "target_host": None,
+        "target_hosts": (),
+        "tailscale_tag": None,
+        "core_pin": None,
+        "inputs": (),
+    }
     document = load_yaml(root / APP_DEPLOY_WORKFLOW)
 
     if not isinstance(document, dict):
@@ -196,6 +247,7 @@ def read_deploy_workflow(root: Path) -> dict[str, Any]:
     names = tuple(str(name) for name in inputs) if isinstance(inputs, dict) else ()
 
     target_host = tailscale_tag = core_pin = None
+    target_hosts: tuple = ()
     jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
 
     for job in jobs.values():
@@ -207,11 +259,19 @@ def read_deploy_workflow(root: Path) -> dict[str, Any]:
         match = CORE_PIN_PATTERN.search(uses)
         core_pin = match.group(1) if match else core_pin
         with_block = job.get("with") if isinstance(job.get("with"), dict) else {}
-        target_host = _optional_str(with_block.get("target_host")) or target_host
+        declared = _optional_str(with_block.get("target_host"))
+        mapped = host_map(declared)
+        if mapped is not None:
+            # never let the expression itself pass for a hostname
+            target_hosts = tuple(mapped.items())
+            target_host = next(iter(mapped.values()))
+        elif declared and "${{" not in declared:
+            target_host, target_hosts = declared, ()
         tailscale_tag = _optional_str(with_block.get("tailscale_tag")) or tailscale_tag
 
     return {
         "target_host": target_host,
+        "target_hosts": target_hosts,
         "tailscale_tag": tailscale_tag,
         "core_pin": core_pin,
         "inputs": names,
@@ -255,6 +315,7 @@ def detect(start: Optional[Path] = None, host_marker: Path = HOST_MARKER) -> Con
             root=app_root,
             environments=read_environments(app_root),
             target_host=workflow["target_host"],
+            target_hosts=workflow["target_hosts"],
             tailscale_tag=workflow["tailscale_tag"],
             core_pin=workflow["core_pin"],
             dispatch_inputs=workflow["inputs"],

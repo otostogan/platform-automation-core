@@ -7,6 +7,17 @@ release.
 
 ## [Unreleased]
 
+- Environments of one application may live on different hosts.
+  `platform update --host <environment>=<host>` moves one of them:
+  `target_host` in `deploy.yml` becomes a lookup by the dispatched
+  environment, and `.sops.yaml` gets a rule per environment, so each secrets
+  file is encrypted for the host it is deployed to and for that
+  infrastructure's recovery key. Only the moved environment is re-encrypted.
+  Later updates read the hosts back from `deploy.yml`. The console's menu,
+  `platform doctor` and `platform secrets pull` address the host of the
+  chosen environment; the workflow's core pin follows the oldest of the
+  hosts. An application on one host is rendered exactly as before.
+
 ## [0.36.1] - 2026-11-04
 
 - `platform secrets pull` finds the private key itself: the console offers
