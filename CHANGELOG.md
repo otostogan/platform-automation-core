@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-11-23
+
 - Environments of one application may live on different hosts.
   `platform update --host <environment>=<host>` moves one of them:
   `target_host` in `deploy.yml` becomes a lookup by the dispatched
