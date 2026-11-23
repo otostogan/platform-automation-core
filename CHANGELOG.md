@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-11-23
+
 - `platform update --host <environment>=<host>` is accepted on the command
   line: 0.37.0 documented the option and never registered it, so the command
   refused it as an unrecognised argument.
