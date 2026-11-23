@@ -7,6 +7,10 @@ release.
 
 ## [Unreleased]
 
+- `platform update --host <environment>=<host>` is accepted on the command
+  line: 0.37.0 documented the option and never registered it, so the command
+  refused it as an unrecognised argument.
+
 ## [0.37.0] - 2026-11-23
 
 - Environments of one application may live on different hosts.

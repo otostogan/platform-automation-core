@@ -281,6 +281,13 @@ def parse_arguments(
         action="store_true",
         help="Only report; exit 1 when something is behind.",
     )
+    update_parser.add_argument(
+        "--host",
+        action="append",
+        default=[],
+        metavar="ENVIRONMENT=HOST",
+        help="In an application: deploy this environment to another host. Said once; deploy.yml remembers it.",
+    )
 
     secrets_parser = subparsers.add_parser(
         "secrets",
@@ -3291,6 +3298,8 @@ def main(
                 console_argv.append("--yes")
             if arguments.check:
                 console_argv.append("--check")
+            for move in arguments.host:
+                console_argv.append(f"--host={move}")
         if arguments.command == "secrets":
             console_argv.append(arguments.action)
             if arguments.environment:
