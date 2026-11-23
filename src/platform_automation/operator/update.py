@@ -208,7 +208,10 @@ def gather_facts(context: Context, home: Path, hosts: Optional[dict] = None) -> 
     for environment in environments:
         host = hosts.get(environment) or context.host_for(environment)
         if not host:
-            raise UpdateError(f"no target host for {environment}; pass --host")
+            raise UpdateError(
+                f"{DEPLOY_WORKFLOW} names no host for {environment};"
+                f" say where it goes: --host {environment}=<host>"
+            )
         target_hosts.append((environment, host))
 
         pair, source = rule_recipients(repository["sops"], environment), ".sops.yaml"
@@ -216,7 +219,8 @@ def gather_facts(context: Context, home: Path, hosts: Optional[dict] = None) -> 
         if infra is not None:
             pin = read_collection_pin(infra.path)
             if pin:
-                infra_pins[infra.name] = pin
+                # two infrastructures may share a directory name, never a path
+                infra_pins[str(infra.path)] = (pin, infra.name)
             published = read_recipients(infra.path)
             wanted = (
                 host_recipient(published, host.split(".")[0]),
@@ -242,8 +246,8 @@ def gather_facts(context: Context, home: Path, hosts: Optional[dict] = None) -> 
     core_pin, pin_source = context.core_pin, "deploy.yml"
     if infra_pins:
         # the workflow must not ask any of its hosts for more than it has
-        name = min(infra_pins, key=lambda item: pin_key(infra_pins[item]))
-        core_pin, pin_source = infra_pins[name], f"infra:{name}"
+        core_pin, name = min(infra_pins.values(), key=lambda item: pin_key(item[0]))
+        pin_source = f"infra:{name}"
     if not core_pin:
         raise UpdateError(
             "no core pin: neither deploy.yml nor a registered infrastructure has one"

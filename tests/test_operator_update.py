@@ -458,3 +458,40 @@ class HostPerEnvironmentTest(unittest.TestCase):
         self.assertIn("Target host (lab, production)", titles)
         self.assertIn("Target host (staging)", titles)
         self.assertIn("Recipients (staging)", titles)
+
+    def test_a_new_environment_is_not_guessed_onto_a_mapped_host(self) -> None:
+        self.move_staging()
+        path = self.root / ".github/workflows/deploy.yml"
+        text = path.read_text(encoding="utf-8").replace(
+            '"production":"platform-host-1.tailnet.example.net"',
+            '"e2e":"platform-host-1.tailnet.example.net"',
+        )
+        path.write_text(text, encoding="utf-8")
+        context = self.context()
+
+        self.assertIsNone(context.host_for("production"))
+        self.assertIsNone(context.for_environment("production").target_host)
+        with self.assertRaisesRegex(UpdateError, "--host production="):
+            gather_facts(context, self.home)
+
+    def test_infrastructures_with_one_directory_name_keep_both_pins(self) -> None:
+        older = self.home / "elsewhere" / "company-infra"
+        (self.home / "company-infra").rename(self.home / "moved")
+        older.parent.mkdir()
+        (self.home / "moved").rename(older)
+        twin = self.home / "twin" / "company-infra"
+        (self.home / "local-infra").rename(self.home / "moved")
+        twin.parent.mkdir()
+        (self.home / "moved").rename(twin)
+        write(
+            self.home / ".config/platform/config.yml",
+            f"infras:\n  - path: {twin}\n  - path: {older}\n",
+        )
+
+        facts = gather_facts(
+            self.context(),
+            self.home,
+            hosts={"staging": "platform-host-2.tailnet.example.net"},
+        )
+
+        self.assertEqual(facts.core_pin, "v0.15.1")

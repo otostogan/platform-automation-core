@@ -65,8 +65,15 @@ class Context:
     target_hosts: tuple = field(default_factory=tuple)
 
     def host_for(self, environment: Optional[str]) -> Optional[str]:
-        """Where this environment is deployed; the common host when unmapped."""
-        return dict(self.target_hosts).get(environment, self.target_host)
+        """Where this environment is deployed.
+
+        Without a map every environment shares ``target_host``. With one, an
+        environment the map does not name has no host yet — the workflow's
+        lookup has no entry for it either — and nothing is guessed.
+        """
+        if not self.target_hosts:
+            return self.target_host
+        return dict(self.target_hosts).get(environment)
 
     def for_environment(self, environment: Optional[str]) -> "Context":
         """The same context, standing in front of that environment's host."""
