@@ -495,3 +495,41 @@ class HostPerEnvironmentTest(unittest.TestCase):
         )
 
         self.assertEqual(facts.core_pin, "v0.15.1")
+
+    def test_the_command_line_carries_the_move(self) -> None:
+        import os
+        import subprocess
+        import sys
+
+        for plain in self.root.glob(".env.*"):
+            plain.unlink()  # nothing to re-encrypt: the test has no sops
+        for requirements in self.home.glob("*/requirements.yml"):
+            # hosts as new as the console, or the update refuses to write
+            requirements.write_text(
+                "collections:\n  - name: https://github.com/otostogan/platform-automation-core/"
+                f"releases/download/v{__version__}/otostogan-platform-{__version__}.tar.gz\n"
+                "    type: url\n",
+                encoding="utf-8",
+            )
+        source = Path(__file__).resolve().parents[1] / "src"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "platform_automation.platform_cli",
+                "update",
+                "--yes",
+                "--host",
+                "staging=platform-host-2.tailnet.example.net",
+            ],
+            cwd=self.root,
+            env={**os.environ, "HOME": str(self.home), "PYTHONPATH": str(source)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            self.context().host_for("staging"), "platform-host-2.tailnet.example.net"
+        )
