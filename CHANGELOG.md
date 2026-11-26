@@ -7,6 +7,11 @@ release.
 
 ## [Unreleased]
 
+- `platform update` in an application no longer refuses when the console is
+  only a patch release ahead of the hosts: it compares major and minor. A
+  patch never changes what the workflows ask of a host, so a console-only
+  fix no longer costs a round of converges that change nothing.
+
 ## [0.38.1] - 2026-11-26
 
 - `platform new app` asks for the version file and the release tag prefix in

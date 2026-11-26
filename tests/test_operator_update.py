@@ -112,7 +112,11 @@ class MarkerTest(unittest.TestCase):
         )
 
     def test_console_ahead_of_hosts(self) -> None:
-        self.assertTrue(console_ahead_of_hosts("v0.15.0", "0.15.1"))
+        # a newer minor or major may ask a host for what it lacks
+        self.assertTrue(console_ahead_of_hosts("v0.15.3", "0.16.0"))
+        self.assertTrue(console_ahead_of_hosts("v0.15.3", "1.0.0"))
+        # a patch release changes nothing a host answers
+        self.assertFalse(console_ahead_of_hosts("v0.15.0", "0.15.1"))
         self.assertFalse(console_ahead_of_hosts("v0.15.1", "0.15.1"))
         self.assertFalse(console_ahead_of_hosts("v0.16.0", "0.15.1"))
         self.assertFalse(console_ahead_of_hosts("main", "0.15.1"))
