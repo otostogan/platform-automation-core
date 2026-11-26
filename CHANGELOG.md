@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.38.2] - 2026-11-26
+
 - `platform update` in an application no longer refuses when the console is
   only a patch release ahead of the hosts: it compares major and minor. A
   patch never changes what the workflows ask of a host, so a console-only

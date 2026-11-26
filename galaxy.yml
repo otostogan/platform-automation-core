@@ -1,7 +1,7 @@
 ---
 namespace: otostogan
 name: platform
-version: 0.38.1
+version: 0.38.2
 readme: README.md
 authors:
     - Otostogan
