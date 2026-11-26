@@ -6011,6 +6011,19 @@ if git diff --cached --name-only | grep &#x27;^\.env\.&#x27; | grep -qv &#x27;^\
     exit 1
 fi
 
+# Шифровать нечего, пока рядом нет открытого .env.&lt;окружение&gt;: участнику,
+# который секретами не занимается, консоль платформы не нужна.
+plaintext=0
+for manifest in deploy/platform.*.yml; do
+    [ -e &quot;${manifest}&quot; ] || continue
+    name=&quot;${manifest#deploy/platform.}&quot;
+    name=&quot;${name%.yml}&quot;
+    if [ -f &quot;.env.${name}&quot; ]; then
+        plaintext=1
+    fi
+done
+[ &quot;${plaintext}&quot; -eq 1 ] || exit 0
+
 if ! command -v platform &gt;/dev/null 2&gt;&amp;1; then
     echo &quot;pre-commit: нужна консоль platform (pip install &#x27;platform-automation-runtime[operator]&#x27;)&quot; &gt;&amp;2
     exit 1
@@ -12836,7 +12849,7 @@ ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform</code>
   </article>
 
   <article class="card" id="ref-console-update">
-    <h3><code>platform update [--check | --yes] [--host &lt;окружение&gt;=&lt;хост&gt;]</code></h3>
+    <h3><code>platform update [--check | --yes] [--host &lt;окружение&gt;=&lt;хост&gt;] [--version-file &lt;путь&gt;] [--tag-prefix &lt;префикс&gt;]</code></h3>
     <p>Приводит к актуальной версии то, чем владеет платформа. Что именно — зависит от
     репозитория.</p>
     <dl>
@@ -12860,6 +12873,26 @@ ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform</code>
       пин ядра берётся по самому старому из них. Консоль, <code>platform doctor</code>
       и <code>platform secrets pull</code> для каждого окружения обращаются к его
       хосту.</dd>
+      <dt>Приложение внутри монорепозитория</dt>
+      <dd>По умолчанию версия проекта читается из корневого <code>package.json</code>, а
+      выпуск помечается тегом <code>v1.2.3</code>. Если в репозитории живёт не только
+      выкатываемое приложение, назовите один раз, где лежит его версия и как начинается
+      его тег:
+      <code>platform update --version-file apps/panel/package.json --tag-prefix panel-v</code>.
+      Сборка и выпуск начинают слушать теги <code>panel-v*.*.*</code>, хук после коммита
+      ставит такой тег при смене версии в названном файле, хук перед отправкой сверяет
+      его с этим файлом, а чужие теги не трогает. Префикс: <code>v</code> либо имя
+      строчными буквами и <code>-v</code>. Следующие <code>platform update</code> читают
+      оба значения обратно из <code>release.yml</code>.</dd>
+      <dt>Репозиторий с lefthook</dt>
+      <dd>Если в корне есть <code>lefthook.yml</code>, хуками репозитория управляет он,
+      и платформа не переключает <code>core.hooksPath</code>: иначе собственные проверки
+      репозитория перестали бы запускаться. Три скрипта в <code>.githooks/</code>
+      по-прежнему пишет и обновляет <code>platform update</code>, а запускает их
+      lefthook: добавьте в его файл по заданию под хуками <code>pre-commit</code>,
+      <code>post-commit</code> и <code>pre-push</code>, каждое запускает одноимённый
+      скрипт из <code>.githooks/</code>. <code>platform doctor</code> называет хук,
+      который lefthook ещё не запускает.</dd>
       <dt>В репозитории инфраструктуры</dt>
       <dd>Обновление ядра: показывает версию каждого хоста, переносит пин, ставит
       коллекцию, прогоняет конвергенцию дважды и проверку готовности. Подробно —

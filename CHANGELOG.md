@@ -7,6 +7,21 @@ release.
 
 ## [Unreleased]
 
+- An application inside a monorepo: `platform update --version-file <path>
+  --tag-prefix <prefix>` says where the project's version lives and how its
+  release tag starts (`crm-v` gives `crm-v1.2.3`). The build, release and
+  deploy workflows and the three hooks follow both; later updates read them
+  back from `release.yml`. The defaults, `package.json` and `v`, render the
+  templates exactly as before.
+- A repository whose hooks lefthook runs keeps them: the console no longer
+  points `core.hooksPath` at `.githooks` there, which switched the
+  repository's own checks off. The platform's scripts stay in `.githooks/`
+  and are run from the lefthook file; `platform doctor` names the hook it
+  does not run yet.
+- The pre-commit hook asks for the console only when there is something to
+  encrypt: without a local `.env.<environment>` it passes, so a contributor
+  who never touches secrets needs no `platform` binary.
+
 ## [0.37.1] - 2026-11-23
 
 - `platform update --host <environment>=<host>` is accepted on the command

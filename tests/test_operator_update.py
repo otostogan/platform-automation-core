@@ -533,3 +533,279 @@ class HostPerEnvironmentTest(unittest.TestCase):
         self.assertEqual(
             self.context().host_for("staging"), "platform-host-2.tailnet.example.net"
         )
+
+
+class MonorepoVersioningTest(unittest.TestCase):
+    """The version beside the application, the tag named after it."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        base = Path(self.temporary.name)
+        self.root = base / "app"
+        self.home = base / "home"
+        self.root.mkdir()
+        self.home.mkdir()
+        write_files(self.root, render_app(ANSWERS))
+        write(self.root / "apps/panel/package.json", '{"version": "0.1.0"}\n')
+
+    def context(self):
+        return detect(self.root, host_marker=self.home / "no-host")
+
+    def move(self):
+        facts = gather_facts(
+            self.context(),
+            self.home,
+            version_file="apps/panel/package.json",
+            tag_prefix="panel-v",
+        )
+        apply(self.root, plan(self.root, render_managed(facts)))
+        return facts
+
+    def read(self, relative: str) -> str:
+        return (self.root / relative).read_text(encoding="utf-8")
+
+    def test_every_file_follows_the_version_file_and_the_prefix(self) -> None:
+        self.move()
+
+        release = self.read(".github/workflows/release.yml")
+        self.assertIn("            - panel-v*.*.*\n", release)
+        self.assertIn("require('./apps/panel/package.json').version", release)
+        self.assertIn('!= "panel-v${version}"', release)
+        build = self.read(".github/workflows/build.yml")
+        self.assertIn("            - panel-v*.*.*\n", build)
+        self.assertNotIn("'refs/tags/v'", build)
+        deploy = self.read(".github/workflows/deploy.yml")
+        self.assertIn("=~ ^panel-v[0-9]+", deploy)
+        # an empty ref means this application's newest release, not the repository's
+        self.assertNotIn("gh release view", deploy)
+        self.assertIn('select(test("^panel-v[0-9]"))', deploy)
+        commit = self.read(".githooks/post-commit")
+        self.assertIn('"$1:apps/panel/package.json"', commit)
+        self.assertIn('tag="panel-v${current}"', commit)
+        push = self.read(".githooks/pre-push")
+        self.assertIn("refs/tags/panel-v[0-9]*) ;;", push)
+        self.assertIn('expected="${tag#panel-v}"', push)
+        for text in (release, commit, push):
+            self.assertNotIn("./package.json", text)
+            self.assertNotIn(":package.json", text)
+
+    def test_said_once_and_read_back(self) -> None:
+        self.move()
+
+        facts = gather_facts(self.context(), self.home)
+        self.assertEqual(facts.version_file, "apps/panel/package.json")
+        self.assertEqual(facts.tag_prefix, "panel-v")
+        again = plan(self.root, render_managed(facts))
+        self.assertEqual({change.kind for change in again}, {"same"})
+
+    def test_the_hooks_tag_and_guard_a_release(self) -> None:
+        import subprocess
+
+        self.move()
+
+        def git(*words: str) -> str:
+            return subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.invalid",
+                    *words,
+                ],
+                cwd=self.root,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+
+        git("init", "-q")
+        git("config", "core.hooksPath", ".githooks")
+        git("config", "commit.gpgsign", "false")
+        git("config", "tag.gpgsign", "false")
+        git("add", "-A")
+        git("commit", "-q", "--no-verify", "-m", "first")
+        write(self.root / "apps/panel/package.json", '{"version": "0.2.0"}\n')
+        git("add", "-A")
+        # --no-verify skips pre-commit, which needs the console; post-commit still runs
+        git("commit", "-q", "--no-verify", "-m", "bump")
+
+        self.assertEqual(git("tag").split(), ["panel-v0.1.0", "panel-v0.2.0"])
+
+        def pre_push(tag: str) -> int:
+            sha = git("rev-parse", "HEAD").strip()
+            return subprocess.run(
+                [str(self.root / ".githooks/pre-push")],
+                cwd=self.root,
+                input=f"refs/tags/{tag} {sha} refs/tags/{tag} {'0' * 40}\n",
+                capture_output=True,
+                text=True,
+                check=False,
+            ).returncode
+
+        self.assertEqual(pre_push("panel-v0.2.0"), 0)
+        self.assertNotEqual(pre_push("panel-v0.3.0"), 0)
+        # another project's tag in the same repository is none of this hook's business
+        self.assertEqual(pre_push("v9.9.9"), 0)
+
+    def test_the_command_line_carries_both_options(self) -> None:
+        import os
+        import subprocess
+        import sys
+
+        workflow = self.root / ".github/workflows/deploy.yml"
+        workflow.write_text(
+            self.read(".github/workflows/deploy.yml").replace(
+                "reusable-deploy.yml@v0.15.1", f"reusable-deploy.yml@v{__version__}"
+            ),
+            encoding="utf-8",
+        )
+        source = Path(__file__).resolve().parents[1] / "src"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "platform_automation.platform_cli",
+                "update",
+                "--yes",
+                "--version-file",
+                "apps/panel/package.json",
+                "--tag-prefix",
+                "panel-v",
+            ],
+            cwd=self.root,
+            env={**os.environ, "HOME": str(self.home), "PYTHONPATH": str(source)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        facts = gather_facts(self.context(), self.home)
+        self.assertEqual(
+            (facts.version_file, facts.tag_prefix),
+            ("apps/panel/package.json", "panel-v"),
+        )
+
+    def test_bad_values_are_refused(self) -> None:
+        for arguments in (
+            {"version_file": "../package.json"},
+            {"version_file": "apps/panel/version.txt"},
+            {"version_file": "apps/none/package.json"},
+            {"tag_prefix": "Panel-v"},
+            {"tag_prefix": "panel"},
+        ):
+            with self.assertRaises(UpdateError, msg=str(arguments)):
+                gather_facts(self.context(), self.home, **arguments)
+
+    def test_defaults_leave_the_templates_alone(self) -> None:
+        changes = plan(
+            self.root, render_managed(gather_facts(self.context(), self.home))
+        )
+        self.assertEqual({change.kind for change in changes}, {"same"})
+
+
+class LefthookTest(unittest.TestCase):
+    def setUp(self) -> None:
+        import subprocess
+
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+
+    def hooks_path(self) -> str:
+        import subprocess
+
+        return subprocess.run(
+            ["git", "config", "--get", "core.hooksPath"],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+
+    def test_without_lefthook_the_platform_owns_the_hooks_path(self) -> None:
+        from platform_automation.operator.secrets import enable_hooks, hooks_enabled
+
+        self.assertTrue(enable_hooks(self.root))
+        self.assertEqual(self.hooks_path(), ".githooks")
+        self.assertTrue(hooks_enabled(self.root))
+
+    def test_lefthook_keeps_its_hooks_and_must_run_ours(self) -> None:
+        from platform_automation.operator.secrets import (
+            enable_hooks,
+            hooks_enabled,
+            lefthook_missing,
+        )
+
+        write(
+            self.root / "lefthook.yml", "pre-commit:\n    jobs:\n        - run: lint\n"
+        )
+        self.assertTrue(enable_hooks(self.root))
+        self.assertEqual(self.hooks_path(), "")
+        self.assertFalse(hooks_enabled(self.root))
+        self.assertEqual(
+            lefthook_missing(self.root), ["pre-commit", "post-commit", "pre-push"]
+        )
+
+        write(
+            self.root / "lefthook.yml",
+            "pre-commit:\n    jobs:\n        - run: .githooks/pre-commit\n"
+            "post-commit:\n    jobs:\n        - run: .githooks/post-commit\n"
+            "pre-push:\n    jobs:\n        - run: .githooks/pre-push\n",
+        )
+        self.assertTrue(hooks_enabled(self.root))
+
+        # a comment, and a script under the wrong hook, run nothing
+        write(
+            self.root / "lefthook.yml",
+            "pre-commit:\n    jobs:\n        - run: .githooks/pre-commit\n"
+            "        - run: .githooks/pre-push\n"
+            "# post-commit:\n#     jobs:\n#         - run: .githooks/post-commit\n",
+        )
+        self.assertEqual(lefthook_missing(self.root), ["post-commit", "pre-push"])
+
+    def test_pre_commit_needs_the_console_only_with_something_to_encrypt(self) -> None:
+        import subprocess
+
+        from platform_automation.operator.scaffold import template
+
+        hook = self.root / "pre-commit"
+        hook.write_text(template("hook_pre-commit"), encoding="utf-8")
+        write(self.root / "deploy/platform.staging.yml", "api_version: platform/v1\n")
+
+        def run() -> int:
+            return subprocess.run(
+                ["/bin/sh", str(hook)],
+                cwd=self.root,
+                env={"PATH": "/usr/bin:/bin"},  # git, and no platform console
+                capture_output=True,
+                check=False,
+            ).returncode
+
+        self.assertEqual(run(), 0)
+        write(self.root / ".env.staging", "TOKEN=value\n")
+        self.assertEqual(run(), 1)
+
+
+class PrefixedTagsInTheConsoleTest(unittest.TestCase):
+    def test_rollback_keeps_the_prefix(self) -> None:
+        from platform_automation.operator.rollback import version_of
+
+        self.assertEqual(
+            version_of("production-panel-v1.2.3", "panel-v"), "panel-v1.2.3"
+        )
+        self.assertEqual(version_of("lab-v0.1.7"), "v0.1.7")
+        # another project's plain tag is not this application's version
+        self.assertIsNone(version_of("production-v1.2.3", "panel-v"))
+        self.assertIsNone(version_of("lab-abc1234", "panel-v"))
+
+    def test_the_default_label_follows_the_prefix(self) -> None:
+        from platform_automation.operator.deploy import default_label
+
+        self.assertEqual(
+            default_label("staging", "panel-v0.2.0", "panel-v"), "staging-panel-v0.2.0"
+        )
+        self.assertIsNone(default_label("staging", "v0.2.0", "panel-v"))

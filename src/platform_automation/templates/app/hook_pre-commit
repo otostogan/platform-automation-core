@@ -10,6 +10,19 @@ if git diff --cached --name-only | grep '^\.env\.' | grep -qv '^\.env\.example$'
     exit 1
 fi
 
+# Шифровать нечего, пока рядом нет открытого .env.<окружение>: участнику,
+# который секретами не занимается, консоль платформы не нужна.
+plaintext=0
+for manifest in deploy/platform.*.yml; do
+    [ -e "${manifest}" ] || continue
+    name="${manifest#deploy/platform.}"
+    name="${name%.yml}"
+    if [ -f ".env.${name}" ]; then
+        plaintext=1
+    fi
+done
+[ "${plaintext}" -eq 1 ] || exit 0
+
 if ! command -v platform >/dev/null 2>&1; then
     echo "pre-commit: нужна консоль platform (pip install 'platform-automation-runtime[operator]')" >&2
     exit 1

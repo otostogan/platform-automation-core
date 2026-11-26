@@ -288,6 +288,16 @@ def parse_arguments(
         metavar="ENVIRONMENT=HOST",
         help="In an application: deploy this environment to another host. Said once; deploy.yml remembers it.",
     )
+    update_parser.add_argument(
+        "--version-file",
+        metavar="PATH",
+        help="In an application: the .json file that carries the project's version (default package.json). Said once.",
+    )
+    update_parser.add_argument(
+        "--tag-prefix",
+        metavar="PREFIX",
+        help="In an application: how a release tag starts — v, or a name and -v such as crm-v. Said once.",
+    )
 
     secrets_parser = subparsers.add_parser(
         "secrets",
@@ -3300,6 +3310,10 @@ def main(
                 console_argv.append("--check")
             for move in arguments.host:
                 console_argv.append(f"--host={move}")
+            if arguments.version_file:
+                console_argv.append(f"--version-file={arguments.version_file}")
+            if arguments.tag_prefix:
+                console_argv.append(f"--tag-prefix={arguments.tag_prefix}")
         if arguments.command == "secrets":
             console_argv.append(arguments.action)
             if arguments.environment:

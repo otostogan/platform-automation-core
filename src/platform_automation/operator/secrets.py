@@ -330,11 +330,71 @@ def stage(root: Path, paths: list, runner=subprocess.run) -> None:
         run(["git", "add", "--", *paths], root, runner)
 
 
+LEFTHOOK_FILES = ("lefthook.yml", ".lefthook.yml", "lefthook.yaml", ".lefthook.yaml")
+PLATFORM_HOOKS = ("pre-commit", "post-commit", "pre-push")
+
+
+def lefthook_config(root: Path) -> Optional[Path]:
+    """The repository's lefthook file, when lefthook is what runs its hooks."""
+    for name in LEFTHOOK_FILES:
+        if (root / name).is_file():
+            return root / name
+    return None
+
+
+def _runs(node) -> list:
+    """Every command a lefthook hook runs: ``run`` of its jobs and commands."""
+    found = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "run" and isinstance(value, str):
+                found.append(value)
+            else:
+                found += _runs(value)
+    elif isinstance(node, list):
+        for item in node:
+            found += _runs(item)
+    return found
+
+
+def lefthook_missing(root: Path) -> list:
+    """Platform hooks the lefthook file does not run under the hook of that name.
+
+    The file is parsed, so a commented-out job or a script run under another
+    hook does not count: ``.githooks/pre-push`` has to be a command of
+    ``pre-push``.
+    """
+    import yaml
+
+    config = lefthook_config(root)
+    if config is None:
+        return list(PLATFORM_HOOKS)
+    try:
+        document = yaml.safe_load(config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return list(PLATFORM_HOOKS)
+    if not isinstance(document, dict):
+        return list(PLATFORM_HOOKS)
+    return [
+        name
+        for name in PLATFORM_HOOKS
+        if not any(
+            f"{HOOKS_PATH}/{name}" in command for command in _runs(document.get(name))
+        )
+    ]
+
+
 def enable_hooks(root: Path, runner=subprocess.run) -> bool:
-    """Local repository config only — nothing committed; False outside a repository."""
+    """Local repository config only — nothing committed; False outside a repository.
+
+    A repository whose hooks lefthook already runs keeps them: pointing
+    ``core.hooksPath`` elsewhere would switch its own checks off. There the
+    platform's three scripts are run from the lefthook file instead.
+    """
     if not (root / ".git").exists():
         return False
-    run(["git", "config", "core.hooksPath", HOOKS_PATH], root, runner)
+    if lefthook_config(root) is None:
+        run(["git", "config", "core.hooksPath", HOOKS_PATH], root, runner)
     run(["git", "config", "push.followTags", "true"], root, runner)
     return True
 
@@ -342,6 +402,8 @@ def enable_hooks(root: Path, runner=subprocess.run) -> bool:
 def hooks_enabled(root: Path, runner=subprocess.run) -> Optional[bool]:
     if not (root / ".git").exists():
         return None
+    if lefthook_config(root) is not None:
+        return not lefthook_missing(root)
     result = run(["git", "config", "--get", "core.hooksPath"], root, runner)
     return (result.stdout or b"").decode("utf-8", "replace").strip() == HOOKS_PATH
 
