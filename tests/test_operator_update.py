@@ -753,3 +753,25 @@ class LefthookTest(unittest.TestCase):
             "pre-push:\n    jobs:\n        - run: .githooks/pre-push\n",
         )
         self.assertTrue(hooks_enabled(self.root))
+
+    def test_pre_commit_needs_the_console_only_with_something_to_encrypt(self) -> None:
+        import subprocess
+
+        from platform_automation.operator.scaffold import template
+
+        hook = self.root / "pre-commit"
+        hook.write_text(template("hook_pre-commit"), encoding="utf-8")
+        write(self.root / "deploy/platform.staging.yml", "api_version: platform/v1\n")
+
+        def run() -> int:
+            return subprocess.run(
+                ["/bin/sh", str(hook)],
+                cwd=self.root,
+                env={"PATH": "/usr/bin:/bin"},  # git, and no platform console
+                capture_output=True,
+                check=False,
+            ).returncode
+
+        self.assertEqual(run(), 0)
+        write(self.root / ".env.staging", "TOKEN=value\n")
+        self.assertEqual(run(), 1)

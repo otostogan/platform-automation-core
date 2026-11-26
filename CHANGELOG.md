@@ -18,6 +18,9 @@ release.
   repository's own checks off. The platform's scripts stay in `.githooks/`
   and are run from the lefthook file; `platform doctor` names the hook it
   does not run yet.
+- The pre-commit hook asks for the console only when there is something to
+  encrypt: without a local `.env.<environment>` it passes, so a contributor
+  who never touches secrets needs no `platform` binary.
 
 ## [0.37.1] - 2026-11-23
 
