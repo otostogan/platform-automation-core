@@ -461,12 +461,33 @@ def manifest_findings(root: Path, manifest_path: Path, schema: dict) -> list:
 
 def secrets_findings(context: Context) -> list:
     """The hook only helps when it runs, and only if the plaintext never leaves."""
-    from .secrets import env_path, hooks_enabled, ignored, is_stale
+    from .secrets import (
+        env_path,
+        hooks_enabled,
+        ignored,
+        is_stale,
+        lefthook_config,
+        lefthook_missing,
+    )
 
     findings = []
     active = hooks_enabled(context.root)
     if active is None:
         findings.append(skip("Git hooks", "not a git repository", "#/flow-new-app"))
+    elif lefthook_config(context.root) is not None:
+        missing = lefthook_missing(context.root)
+        if missing:
+            findings.append(
+                fail(
+                    "Git hooks",
+                    f"{lefthook_config(context.root).name} does not run "
+                    + ", ".join(f".githooks/{name}" for name in missing)
+                    + "; add a job that runs each under the hook of the same name",
+                    "#/flow-new-app",
+                )
+            )
+        else:
+            findings.append(ok("Git hooks", "lefthook runs the platform's three hooks"))
     elif active:
         findings.append(
             ok(

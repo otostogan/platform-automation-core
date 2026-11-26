@@ -113,6 +113,74 @@ def environment_options(workflow: str, environments: tuple) -> str:
     return workflow.replace(ENVIRONMENT_OPTIONS, wanted, 1)
 
 
+DEFAULT_VERSION_FILE = "package.json"
+DEFAULT_TAG_PREFIX = "v"
+VERSION_FILE_PATTERN = re.compile(r"^(?!/)(?!.*\.\.)[A-Za-z0-9._/-]+\.json$")
+# ``v`` alone, or a name and ``-v``: ``crm-v`` tags a release ``crm-v1.2.3``.
+TAG_PREFIX_PATTERN = re.compile(r"^(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*-)?v$")
+
+# What ties each template to the version file and the tag: (old, new) with
+# {file} and {prefix}. Every pair must be found, so a template that changes
+# cannot leave a repository half on one tag scheme.
+VERSIONING = {
+    ".githooks/post-commit": (
+        ('"$1:package.json"', '"$1:{file}"'),
+        ('tag="v${current}"', 'tag="{prefix}${current}"'),
+        (
+            'git describe --tags --abbrev=0 "HEAD^"',
+            "git describe --tags --abbrev=0 --match '{prefix}[0-9]*' \"HEAD^\"",
+        ),
+    ),
+    ".githooks/pre-push": (
+        ("refs/tags/v*) ;;", "refs/tags/{prefix}[0-9]*) ;;"),
+        ('expected="${tag#v}"', 'expected="${tag#{prefix}}"'),
+        ('"${local_sha}:package.json"', '"${local_sha}:{file}"'),
+        ("has no package.json.", "has no {file}."),
+        ("  package.json says: ", "  {file} says: "),
+    ),
+    ".github/workflows/build.yml": (
+        ("            - v*.*.*\n", "            - {prefix}*.*.*\n"),
+        (
+            "startsWith(github.ref, 'refs/tags/v')",
+            "startsWith(github.ref, 'refs/tags/{prefix}')",
+        ),
+    ),
+    ".github/workflows/release.yml": (
+        ("            - v*.*.*\n", "            - {prefix}*.*.*\n"),
+        ("require('./package.json')", "require('./{file}')"),
+        ('!= "v${version}"', '!= "{prefix}${version}"'),
+    ),
+    ".github/workflows/deploy.yml": (
+        ("=~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$", "=~ ^{prefix}[0-9]+\\.[0-9]+\\.[0-9]+$"),
+    ),
+}
+
+
+def versioned(
+    text: str,
+    destination: str,
+    version_file: str = DEFAULT_VERSION_FILE,
+    tag_prefix: str = DEFAULT_TAG_PREFIX,
+) -> str:
+    """Point a template at the project's version file and its release tag.
+
+    A repository that holds more than the deployed application keeps the
+    version next to that application and tags releases with its name, so a
+    tag says whose release it is. The defaults leave the template untouched.
+    """
+    if version_file == DEFAULT_VERSION_FILE and tag_prefix == DEFAULT_TAG_PREFIX:
+        return text
+    for old, new in VERSIONING.get(destination, ()):
+        if old not in text:
+            raise ScaffoldError(
+                f"{destination}: the template no longer contains {old!r}"
+            )
+        text = text.replace(
+            old, new.replace("{file}", version_file).replace("{prefix}", tag_prefix)
+        )
+    return text
+
+
 def target_host_value(hosts: tuple) -> str:
     """What ``target_host`` says for (environment, host) pairs.
 

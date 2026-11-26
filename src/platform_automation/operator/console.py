@@ -3800,9 +3800,7 @@ def run_new_app(context: Context, questionary, style) -> int:
     for relative in encrypted:
         print(f"{GREEN}encrypted: {relative}{RESET}")
     if hooks:
-        print(
-            f"{GREEN}hooks enabled: core.hooksPath=.githooks, push.followTags=true{RESET}"
-        )
+        lefthook_hint(root)
     else:
         print(
             f"{DIM}not a git repository yet — after git init: git config core.hooksPath .githooks{RESET}"
@@ -4127,6 +4125,30 @@ def run_core_update(context: Context, argv: list) -> int:
     return 0
 
 
+def lefthook_hint(root: Path, only_when_missing: bool = False) -> None:
+    """Say how the hooks run here; with lefthook, what its file still has to run."""
+    from .secrets import lefthook_config, lefthook_missing
+
+    config = lefthook_config(root)
+    if config is None:
+        if not only_when_missing:
+            print(
+                f"{GREEN}hooks enabled: core.hooksPath=.githooks, push.followTags=true{RESET}"
+            )
+        return
+    missing = lefthook_missing(root)
+    if not missing:
+        if not only_when_missing:
+            print(f"{GREEN}hooks: {config.name} runs the platform's three hooks{RESET}")
+        return
+    print(
+        f"{RED}{config.name} runs this repository's hooks, so core.hooksPath is left alone."
+        f" Add a job to it under each hook:{RESET}"
+    )
+    for name in missing:
+        print(f"  {name}: run .githooks/{name}")
+
+
 def run_update(context: Context, argv: list) -> int:
     """Rewrite the platform-owned files from the console's templates, after a look."""
     from .update import (
@@ -4170,8 +4192,20 @@ def run_update(context: Context, argv: list) -> int:
             return 2
         moves[name] = host
 
+    def option(name: str):
+        for word in argv:
+            if word.startswith(f"--{name}="):
+                return word[len(name) + 3 :]
+        return None
+
     try:
-        facts = gather_facts(context, Path.home(), hosts=moves)
+        facts = gather_facts(
+            context,
+            Path.home(),
+            hosts=moves,
+            version_file=option("version-file"),
+            tag_prefix=option("tag-prefix"),
+        )
     except UpdateError as error:
         print(f"{RED}{error}{RESET}")
         return 1
@@ -4263,6 +4297,7 @@ def run_update(context: Context, argv: list) -> int:
                 f"{GREEN}re-encrypted for the new recipients: {result.written}{RESET}"
             )
 
+    lefthook_hint(context.root, only_when_missing=True)
     print()
     print(
         "Review with git diff, then commit — the pin and the templates move as one reviewed change."

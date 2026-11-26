@@ -24,6 +24,11 @@ from .config import infra_for_host
 from .context import Context, load_yaml, read_collection_pin
 from .recipients import host_recipient, read_recipients, recovery_recipient
 from .scaffold import (
+    DEFAULT_TAG_PREFIX,
+    DEFAULT_VERSION_FILE,
+    TAG_PREFIX_PATTERN,
+    VERSION_FILE_PATTERN,
+    versioned,
     DEFAULT_PLATFORMS,
     DEPLOY_WORKFLOW,
     DESTINATIONS,
@@ -72,6 +77,9 @@ class Facts:
     # (environment, host key, recovery key). Empty means the single values above.
     target_hosts: tuple = ()
     recipients: tuple = ()
+    # Where the project's version lives and how its release tag starts.
+    version_file: str = DEFAULT_VERSION_FILE
+    tag_prefix: str = DEFAULT_TAG_PREFIX
 
 
 def find_repository(document) -> Optional[str]:
@@ -134,6 +142,27 @@ def read_repository(root: Path) -> dict:
     return facts
 
 
+VERSION_FILE_READ = re.compile(r"require\('\./([^']+)'\)\.version")
+TAG_PREFIX_READ = re.compile(r'!= "([a-z0-9-]*v)\$\{version\}"')
+
+
+def read_versioning(root: Path) -> tuple:
+    """(version file, tag prefix) the release workflow already checks against."""
+    try:
+        text = (root / DESTINATIONS["workflow_release.yml"]).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return DEFAULT_VERSION_FILE, DEFAULT_TAG_PREFIX
+    file_match = VERSION_FILE_READ.search(text)
+    prefix_match = TAG_PREFIX_READ.search(text)
+    version_file = file_match.group(1) if file_match else DEFAULT_VERSION_FILE
+    tag_prefix = prefix_match.group(1) if prefix_match else DEFAULT_TAG_PREFIX
+    if not VERSION_FILE_PATTERN.match(version_file):
+        version_file = DEFAULT_VERSION_FILE
+    if not TAG_PREFIX_PATTERN.match(tag_prefix):
+        tag_prefix = DEFAULT_TAG_PREFIX
+    return version_file, tag_prefix
+
+
 def rule_recipients(sops, environment: Optional[str]) -> tuple:
     """The age recipients ``.sops.yaml`` gives an environment's secrets file.
 
@@ -171,8 +200,19 @@ def pin_key(pin: str) -> tuple:
         return ()
 
 
-def gather_facts(context: Context, home: Path, hosts: Optional[dict] = None) -> Facts:
-    """Read the repository back; ``hosts`` moves environments to other hosts."""
+def gather_facts(
+    context: Context,
+    home: Path,
+    hosts: Optional[dict] = None,
+    version_file: Optional[str] = None,
+    tag_prefix: Optional[str] = None,
+) -> Facts:
+    """Read the repository back.
+
+    ``hosts`` moves environments to other hosts; ``version_file`` and
+    ``tag_prefix`` say where the version lives and how a release is tagged.
+    Each is said once and read back from the workflows afterwards.
+    """
     if context.kind != "app" or context.root is None:
         raise UpdateError("not inside an application repository")
     hosts = hosts or {}
@@ -257,7 +297,26 @@ def gather_facts(context: Context, home: Path, hosts: Optional[dict] = None) -> 
         load_yaml(context.root / DESTINATIONS["workflow_build.yml"])
     )
 
+    known_file, known_prefix = read_versioning(context.root)
+    version_file = version_file or known_file
+    tag_prefix = tag_prefix or known_prefix
+    if not VERSION_FILE_PATTERN.match(version_file):
+        raise UpdateError(
+            f"--version-file takes a .json path inside the repository: {version_file}"
+        )
+    if not TAG_PREFIX_PATTERN.match(tag_prefix):
+        raise UpdateError(
+            f"--tag-prefix is v, or a lowercase name and -v (crm-v): {tag_prefix}"
+        )
+    if (
+        version_file != DEFAULT_VERSION_FILE
+        and not (context.root / version_file).is_file()
+    ):
+        raise UpdateError(f"{version_file} does not exist")
+
     return Facts(
+        version_file=version_file,
+        tag_prefix=tag_prefix,
         project=project,
         owner=repository["owner"],
         build_platforms=platforms or DEFAULT_PLATFORMS,
@@ -301,6 +360,7 @@ def render_managed(facts: Facts, version: str = __version__) -> dict:
     for name, destination in DESTINATIONS.items():
         if destination in MANAGED:
             text = render(template(name), values)
+            text = versioned(text, destination, facts.version_file, facts.tag_prefix)
             if destination == ".sops.yaml":
                 text = sops_rules(facts.recipients) or text
             if destination == DEPLOY_WORKFLOW:

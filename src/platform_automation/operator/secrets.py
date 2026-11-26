@@ -330,11 +330,41 @@ def stage(root: Path, paths: list, runner=subprocess.run) -> None:
         run(["git", "add", "--", *paths], root, runner)
 
 
+LEFTHOOK_FILES = ("lefthook.yml", ".lefthook.yml", "lefthook.yaml", ".lefthook.yaml")
+PLATFORM_HOOKS = ("pre-commit", "post-commit", "pre-push")
+
+
+def lefthook_config(root: Path) -> Optional[Path]:
+    """The repository's lefthook file, when lefthook is what runs its hooks."""
+    for name in LEFTHOOK_FILES:
+        if (root / name).is_file():
+            return root / name
+    return None
+
+
+def lefthook_missing(root: Path) -> list:
+    """Platform hooks the lefthook file does not run."""
+    config = lefthook_config(root)
+    if config is None:
+        return list(PLATFORM_HOOKS)
+    try:
+        text = config.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return list(PLATFORM_HOOKS)
+    return [name for name in PLATFORM_HOOKS if f"{HOOKS_PATH}/{name}" not in text]
+
+
 def enable_hooks(root: Path, runner=subprocess.run) -> bool:
-    """Local repository config only — nothing committed; False outside a repository."""
+    """Local repository config only — nothing committed; False outside a repository.
+
+    A repository whose hooks lefthook already runs keeps them: pointing
+    ``core.hooksPath`` elsewhere would switch its own checks off. There the
+    platform's three scripts are run from the lefthook file instead.
+    """
     if not (root / ".git").exists():
         return False
-    run(["git", "config", "core.hooksPath", HOOKS_PATH], root, runner)
+    if lefthook_config(root) is None:
+        run(["git", "config", "core.hooksPath", HOOKS_PATH], root, runner)
     run(["git", "config", "push.followTags", "true"], root, runner)
     return True
 
@@ -342,6 +372,8 @@ def enable_hooks(root: Path, runner=subprocess.run) -> bool:
 def hooks_enabled(root: Path, runner=subprocess.run) -> Optional[bool]:
     if not (root / ".git").exists():
         return None
+    if lefthook_config(root) is not None:
+        return not lefthook_missing(root)
     result = run(["git", "config", "--get", "core.hooksPath"], root, runner)
     return (result.stdout or b"").decode("utf-8", "replace").strip() == HOOKS_PATH
 
