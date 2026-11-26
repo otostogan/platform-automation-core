@@ -3135,11 +3135,22 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
             where = "repository root" if path == DEFAULT_VERSION_FILE else "workspace"
             return f"{path}  ({where}, {version or 'no version yet'})"
 
-        return select(
+        answer = select(
             "Version file (the release is tagged when its version changes)",
             candidates,
             describe,
         )
+        if answer in (BACK, CANCEL) or answer == state.get("version_file"):
+            return answer
+        # The prefix belongs to the file: another file means another name.
+        # Set here as well as asked next, because a change made from the
+        # review screen re-asks this step alone — and must not leave the
+        # workspace application with the repository-wide tag.
+        if answer == DEFAULT_VERSION_FILE:
+            state.pop("tag_prefix", None)
+        else:
+            state["tag_prefix"] = suggested_tag_prefix(answer)
+        return answer
 
     def ask_tag_prefix(state):
         return text(
@@ -3405,7 +3416,7 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         secret_names=state["secret_names"],
         version_file=version_file,
         tag_prefix=(
-            state.get("tag_prefix", DEFAULT_TAG_PREFIX)
+            state.get("tag_prefix") or suggested_tag_prefix(version_file)
             if version_file != DEFAULT_VERSION_FILE
             else DEFAULT_TAG_PREFIX
         ),

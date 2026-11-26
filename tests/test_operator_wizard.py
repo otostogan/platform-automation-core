@@ -269,6 +269,29 @@ class NewAppInAMonorepoTest(unittest.TestCase):
             ("apps/panel/package.json", "panel-v"),
         )
 
+    def test_changing_the_file_on_review_brings_its_prefix(self) -> None:
+        (self.root / "pnpm-workspace.yaml").write_text("packages:\n  - apps/*\n")
+        files = iter(["package.json", "apps/panel/package.json"])
+        offered = []
+
+        def review(choices):
+            offered.append([choice.title for choice in choices])
+            # first look: go back and change the file; second: write
+            return "version_file" if len(offered) == 1 else choices[0].value
+
+        answers, asked = self.ask(
+            {self.VERSION: lambda choices: next(files), "Write these files?": review}
+        )
+
+        self.assertNotIn(self.PREFIX, asked)
+        self.assertEqual(
+            (answers.version_file, answers.tag_prefix),
+            ("apps/panel/package.json", "panel-v"),
+        )
+        # and the prefix is on the second review, where it can still be changed
+        self.assertNotIn("Change: Release tag prefix", offered[0])
+        self.assertIn("Change: Release tag prefix", offered[1])
+
     def test_the_root_file_in_a_workspace_keeps_the_plain_tag(self) -> None:
         (self.root / "pnpm-workspace.yaml").write_text("packages:\n  - apps/*\n")
 
