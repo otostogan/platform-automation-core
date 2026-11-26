@@ -334,10 +334,16 @@ def gather_facts(
 
 
 def console_ahead_of_hosts(core_pin: str, version: str = __version__) -> bool:
-    """A workflow from a newer console may ask a host for what it lacks."""
+    """A workflow from a newer console may ask a host for what it lacks.
+
+    Only a newer minor or major can: a patch release never changes what the
+    workflows ask of a host, so a console one patch ahead of its hosts
+    writes the same requests they already answer. Refusing there made every
+    console-only fix cost a round of converges that changed nothing.
+    """
     try:
-        have = tuple(int(part) for part in version.split("."))
-        pinned = tuple(int(part) for part in core_pin.lstrip("v").split("."))
+        have = tuple(int(part) for part in version.split("."))[:2]
+        pinned = tuple(int(part) for part in core_pin.lstrip("v").split("."))[:2]
     except ValueError:
         return False
     return have > pinned
