@@ -65,10 +65,22 @@ def current_branch(root: Path, runner=subprocess.run) -> Optional[str]:
     return name if result.returncode == 0 and name and name != "HEAD" else None
 
 
+def tag_prefix(root: Path) -> str:
+    """How this application's release tags start: ``v``, or ``crm-v`` in a monorepo."""
+    from .update import read_versioning
+
+    return read_versioning(root)[1]
+
+
+def tag_pattern(prefix: str = "v"):
+    return re.compile(rf"^{re.escape(prefix)}\d+\.\d+\.\d+$")
+
+
 def release_tags(root: Path, runner=subprocess.run, limit: int = 8) -> list:
     """Newest version tags first — the things an operator usually deploys."""
+    prefix = tag_prefix(root)
     result = runner(
-        ["git", "tag", "--list", "v*", "--sort=-v:refname"],
+        ["git", "tag", "--list", f"{prefix}*", "--sort=-v:refname"],
         cwd=str(root),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
@@ -77,30 +89,43 @@ def release_tags(root: Path, runner=subprocess.run, limit: int = 8) -> list:
         timeout=15,
     )
     tags = [line.strip() for line in _text(result.stdout).splitlines()]
-    return [tag for tag in tags if TAG_PATTERN.match(tag)][:limit]
+    pattern = tag_pattern(prefix)
+    return [tag for tag in tags if pattern.match(tag)][:limit]
 
 
 def latest_release(root: Path, runner=subprocess.run) -> Optional[str]:
-    """The tag the workflow deploys for an empty ref: GitHub's latest release.
+    """The tag the workflow deploys for an empty ref: the latest release.
 
     Not the newest local tag — a stale clone or an unreleased tag would name
-    a different release than the one the workflow resolves.
+    a different release than the one the workflow resolves. With a tag
+    prefix it is the newest release of this application, not of whatever
+    else the repository publishes — the same lookup deploy.yml makes.
     """
-    result = gh(
-        root, ["release", "view", "--json", "tagName", "-q", ".tagName"], runner
-    )
+    prefix = tag_prefix(root)
+    if prefix == "v":
+        arguments = ["release", "view", "--json", "tagName", "-q", ".tagName"]
+    else:
+        arguments = [
+            "api",
+            "repos/{owner}/{repo}/releases?per_page=100",
+            "--jq",
+            f'[.[] | select(.draft | not) | .tag_name | select(test("^{prefix}[0-9]"))][0] // empty',
+        ]
+    result = gh(root, arguments, runner)
     tag = _text(result.stdout).strip()
-    return tag if result.returncode == 0 and TAG_PATTERN.fullmatch(tag) else None
+    return (
+        tag if result.returncode == 0 and tag_pattern(prefix).fullmatch(tag) else None
+    )
 
 
-def default_label(environment: str, ref: str) -> Optional[str]:
+def default_label(environment: str, ref: str, prefix: str = "v") -> Optional[str]:
     """What the workflow names the release when no label is given.
 
     Mirrors deploy.yml: a version tag gives ``<environment>-<tag>``; a branch
     or commit gives a name from the short commit, which the workstation
     cannot know ahead, so ``None``.
     """
-    if TAG_PATTERN.fullmatch(ref):
+    if tag_pattern(prefix).fullmatch(ref):
         return f"{environment}-{ref}"
     return None
 

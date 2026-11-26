@@ -73,7 +73,11 @@ def migrations_between(document: dict, target_tag: str) -> list:
     ]
 
 
-def version_of(release_tag: str) -> Optional[str]:
-    """``lab-v0.1.7`` → ``v0.1.7``: what the Deploy workflow's ``ref`` takes."""
-    match = VERSION_IN_TAG.search(release_tag)
+def version_of(release_tag: str, prefix: str = "v") -> Optional[str]:
+    """``lab-v0.1.7`` → ``v0.1.7``: what the Deploy workflow's ``ref`` takes.
+
+    With a tag prefix the name carries it: ``production-crm-v1.2.3`` gives
+    ``crm-v1.2.3`` — the tag that exists, not another project's ``v1.2.3``.
+    """
+    match = re.search(rf"(?:^|-)({re.escape(prefix)}\d+\.\d+\.\d+)$", release_tag)
     return match.group(1) if match else None

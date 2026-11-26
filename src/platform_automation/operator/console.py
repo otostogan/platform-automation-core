@@ -910,6 +910,7 @@ def deploy_action(
         redeploy_label,
         release_tags,
         serving_release_tag,
+        tag_prefix,
         watch,
     )
 
@@ -969,7 +970,11 @@ def deploy_action(
         # An empty ref deploys GitHub's latest release — ask GitHub which, as
         # the workflow does, rather than guess from local tags.
         effective = ref or (latest_release(root) if "ref" in inputs else "") or ""
-        expected = default_label(scope.environment, effective) if effective else None
+        expected = (
+            default_label(scope.environment, effective, tag_prefix(root))
+            if effective
+            else None
+        )
         if expected and "label" in inputs:
             status = None
             if context.target_host and tailnet_gate(read_tailnet()) is None:
@@ -1091,6 +1096,7 @@ def rollback_action(context: Context, scope, prompts) -> Action:
         migrations_between,
         version_of,
     )
+    from .deploy import tag_prefix
 
     ident = ["--project", scope.project, "--environment", scope.environment]
     target_host = context.target_host
@@ -1179,7 +1185,7 @@ def rollback_action(context: Context, scope, prompts) -> Action:
             return 130
 
         if route == CI:
-            version = version_of(chosen.release_tag)
+            version = version_of(chosen.release_tag, tag_prefix(context.root))
             if version is None:
                 version = text(
                     f"{chosen.release_tag} carries no version; ref to deploy",

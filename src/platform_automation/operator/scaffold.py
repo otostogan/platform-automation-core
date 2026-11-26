@@ -151,6 +151,17 @@ VERSIONING = {
         ('!= "v${version}"', '!= "{prefix}${version}"'),
     ),
     ".github/workflows/deploy.yml": (
+        (
+            'ref="$(gh release view --repo "${GITHUB_REPOSITORY}" \\\n'
+            '                          --json tagName --jq .tagName)"\n',
+            'ref="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \\\n'
+            "                          --jq '[.[] | select(.draft | not) | .tag_name"
+            ' | select(test("^{prefix}[0-9]"))][0] // empty\')"\n'
+            '                      if [[ -z "${ref}" ]]; then\n'
+            '                          echo "No {prefix}* release to deploy; name a ref." >&2\n'
+            "                          exit 1\n"
+            "                      fi\n",
+        ),
         ("=~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$", "=~ ^{prefix}[0-9]+\\.[0-9]+\\.[0-9]+$"),
     ),
 }

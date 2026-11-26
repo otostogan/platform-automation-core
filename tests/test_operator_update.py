@@ -575,7 +575,11 @@ class MonorepoVersioningTest(unittest.TestCase):
         build = self.read(".github/workflows/build.yml")
         self.assertIn("            - panel-v*.*.*\n", build)
         self.assertNotIn("'refs/tags/v'", build)
-        self.assertIn("=~ ^panel-v[0-9]+", self.read(".github/workflows/deploy.yml"))
+        deploy = self.read(".github/workflows/deploy.yml")
+        self.assertIn("=~ ^panel-v[0-9]+", deploy)
+        # an empty ref means this application's newest release, not the repository's
+        self.assertNotIn("gh release view", deploy)
+        self.assertIn('select(test("^panel-v[0-9]"))', deploy)
         commit = self.read(".githooks/post-commit")
         self.assertIn('"$1:apps/panel/package.json"', commit)
         self.assertIn('tag="panel-v${current}"', commit)
@@ -754,6 +758,15 @@ class LefthookTest(unittest.TestCase):
         )
         self.assertTrue(hooks_enabled(self.root))
 
+        # a comment, and a script under the wrong hook, run nothing
+        write(
+            self.root / "lefthook.yml",
+            "pre-commit:\n    jobs:\n        - run: .githooks/pre-commit\n"
+            "        - run: .githooks/pre-push\n"
+            "# post-commit:\n#     jobs:\n#         - run: .githooks/post-commit\n",
+        )
+        self.assertEqual(lefthook_missing(self.root), ["post-commit", "pre-push"])
+
     def test_pre_commit_needs_the_console_only_with_something_to_encrypt(self) -> None:
         import subprocess
 
@@ -775,3 +788,24 @@ class LefthookTest(unittest.TestCase):
         self.assertEqual(run(), 0)
         write(self.root / ".env.staging", "TOKEN=value\n")
         self.assertEqual(run(), 1)
+
+
+class PrefixedTagsInTheConsoleTest(unittest.TestCase):
+    def test_rollback_keeps_the_prefix(self) -> None:
+        from platform_automation.operator.rollback import version_of
+
+        self.assertEqual(
+            version_of("production-panel-v1.2.3", "panel-v"), "panel-v1.2.3"
+        )
+        self.assertEqual(version_of("lab-v0.1.7"), "v0.1.7")
+        # another project's plain tag is not this application's version
+        self.assertIsNone(version_of("production-v1.2.3", "panel-v"))
+        self.assertIsNone(version_of("lab-abc1234", "panel-v"))
+
+    def test_the_default_label_follows_the_prefix(self) -> None:
+        from platform_automation.operator.deploy import default_label
+
+        self.assertEqual(
+            default_label("staging", "panel-v0.2.0", "panel-v"), "staging-panel-v0.2.0"
+        )
+        self.assertIsNone(default_label("staging", "v0.2.0", "panel-v"))
