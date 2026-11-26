@@ -3076,8 +3076,15 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         OWNER_PATTERN,
         PROJECT_PATTERN,
         SECRET_NAME_PATTERN,
+        DEFAULT_TAG_PREFIX,
+        DEFAULT_VERSION_FILE,
+        TAG_PREFIX_PATTERN,
         git_org,
+        is_monorepo,
         normalize_owner,
+        package_version,
+        suggested_tag_prefix,
+        version_files,
     )
     from .wizard import BACK, CANCEL, Step, is_back, run_wizard
 
@@ -3116,6 +3123,43 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
             or "letters, digits, dashes — lowercased for ghcr.io",
         )
         return answer if answer in (BACK, CANCEL) else normalize_owner(answer)
+
+    # A repository that holds more than this application keeps the version
+    # beside the application and names its releases after it. Asked only
+    # there: a repository that is the application has nothing to choose.
+    candidates = version_files(root) if is_monorepo(root) else [DEFAULT_VERSION_FILE]
+
+    def ask_version_file(state):
+        def describe(path):
+            version = package_version(root / path)
+            where = "repository root" if path == DEFAULT_VERSION_FILE else "workspace"
+            return f"{path}  ({where}, {version or 'no version yet'})"
+
+        answer = select(
+            "Version file (the release is tagged when its version changes)",
+            candidates,
+            describe,
+        )
+        if answer in (BACK, CANCEL) or answer == state.get("version_file"):
+            return answer
+        # The prefix belongs to the file: another file means another name.
+        # Set here as well as asked next, because a change made from the
+        # review screen re-asks this step alone — and must not leave the
+        # workspace application with the repository-wide tag.
+        if answer == DEFAULT_VERSION_FILE:
+            state.pop("tag_prefix", None)
+        else:
+            state["tag_prefix"] = suggested_tag_prefix(answer)
+        return answer
+
+    def ask_tag_prefix(state):
+        return text(
+            "Release tag prefix (crm-v tags a release crm-v1.2.3)",
+            state.get("tag_prefix")
+            or suggested_tag_prefix(state.get("version_file", DEFAULT_VERSION_FILE)),
+            lambda v: bool(TAG_PREFIX_PATTERN.match(v))
+            or "v, or a lowercase name and -v",
+        )
 
     def ask_environments(state):
         chosen = set(state.get("environments") or ("lab", "production"))
@@ -3254,6 +3298,19 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
     steps = [
         Step("project", ask_project, label="Project"),
         Step("owner", ask_owner, label="ghcr.io owner"),
+        Step(
+            "version_file",
+            ask_version_file,
+            lambda st: len(candidates) > 1,
+            label="Version file",
+        ),
+        Step(
+            "tag_prefix",
+            ask_tag_prefix,
+            lambda st: st.get("version_file", DEFAULT_VERSION_FILE)
+            != DEFAULT_VERSION_FILE,
+            label="Release tag prefix",
+        ),
         Step("environments", ask_environments, label="Environments"),
         *[
             Step(f"domain:{e}", ask_domain(e), env_applies(e), label=f"Domain for {e}")
@@ -3337,6 +3394,7 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
     state = run_wizard(steps, review=review)
     infra = state.get("infra") or {}
     environments = state["environments"]
+    version_file = state.get("version_file", DEFAULT_VERSION_FILE)
     return AppAnswers(
         project=state["project"],
         owner=state["owner"],
@@ -3356,6 +3414,12 @@ def ask_app(context: Context, questionary, style) -> "AppAnswers":
         backup_retain=state.get("backup_retain", 3),
         restore_query=state.get("restore_query", "SELECT 1"),
         secret_names=state["secret_names"],
+        version_file=version_file,
+        tag_prefix=(
+            state.get("tag_prefix") or suggested_tag_prefix(version_file)
+            if version_file != DEFAULT_VERSION_FILE
+            else DEFAULT_TAG_PREFIX
+        ),
         **({"core_pin": infra["core_pin"]} if infra.get("core_pin") else {}),
     )
 

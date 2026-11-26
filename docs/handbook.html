@@ -12844,7 +12844,16 @@ ln -sf ~/.local/share/platform-console/bin/platform ~/.local/bin/platform</code>
       <dt><code>app</code></dt>
       <dd>В репозитории приложения: <code>deploy/</code>, три workflow, три хука,
       <code>.sops.yaml</code>. Версию ядра и получателей берёт из зарегистрированной
-      инфраструктуры. Дальше — <a href="#/flow-new-app">Новое приложение</a>.</dd>
+      инфраструктуры. В монорепозитории (есть <code>pnpm-workspace.yaml</code>,
+      <code>turbo.json</code>, <code>nx.json</code>, <code>lerna.json</code> или
+      <code>workspaces</code> в корневом <code>package.json</code>) спрашивает ещё
+      два: в каком <code>package.json</code> лежит версия приложения — на выбор
+      корневой и все пакеты с версией — и как начинается тег выпуска; префикс
+      предлагается по имени каталога, для <code>apps/crm</code> это
+      <code>crm-v</code>. Workflow и хуки сразу пишутся под них. В обычном
+      репозитории этих вопросов нет. Если хуки ведёт lefthook, в конце названы три
+      задания, которые нужно добавить в его файл. Дальше —
+      <a href="#/flow-new-app">Новое приложение</a>.</dd>
     </dl>
   </article>
 

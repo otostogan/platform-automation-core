@@ -7,6 +7,12 @@ release.
 
 ## [Unreleased]
 
+- `platform new app` asks for the version file and the release tag prefix in
+  a monorepo, and writes the workflows and hooks for them at once. It offers
+  the root `package.json` and every workspace package that carries a
+  version, and suggests the prefix from the directory name (`apps/crm`
+  gives `crm-v`). A repository that is the application is asked nothing new.
+
 ## [0.38.0] - 2026-11-26
 
 - An application inside a monorepo: `platform update --version-file <path>
