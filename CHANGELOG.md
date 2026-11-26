@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-11-26
+
 - An application inside a monorepo: `platform update --version-file <path>
   --tag-prefix <prefix>` says where the project's version lives and how its
   release tag starts (`crm-v` gives `crm-v1.2.3`). The build, release and
