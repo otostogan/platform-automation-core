@@ -809,3 +809,56 @@ class PrefixedTagsInTheConsoleTest(unittest.TestCase):
             default_label("staging", "panel-v0.2.0", "panel-v"), "staging-panel-v0.2.0"
         )
         self.assertIsNone(default_label("staging", "v0.2.0", "panel-v"))
+
+
+class NewAppWritesTheVersioningTest(unittest.TestCase):
+    def test_new_app_and_update_agree_on_a_monorepo(self) -> None:
+        from dataclasses import replace
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "app"
+        home = Path(temporary.name) / "home"
+        root.mkdir()
+        home.mkdir()
+        write(root / "apps/panel/package.json", '{"version": "0.1.0"}\n')
+        answers = replace(
+            ANSWERS, version_file="apps/panel/package.json", tag_prefix="panel-v"
+        )
+        write_files(root, render_app(answers))
+
+        release = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn("            - panel-v*.*.*\n", release)
+        self.assertIn(
+            'tag="panel-v${current}"',
+            (root / ".githooks/post-commit").read_text(encoding="utf-8"),
+        )
+
+        # what the wizard wrote is what the next update would write
+        context = detect(root, host_marker=home / "no-host")
+        facts = gather_facts(context, home)
+        self.assertEqual(
+            (facts.version_file, facts.tag_prefix),
+            ("apps/panel/package.json", "panel-v"),
+        )
+        changes = plan(root, render_managed(facts))
+        self.assertEqual({change.kind for change in changes}, {"same"})
+
+    def test_a_bad_prefix_is_refused_before_anything_is_written(self) -> None:
+        from dataclasses import replace
+
+        from platform_automation.operator.scaffold import ScaffoldError
+
+        with self.assertRaises(ScaffoldError):
+            render_app(replace(ANSWERS, tag_prefix="Panel"))
+        with self.assertRaises(ScaffoldError):
+            render_app(replace(ANSWERS, version_file="../package.json"))
+
+    def test_the_prefix_is_suggested_from_the_directory(self) -> None:
+        from platform_automation.operator.scaffold import suggested_tag_prefix
+
+        self.assertEqual(suggested_tag_prefix("apps/crm/package.json"), "crm-v")
+        self.assertEqual(
+            suggested_tag_prefix("apps/Admin_Panel/package.json"), "admin-panel-v"
+        )
+        self.assertEqual(suggested_tag_prefix("package.json"), "v")

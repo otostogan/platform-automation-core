@@ -192,6 +192,72 @@ def versioned(
     return text
 
 
+WORKSPACE_MARKERS = ("pnpm-workspace.yaml", "lerna.json", "nx.json", "turbo.json")
+SKIPPED_DIRECTORIES = {"node_modules", "dist", "build", "coverage"}
+
+
+def package_version(path: Path) -> Optional[str]:
+    """The ``version`` of a package.json, when it has one."""
+    import json
+
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    version = document.get("version") if isinstance(document, dict) else None
+    return version if isinstance(version, str) and version else None
+
+
+def is_monorepo(root: Path) -> bool:
+    """A repository that holds more than the application being deployed."""
+    import json
+
+    if any((root / name).is_file() for name in WORKSPACE_MARKERS):
+        return True
+    try:
+        document = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+    return isinstance(document, dict) and bool(document.get("workspaces"))
+
+
+def version_files(root: Path, depth: int = 3) -> list:
+    """package.json files that carry a version, the root one first.
+
+    The root file is always offered — it is the default — and the rest are
+    the workspaces a release could be named after.
+    """
+    found = []
+
+    def walk(directory: Path, level: int) -> None:
+        if level > depth:
+            return
+        try:
+            entries = sorted(directory.iterdir())
+        except OSError:
+            return
+        for entry in entries:
+            if entry.name.startswith(".") or entry.name in SKIPPED_DIRECTORIES:
+                continue
+            if entry.is_dir():
+                walk(entry, level + 1)
+            elif entry.name == "package.json" and level > 0:
+                relative = entry.relative_to(root).as_posix()
+                if package_version(entry) and VERSION_FILE_PATTERN.match(relative):
+                    found.append(relative)
+
+    walk(root, 0)
+    return [DEFAULT_VERSION_FILE, *found]
+
+
+def suggested_tag_prefix(version_file: str) -> str:
+    """``apps/crm/package.json`` → ``crm-v``; the root file keeps plain ``v``."""
+    parent = Path(version_file).parent.name
+    name = re.sub(r"[^a-z0-9]+", "-", parent.lower()).strip("-")
+    prefix = f"{name}-v" if name else DEFAULT_TAG_PREFIX
+    return prefix if TAG_PREFIX_PATTERN.match(prefix) else DEFAULT_TAG_PREFIX
+
+
 def target_host_value(hosts: tuple) -> str:
     """What ``target_host`` says for (environment, host) pairs.
 
@@ -264,6 +330,10 @@ class AppAnswers:
     # ARM needs linux/arm64 in the list, and that build runs under emulation.
     build_platforms: str = DEFAULT_PLATFORMS
     core_pin: str = field(default_factory=lambda: f"v{__version__}")
+    # Where the project's version lives and how its release tag starts; the
+    # defaults fit a repository that is the application.
+    version_file: str = "package.json"
+    tag_prefix: str = "v"
 
 
 def validate_answers(answers: AppAnswers) -> list:
@@ -300,6 +370,10 @@ def validate_answers(answers: AppAnswers) -> list:
         errors.append("the two recipients must be different keys")
     if not 1 <= answers.internal_port <= 65535:
         errors.append("internal_port must be between 1 and 65535")
+    if not VERSION_FILE_PATTERN.match(answers.version_file):
+        errors.append("version file must be a .json path inside the repository")
+    if not TAG_PREFIX_PATTERN.match(answers.tag_prefix):
+        errors.append("tag prefix is v, or a lowercase name and -v (crm-v)")
     if not valid_platforms(answers.build_platforms):
         errors.append(
             "build platforms: a comma-separated list of linux/amd64 and linux/arm64"
@@ -377,6 +451,7 @@ def render_app(answers: AppAnswers) -> dict:
 
     for name, destination in DESTINATIONS.items():
         text = render(template(name), common)
+        text = versioned(text, destination, answers.version_file, answers.tag_prefix)
         if destination == DEPLOY_WORKFLOW:
             text = environment_options(text, tuple(answers.environments))
         if name == "compose.yml" and answers.database_mode != "docker":

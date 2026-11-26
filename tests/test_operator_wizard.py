@@ -205,5 +205,80 @@ class NewAppQuestionnaireTest(unittest.TestCase):
         )
 
 
+class NewAppInAMonorepoTest(unittest.TestCase):
+    """The version file and the tag prefix are asked where there is a choice."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name) / "frontend"
+        (self.root / "apps/panel").mkdir(parents=True)
+        (self.root / "apps/mobile").mkdir(parents=True)
+        (self.root / "node_modules/left-pad").mkdir(parents=True)
+        (self.root / "package.json").write_text('{"private": true}\n')
+        (self.root / "apps/panel/package.json").write_text('{"version": "0.1.0"}\n')
+        (self.root / "apps/mobile/package.json").write_text('{"name": "mobile"}\n')
+        (self.root / "node_modules/left-pad/package.json").write_text(
+            '{"version": "1.0.0"}\n'
+        )
+
+    def ask(self, extra: dict):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from platform_automation.operator import console
+
+        answers = NewAppQuestionnaireTest().answers("none")
+        answers.update(extra)
+        questionary = ScriptedQuestionary(answers)
+        context = SimpleNamespace(root=self.root)
+        with mock.patch("platform_automation.operator.config.infras", lambda: []):
+            result = console.ask_app(context, questionary, style=None)
+        return result, questionary.asked
+
+    VERSION = "Version file (the release is tagged when its version changes)"
+    PREFIX = "Release tag prefix (crm-v tags a release crm-v1.2.3)"
+
+    def test_a_plain_repository_is_not_asked(self) -> None:
+        answers, asked = self.ask({})
+
+        self.assertNotIn(self.VERSION, asked)
+        self.assertEqual(
+            (answers.version_file, answers.tag_prefix), ("package.json", "v")
+        )
+
+    def test_a_workspace_offers_its_versioned_packages(self) -> None:
+        (self.root / "pnpm-workspace.yaml").write_text("packages:\n  - apps/*\n")
+        offered = []
+
+        def choose(choices):
+            offered.extend(choice.value for choice in choices)
+            return "apps/panel/package.json"
+
+        # empty Enter keeps the suggestion drawn from the directory name
+        answers, asked = self.ask({self.VERSION: choose, self.PREFIX: ""})
+
+        self.assertEqual(offered[:2], ["package.json", "apps/panel/package.json"])
+        self.assertNotIn("apps/mobile/package.json", offered)  # carries no version
+        self.assertFalse(any("node_modules" in str(path) for path in offered))
+        self.assertIn(self.PREFIX, asked)
+        self.assertEqual(
+            (answers.version_file, answers.tag_prefix),
+            ("apps/panel/package.json", "panel-v"),
+        )
+
+    def test_the_root_file_in_a_workspace_keeps_the_plain_tag(self) -> None:
+        (self.root / "pnpm-workspace.yaml").write_text("packages:\n  - apps/*\n")
+
+        answers, asked = self.ask({self.VERSION: lambda choices: "package.json"})
+
+        self.assertNotIn(self.PREFIX, asked)
+        self.assertEqual(
+            (answers.version_file, answers.tag_prefix), ("package.json", "v")
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
