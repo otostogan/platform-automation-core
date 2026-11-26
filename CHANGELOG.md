@@ -7,6 +7,8 @@ release.
 
 ## [Unreleased]
 
+## [0.38.1] - 2026-11-26
+
 - `platform new app` asks for the version file and the release tag prefix in
   a monorepo, and writes the workflows and hooks for them at once. It offers
   the root `package.json` and every workspace package that carries a
